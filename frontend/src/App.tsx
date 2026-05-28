@@ -81,6 +81,7 @@ function App() {
 }
 
 function PanelStudy() {
+  const drawerResizerWidth = 12;
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
   const hasManualToolWidth = useRef(false);
@@ -89,6 +90,30 @@ function PanelStudy() {
   const [leftWidth, setLeftWidth] = useState(330);
   const [lowerHeight, setLowerHeight] = useState(210);
   const shellStyle = { "--left-width": `${leftWidth}px` } as CSSProperties;
+
+  function isDrawerAttached(width: number) {
+    const shell = shellRef.current;
+    if (!shell) return false;
+
+    const shellBounds = shell.getBoundingClientRect();
+    const workspaceWidth =
+      Number.parseFloat(
+        getComputedStyle(shell).getPropertyValue("--workspace-width"),
+      ) || 1180;
+    const closedLeftSpace = Math.max(0, (shellBounds.width - workspaceWidth) / 2);
+
+    return width + drawerResizerWidth >= closedLeftSpace - 0.5;
+  }
+
+  function updateDrawerAttachment(width = latestToolWidth.current) {
+    const shell = shellRef.current;
+    if (!shell) return;
+
+    shell.classList.toggle(
+      "drawer-attached",
+      isLeftOpen && isDrawerAttached(width),
+    );
+  }
 
   useEffect(() => {
     function setDefaultToolWidth() {
@@ -103,7 +128,9 @@ function PanelStudy() {
       const maxWidth = Math.max(280, Math.min(1180, shellBounds.width - 80));
       const minWidth = Math.min(280, maxWidth);
       const gutterWidth = rightBounds.left - shellBounds.left;
-      const nextWidth = Math.round(clamp(gutterWidth - 12, minWidth, maxWidth));
+      const nextWidth = Math.round(
+        clamp(gutterWidth - drawerResizerWidth, minWidth, maxWidth),
+      );
 
       latestToolWidth.current = nextWidth;
       setLeftWidth(nextWidth);
@@ -113,6 +140,16 @@ function PanelStudy() {
     window.addEventListener("resize", setDefaultToolWidth);
     return () => window.removeEventListener("resize", setDefaultToolWidth);
   }, []);
+
+  useEffect(() => {
+    function handleResize() {
+      updateDrawerAttachment();
+    }
+
+    updateDrawerAttachment();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [isLeftOpen, leftWidth]);
 
   function dragLeftDivider(event: PointerEvent<HTMLDivElement>) {
     const shell = shellRef.current;
@@ -132,6 +169,10 @@ function PanelStudy() {
 
       animationFrame = window.requestAnimationFrame(() => {
         shell.style.setProperty("--left-width", `${latestToolWidth.current}px`);
+        shell.classList.toggle(
+          "drawer-attached",
+          isDrawerAttached(latestToolWidth.current),
+        );
         animationFrame = 0;
       });
     }
@@ -145,6 +186,7 @@ function PanelStudy() {
       if (animationFrame) {
         window.cancelAnimationFrame(animationFrame);
         shell.style.setProperty("--left-width", `${latestToolWidth.current}px`);
+        updateDrawerAttachment();
       }
 
       shell.classList.remove("is-resizing-tools");

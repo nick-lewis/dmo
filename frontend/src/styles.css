@@ -63,7 +63,7 @@ button {
   --workspace-width: 1180px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
+  gap: 8px;
   min-height: 100vh;
   padding: 18px;
   color: var(--page-ink);
@@ -391,14 +391,14 @@ button {
 .study-header {
   display: flex;
   align-items: center;
-  min-height: 30px;
+  min-height: 22px;
   padding: 0 2px;
 }
 
 .study-kicker {
   margin: 0;
   color: var(--muted-ink);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 760;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -412,11 +412,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid var(--panel-soft-border);
-  border-radius: 8px;
+  border-radius: 7px;
   color: var(--muted-ink);
   background: color-mix(in srgb, var(--panel-bg-strong) 74%, transparent);
   box-shadow: 0 8px 22px rgba(22, 74, 92, 0.08);
@@ -430,10 +430,10 @@ button {
 
 .toggle-panel-icon {
   display: grid;
-  grid-template-columns: 6px 10px;
+  grid-template-columns: 5px 8px;
   gap: 2px;
-  width: 18px;
-  height: 14px;
+  width: 15px;
+  height: 12px;
   padding: 2px;
   border: 1px solid currentColor;
   border-radius: 4px;
@@ -448,14 +448,18 @@ button {
 }
 
 .workspace-shell {
+  --closed-left-space: clamp(0px, calc((100% - var(--workspace-width)) / 2), 9999px);
+  --drawer-space: 0px;
+  --drawer-resizer-space: 0px;
   position: relative;
   display: flex;
-  justify-content: center;
+  justify-content: start;
   min-height: 0;
 }
 
 .workspace-shell.drawer-open {
-  justify-content: start;
+  --drawer-space: var(--left-width);
+  --drawer-resizer-space: 12px;
 }
 
 .panel-stage {
@@ -464,38 +468,26 @@ button {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  flex: 1 1 var(--workspace-width);
+  flex: 0 1 var(--workspace-width);
   overflow: visible;
 }
 
 .left-tools-drawer {
   z-index: 6;
   display: grid;
-  flex: 0 0 0;
-  width: 0;
+  flex: 0 0 var(--drawer-space);
+  width: var(--drawer-space);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   pointer-events: none;
-  visibility: hidden;
-  opacity: 0;
   transition:
     flex-basis 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    width 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 160ms ease,
-    visibility 0s linear 220ms;
+    width 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .workspace-shell.drawer-open .left-tools-drawer {
-  flex-basis: var(--left-width);
-  width: var(--left-width);
   pointer-events: auto;
-  visibility: visible;
-  opacity: 1;
-  transition:
-    flex-basis 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    width 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 120ms ease;
 }
 
 .left-stack-scroll {
@@ -504,13 +496,14 @@ button {
   gap: var(--panel-gap);
   width: var(--left-width);
   min-height: 0;
-  padding: 42px var(--stage-padding) var(--stage-padding);
+  padding: 32px var(--stage-padding) var(--stage-padding);
   overflow: auto;
   opacity: 0;
-  transform: translateX(-18px);
+  transform: translateX(-100%);
   transition:
-    opacity 140ms ease,
-    transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity 120ms ease,
+    transform 210ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
 }
 
 .workspace-shell.drawer-open .left-stack-scroll {
@@ -816,23 +809,35 @@ button {
 }
 
 .drawer-resizer {
-  flex: 0 0 0;
-  width: 0;
-  min-width: 0;
+  flex: 0 0 var(--drawer-resizer-space);
+  width: var(--drawer-resizer-space);
+  min-width: var(--drawer-resizer-space);
+  margin-right: max(
+    0px,
+    calc(var(--closed-left-space) - var(--drawer-space) - var(--drawer-resizer-space))
+  );
   pointer-events: none;
   opacity: 0;
   transition:
     flex-basis 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
     width 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin-right 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
     opacity 160ms ease;
 }
 
 .workspace-shell.drawer-open .drawer-resizer {
-  flex-basis: 12px;
-  width: 12px;
-  min-width: 12px;
   pointer-events: auto;
   opacity: 1;
+}
+
+.vertical-resizer.drawer-resizer::before {
+  top: 50%;
+  bottom: auto;
+  height: 44px;
+  width: 2px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--line) 86%, var(--panel-bg-strong));
+  opacity: 0.18;
 }
 
 .horizontal-resizer {
@@ -867,6 +872,28 @@ button {
 .vertical-resizer:hover::before,
 .horizontal-resizer:hover::before {
   opacity: 0.95;
+}
+
+.vertical-resizer.drawer-resizer:hover::before,
+.workspace-shell.is-resizing-tools .vertical-resizer.drawer-resizer::before {
+  background: color-mix(in srgb, var(--accent-2) 34%, var(--line));
+  opacity: 0.58;
+}
+
+.workspace-shell.drawer-attached .vertical-resizer.drawer-resizer::before {
+  top: 12px;
+  bottom: 12px;
+  height: auto;
+  width: 3px;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--accent) 34%, var(--line));
+  opacity: 0.5;
+}
+
+.workspace-shell.drawer-attached .vertical-resizer.drawer-resizer:hover::before,
+.workspace-shell.drawer-attached.is-resizing-tools .vertical-resizer.drawer-resizer::before {
+  background: color-mix(in srgb, var(--accent) 44%, var(--line));
+  opacity: 0.8;
 }
 
 @media (max-width: 760px) {
