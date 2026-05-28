@@ -585,7 +585,10 @@ function ChatPanelContent() {
     <div className="chat-thread">
       <div className="chat-message-list" aria-live="polite">
         {messages.map((message, index) => (
-          <div className={`chat-message ${message.tone}`} key={`${message.author}-${index}`}>
+          <div
+            className={`chat-message ${message.tone}`}
+            key={`${message.author}-${index}`}
+          >
             <span>{message.author}</span>
             <p>{message.text}</p>
           </div>

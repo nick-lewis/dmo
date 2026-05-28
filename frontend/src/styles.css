@@ -823,8 +823,11 @@ button {
 .chat-thread {
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 10px;
+  justify-self: center;
+  width: min(100%, 720px);
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 .chat-message-list {
