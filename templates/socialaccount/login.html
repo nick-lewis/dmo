@@ -1,0 +1,18 @@
+{% load socialaccount %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Continue with Google - dLU</title>
+  </head>
+  <body>
+    <form action="{% provider_login_url 'google' process='login' %}" method="post">
+      {% csrf_token %}
+      {% if request.GET.next %}
+        <input type="hidden" name="next" value="{{ request.GET.next }}" />
+      {% endif %}
+      <button type="submit">Continue with Google</button>
+    </form>
+  </body>
+</html>

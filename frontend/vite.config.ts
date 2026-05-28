@@ -16,6 +16,7 @@ export default defineConfig(({ command }) => {
       port: 5173,
       proxy: {
         "/api": apiProxyTarget,
+        "/accounts": apiProxyTarget,
       },
     },
   };

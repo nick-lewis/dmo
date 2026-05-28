@@ -31,6 +31,42 @@ Open:
 
 The Compose database uses a named volume called `postgres_data`, so normal container restarts do not erase data.
 
+## Google Sign-In
+
+DMO uses Django auth plus `django-allauth` for Google sign-in. By default, only
+`@deeplearning.ai` addresses are allowed.
+
+Set these values in `.env`:
+
+```powershell
+ALLOWED_LOGIN_EMAIL_DOMAINS=deeplearning.ai
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+```
+
+For local development, add these redirect URIs to the Google OAuth client:
+
+- `http://localhost:5173/accounts/google/login/callback/`
+- `http://localhost:8000/accounts/google/login/callback/`
+
+The Vite dev server proxies `/api` and `/accounts` to Django, so signing in from
+`http://localhost:5173` works during frontend development.
+
+## Realtime Chat
+
+The tutoring panel uses OpenAI Realtime through a short-lived client secret
+minted by Django. Set your API key in `.env`:
+
+```powershell
+OPENAI_API_KEY=your-openai-api-key
+DLU_REALTIME_DEFAULT_MODEL=gpt-realtime-mini
+DLU_REALTIME_DEFAULT_VOICE=marin
+```
+
+The temporary header controls let you switch between `gpt-realtime-mini`,
+`gpt-realtime-1.5`, and `gpt-realtime-2`, plus the available Realtime voices.
+Changing model, voice, or session starts a fresh browser Realtime connection.
+
 ## Local Setup Without Docker
 
 Install backend dependencies into your virtual environment:

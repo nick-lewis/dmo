@@ -7,6 +7,24 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def load_env_file(path):
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip().strip("'\"")
+        os.environ.setdefault(name, value)
+
+
+load_env_file(BASE_DIR / ".env")
+
+
 def env_bool(name, default=False):
     value = os.environ.get(name)
     if value is None:
@@ -49,6 +67,11 @@ CSRF_TRUSTED_ORIGINS = env_list(
     "http://localhost:5173,http://127.0.0.1:5173",
 )
 
+ALLOWED_LOGIN_EMAIL_DOMAINS = env_list(
+    "ALLOWED_LOGIN_EMAIL_DOMAINS",
+    "deeplearning.ai",
+)
+
 
 # Application definition
 
@@ -59,8 +82,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
     'core',
 ]
+
+SITE_ID = 1
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -70,6 +100,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -160,3 +191,72 @@ STORAGES = {
 }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
+ACCOUNT_EMAIL_VERIFICATION = "none"
+ACCOUNT_LOGIN_ON_GET = False
+ACCOUNT_LOGOUT_ON_GET = False
+ACCOUNT_SESSION_REMEMBER = True
+
+SOCIALACCOUNT_ADAPTER = "core.auth_adapters.DeepLearningAIAdapter"
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_EMAIL_REQUIRED = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_LOGIN_ON_GET = False
+SOCIALACCOUNT_ONLY = True
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_PROVIDER_CONFIG = {
+    "SCOPE": ["profile", "email"],
+    "AUTH_PARAMS": {
+        "access_type": "online",
+        "hd": ALLOWED_LOGIN_EMAIL_DOMAINS[0].lstrip("@")
+        if ALLOWED_LOGIN_EMAIL_DOMAINS
+        else "",
+    },
+    "OAUTH_PKCE_ENABLED": True,
+    "VERIFIED_EMAIL": ALLOWED_LOGIN_EMAIL_DOMAINS,
+    "EMAIL_AUTHENTICATION": True,
+}
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    GOOGLE_PROVIDER_CONFIG["APPS"] = [
+        {
+            "client_id": GOOGLE_CLIENT_ID,
+            "secret": GOOGLE_CLIENT_SECRET,
+            "key": "",
+        }
+    ]
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": GOOGLE_PROVIDER_CONFIG,
+}
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+DLU_REALTIME_DEFAULT_MODEL = (
+    os.environ.get("DLU_REALTIME_DEFAULT_MODEL", "").strip() or "gpt-realtime-mini"
+)
+DLU_REALTIME_DEFAULT_VOICE = (
+    os.environ.get("DLU_REALTIME_DEFAULT_VOICE", "").strip() or "marin"
+)
+DLU_REALTIME_DEFAULT_INSTRUCTIONS = (
+    "You are dLU, a warm, concise tutoring collaborator. The user is typing "
+    "messages and you respond in spoken audio with a simultaneous transcript. "
+    "Keep replies direct and conversational. Do not claim persistent memory "
+    "outside the current saved session."
+)
+DLU_REALTIME_INSTRUCTIONS = (
+    os.environ.get("DLU_REALTIME_INSTRUCTIONS", "").strip()
+    or DLU_REALTIME_DEFAULT_INSTRUCTIONS
+)
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/surfaces/tutoring/panels"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+ACCOUNT_LOGOUT_REDIRECT_URL = "/accounts/login/"

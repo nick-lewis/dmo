@@ -7,6 +7,14 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  DluRealtimeConnection,
+  type RealtimeModelId,
+  type RealtimeStatus,
+  type RealtimeVoiceId,
+  realtimeModelOptions,
+  realtimeVoiceOptions,
+} from "./realtime";
 
 const leftPanels = [
   { density: "tall", kind: "brief", label: "Left panel one" },
@@ -18,27 +26,48 @@ const leftPanels = [
 const rowDividerHeight = 12;
 const minMainPanelHeight = 120;
 const minLowerPanelHeight = 170;
+const defaultLowerPanelHeight = 300;
 const standardWorkspaceWidth = 1180;
 const minWorkspaceWidth = 860;
 const maxWorkspaceWidth = 1800;
+const panelLayoutStorageKey = "dlu.panel-layout.v1";
 
-const initialChatMessages = [
-  {
-    author: "Student",
-    text: "I moved the 4 first because it was outside the parentheses.",
-    tone: "student",
-  },
-  {
-    author: "dLU",
-    text: "Good. After subtracting 4 from both sides, what equation is left?",
-    tone: "tutor",
-  },
-  {
-    author: "Student",
-    text: "3(x - 2) = 12",
-    tone: "student",
-  },
-] as const;
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "system" | "error";
+  content: string;
+  sequence: number;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+
+type ApiUser = {
+  id: number;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+};
+
+type TutoringSession = {
+  id: string;
+  title: string;
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type SessionPayload = {
+  session: TutoringSession;
+  messages: ChatMessage[];
+};
+
+type StoredPanelLayout = {
+  leftWidth?: number;
+  lowerHeight?: number;
+  workspaceWidth?: number;
+};
 
 const pythonKeywords = new Set([
   "False",
@@ -92,8 +121,120 @@ const pythonBuiltins = new Set([
 const pythonTokenPattern =
   /("""[\s\S]*?"""|'''[\s\S]*?'''|#.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b[A-Za-z_]\w*(?=\()|\b[A-Za-z_]\w*\b|\b\d+(?:\.\d+)?\b|[{}()[\].,:=+\-*/<>!]+)/g;
 
+const realtimeStatusLabels: Record<RealtimeStatus, string> = {
+  "audio-blocked": "Audio blocked",
+  connected: "Voice ready",
+  connecting: "Connecting",
+  error: "Voice error",
+  idle: "Voice idle",
+  streaming: "Speaking",
+};
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function getCookie(name: string) {
+  const cookie = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`));
+  return cookie ? decodeURIComponent(cookie.split("=")[1]) : "";
+}
+
+function getCurrentPath() {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+function publicAsset(path: string) {
+  return `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+}
+
+function localMessageId(prefix: string) {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function sortMessages(messages: ChatMessage[]) {
+  return [...messages].sort((left, right) => left.sequence - right.sequence);
+}
+
+function storedNumber(value: unknown, min: number, max: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return clamp(value, min, max);
+}
+
+function readPanelLayout() {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const rawValue = window.localStorage.getItem(panelLayoutStorageKey);
+    if (!rawValue) return {};
+
+    const value = JSON.parse(rawValue) as StoredPanelLayout;
+    return {
+      leftWidth: storedNumber(value.leftWidth, 260, 1180),
+      lowerHeight: storedNumber(value.lowerHeight, minLowerPanelHeight, 900),
+      workspaceWidth: storedNumber(
+        value.workspaceWidth,
+        320,
+        maxWorkspaceWidth,
+      ),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writePanelLayout(layout: StoredPanelLayout) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(panelLayoutStorageKey, JSON.stringify(layout));
+  } catch {
+    // Ignore storage failures; panel sizing should still work for this view.
+  }
+}
+
+async function apiFetch<T>(url: string, options: RequestInit = {}) {
+  const method = (options.method ?? "GET").toUpperCase();
+  const headers = new Headers(options.headers);
+  headers.set("X-Current-Path", getCurrentPath());
+
+  if (method !== "GET" && method !== "HEAD") {
+    headers.set("X-CSRFToken", getCookie("csrftoken"));
+    if (options.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    credentials: "same-origin",
+    headers,
+  });
+  const data = (await response.json().catch(() => null)) as unknown;
+  const responseObject =
+    data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+
+  if (response.status === 401) {
+    const loginUrl =
+      typeof responseObject.loginUrl === "string"
+        ? responseObject.loginUrl
+        : "/accounts/login/";
+    window.location.assign(loginUrl);
+    throw new Error("Authentication required.");
+  }
+
+  if (!response.ok) {
+    const detail =
+      typeof responseObject.detail === "string" ? responseObject.detail : "";
+    throw new Error(detail || "Request failed.");
+  }
+
+  return data as T;
 }
 
 function App() {
@@ -110,13 +251,42 @@ function PanelStudy() {
   const drawerResizerWidth = 12;
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
-  const hasManualToolWidth = useRef(false);
-  const latestToolWidth = useRef(330);
-  const latestWorkspaceWidth = useRef(standardWorkspaceWidth);
+  const initialPanelLayout = useRef(readPanelLayout());
+  const hasManualToolWidth = useRef(
+    typeof initialPanelLayout.current.leftWidth === "number",
+  );
+  const latestToolWidth = useRef(initialPanelLayout.current.leftWidth ?? 330);
+  const latestWorkspaceWidth = useRef(
+    initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
+  );
+  const realtimeConnectionRef = useRef<DluRealtimeConnection | null>(null);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
-  const [workspaceWidth, setWorkspaceWidth] = useState(standardWorkspaceWidth);
-  const [leftWidth, setLeftWidth] = useState(330);
-  const [lowerHeight, setLowerHeight] = useState(210);
+  const [workspaceWidth, setWorkspaceWidth] = useState(
+    initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
+  );
+  const [leftWidth, setLeftWidth] = useState(
+    initialPanelLayout.current.leftWidth ?? 330,
+  );
+  const [lowerHeight, setLowerHeight] = useState(
+    initialPanelLayout.current.lowerHeight ?? defaultLowerPanelHeight,
+  );
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [session, setSession] = useState<TutoringSession | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [selectedModel, setSelectedModel] =
+    useState<RealtimeModelId>("gpt-realtime-mini");
+  const [selectedVoice, setSelectedVoice] = useState<RealtimeVoiceId>("marin");
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("idle");
+  const [chatStatus, setChatStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [chatError, setChatError] = useState("");
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [turnAnchorMessageId, setTurnAnchorMessageId] = useState<string | null>(
+    null,
+  );
   const shellStyle = {
     "--left-width": `${leftWidth}px`,
     "--workspace-width": `${workspaceWidth}px`,
@@ -196,6 +366,57 @@ function PanelStudy() {
   }, [workspaceWidth]);
 
   useEffect(() => {
+    writePanelLayout({ leftWidth, lowerHeight, workspaceWidth });
+  }, [leftWidth, lowerHeight, workspaceWidth]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadSession() {
+      setChatStatus("loading");
+      setChatError("");
+
+      try {
+        const me = await apiFetch<{ user: ApiUser }>("/api/auth/me/");
+        const payload = await apiFetch<SessionPayload>("/api/sessions/current/");
+
+        if (isCancelled) return;
+
+        setUser(me.user);
+        setSession(payload.session);
+        setMessages(payload.messages);
+        setTurnAnchorMessageId(null);
+        setChatStatus("ready");
+      } catch (error) {
+        if (isCancelled) return;
+
+        setChatStatus("error");
+        setChatError(
+          error instanceof Error ? error.message : "Could not load session.",
+        );
+      }
+    }
+
+    loadSession();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      realtimeConnectionRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    realtimeConnectionRef.current?.close();
+    realtimeConnectionRef.current = null;
+    setRealtimeStatus("idle");
+  }, [selectedModel, selectedVoice, session?.id]);
+
+  useEffect(() => {
     function handleResize() {
       updateDrawerAttachment();
       const { maxWidth, minWidth } = getWorkspaceWidthRange();
@@ -204,7 +425,7 @@ function PanelStudy() {
       setLowerHeight((current) => clamp(current, minHeight, maxHeight));
     }
 
-    updateDrawerAttachment();
+    handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [isLeftOpen, leftWidth, workspaceWidth]);
@@ -213,12 +434,13 @@ function PanelStudy() {
     const shell = shellRef.current;
     if (!shell) return;
 
-    const bounds = shell.getBoundingClientRect();
+    const shellElement: HTMLDivElement = shell;
+    const bounds = shellElement.getBoundingClientRect();
     const maxWidth = Math.max(260, Math.min(1180, bounds.width - 80));
     const minWidth = Math.min(260, maxWidth);
     let animationFrame = 0;
     hasManualToolWidth.current = true;
-    shell.classList.add("is-resizing-tools");
+    shellElement.classList.add("is-resizing-tools");
 
     function applyWidth(width: number) {
       latestToolWidth.current = Math.round(width);
@@ -226,8 +448,8 @@ function PanelStudy() {
       if (animationFrame) return;
 
       animationFrame = window.requestAnimationFrame(() => {
-        shell.style.setProperty("--left-width", `${latestToolWidth.current}px`);
-        shell.classList.toggle(
+        shellElement.style.setProperty("--left-width", `${latestToolWidth.current}px`);
+        shellElement.classList.toggle(
           "drawer-attached",
           isDrawerAttached(latestToolWidth.current),
         );
@@ -243,11 +465,11 @@ function PanelStudy() {
     function onUp() {
       if (animationFrame) {
         window.cancelAnimationFrame(animationFrame);
-        shell.style.setProperty("--left-width", `${latestToolWidth.current}px`);
+        shellElement.style.setProperty("--left-width", `${latestToolWidth.current}px`);
         updateDrawerAttachment();
       }
 
-      shell.classList.remove("is-resizing-tools");
+      shellElement.classList.remove("is-resizing-tools");
       setLeftWidth(latestToolWidth.current);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -284,15 +506,16 @@ function PanelStudy() {
     const shell = shellRef.current;
     if (!shell) return;
 
+    const shellElement: HTMLDivElement = shell;
     const { maxWidth, minWidth } = getWorkspaceWidthRange();
     const startX = event.clientX;
     const startWidth =
       Number.parseFloat(
-        getComputedStyle(shell).getPropertyValue("--workspace-width"),
+        getComputedStyle(shellElement).getPropertyValue("--workspace-width"),
       ) || workspaceWidth;
     let animationFrame = 0;
     latestWorkspaceWidth.current = startWidth;
-    shell.classList.add("is-resizing-workspace");
+    shellElement.classList.add("is-resizing-workspace");
 
     function applyWidth(width: number) {
       latestWorkspaceWidth.current = Math.round(width);
@@ -300,7 +523,7 @@ function PanelStudy() {
       if (animationFrame) return;
 
       animationFrame = window.requestAnimationFrame(() => {
-        shell.style.setProperty(
+        shellElement.style.setProperty(
           "--workspace-width",
           `${latestWorkspaceWidth.current}px`,
         );
@@ -317,13 +540,13 @@ function PanelStudy() {
     function onUp() {
       if (animationFrame) {
         window.cancelAnimationFrame(animationFrame);
-        shell.style.setProperty(
+        shellElement.style.setProperty(
           "--workspace-width",
           `${latestWorkspaceWidth.current}px`,
         );
       }
 
-      shell.classList.remove("is-resizing-workspace");
+      shellElement.classList.remove("is-resizing-workspace");
       setWorkspaceWidth(latestWorkspaceWidth.current);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -334,6 +557,206 @@ function PanelStudy() {
     event.preventDefault();
   }
 
+  async function createNewSession() {
+    setIsCreatingSession(true);
+    setChatError("");
+
+    try {
+      const payload = await apiFetch<SessionPayload>("/api/sessions/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setSession(payload.session);
+      setMessages(payload.messages);
+      setTurnAnchorMessageId(null);
+      setChatStatus("ready");
+    } catch (error) {
+      setChatStatus("error");
+      setChatError(
+        error instanceof Error ? error.message : "Could not create session.",
+      );
+    } finally {
+      setIsCreatingSession(false);
+    }
+  }
+
+  async function getRealtimeConnection(
+    activeSession: TutoringSession,
+    excludeMessageId?: string,
+  ) {
+    const currentConnection = realtimeConnectionRef.current;
+    if (
+      currentConnection?.matches(
+        activeSession.id,
+        selectedModel,
+        selectedVoice,
+      )
+    ) {
+      return currentConnection;
+    }
+
+    currentConnection?.close();
+    realtimeConnectionRef.current = null;
+
+    const connection = await DluRealtimeConnection.connect(
+      {
+        fetchClientSecret: ({ sessionId, model, voice }) =>
+          apiFetch<unknown>("/api/realtime/client-secret/", {
+            method: "POST",
+            body: JSON.stringify({ excludeMessageId, sessionId, model, voice }),
+          }),
+        model: selectedModel,
+        sessionId: activeSession.id,
+        voice: selectedVoice,
+      },
+      {
+        onError: (message) => {
+          setChatError(message);
+          setChatStatus("error");
+        },
+        onStatusChange: setRealtimeStatus,
+      },
+    );
+
+    realtimeConnectionRef.current = connection;
+    return connection;
+  }
+
+  async function saveSessionMessage(
+    activeSession: TutoringSession,
+    content: string,
+    role: ChatMessage["role"] = "user",
+    metadata: Record<string, unknown> = {},
+  ) {
+    return apiFetch<{
+      session: TutoringSession;
+      message: ChatMessage;
+    }>(`/api/sessions/${activeSession.id}/messages/`, {
+      method: "POST",
+      body: JSON.stringify({ content, metadata, role }),
+    });
+  }
+
+  async function sendChatMessage(content: string) {
+    if (!session || isSendingMessage) return;
+
+    setIsSendingMessage(true);
+    setChatError("");
+
+    let pendingAssistantId = "";
+
+    try {
+      const payload = await saveSessionMessage(session, content);
+      const activeSession = payload.session;
+      const assistantMessageId = localMessageId("assistant");
+      pendingAssistantId = assistantMessageId;
+      const assistantMessage: ChatMessage = {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        sequence: payload.message.sequence + 0.5,
+        createdAt: new Date().toISOString(),
+        metadata: {
+          model: selectedModel,
+          source: "openai-realtime",
+          streaming: true,
+          voice: selectedVoice,
+        },
+      };
+
+      setSession(activeSession);
+      setMessages((current) =>
+        sortMessages([...current, payload.message, assistantMessage]),
+      );
+      setTurnAnchorMessageId(payload.message.id);
+      setChatStatus("ready");
+
+      const connection = await getRealtimeConnection(
+        activeSession,
+        payload.message.id,
+      );
+      const assistantContent = await connection.sendUserText(content, (delta) => {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  content: `${message.content}${delta}`,
+                }
+              : message,
+          ),
+        );
+      });
+
+      const finalContent = assistantContent.trim();
+      if (!finalContent) {
+        throw new Error("dLU responded with audio but no text transcript.");
+      }
+
+      const assistantPayload = await saveSessionMessage(
+        activeSession,
+        finalContent,
+        "assistant",
+        {
+          model: selectedModel,
+          source: "openai-realtime",
+          voice: selectedVoice,
+        },
+      );
+      setSession(assistantPayload.session);
+      setMessages((current) =>
+        sortMessages(
+          current.map((message) =>
+            message.id === assistantMessageId
+              ? assistantPayload.message
+              : message,
+          ),
+        ),
+      );
+    } catch (error) {
+      realtimeConnectionRef.current?.close("error");
+      realtimeConnectionRef.current = null;
+      const detail =
+        error instanceof Error ? error.message : "Could not get a dLU response.";
+      setChatStatus("error");
+      setChatError(detail);
+      if (pendingAssistantId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === pendingAssistantId
+              ? {
+                  ...message,
+                  role: message.content ? "assistant" : "error",
+                  content: message.content || detail,
+                  metadata: {
+                    ...message.metadata,
+                    error: detail,
+                    streaming: false,
+                  },
+                }
+              : message,
+          ),
+        );
+      }
+      throw error;
+    } finally {
+      setIsSendingMessage(false);
+    }
+  }
+
+  async function signOut() {
+    setIsSigningOut(true);
+
+    try {
+      await apiFetch<{ ok: boolean }>("/api/auth/logout/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } finally {
+      window.location.assign("/accounts/login/");
+    }
+  }
+
   return (
     <main
       className="panel-study"
@@ -342,6 +765,60 @@ function PanelStudy() {
     >
       <header className="study-header">
         <p className="study-kicker">Tutoring workspace</p>
+        <div className="study-actions">
+          {user ? <span className="study-user">{user.displayName}</span> : null}
+          <label className="header-select">
+            <span>Model</span>
+            <select
+              disabled={chatStatus === "loading" || isSendingMessage}
+              onChange={(event) =>
+                setSelectedModel(event.target.value as RealtimeModelId)
+              }
+              value={selectedModel}
+            >
+              {realtimeModelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="header-select">
+            <span>Voice</span>
+            <select
+              disabled={chatStatus === "loading" || isSendingMessage}
+              onChange={(event) =>
+                setSelectedVoice(event.target.value as RealtimeVoiceId)
+              }
+              value={selectedVoice}
+            >
+              {realtimeVoiceOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className={`voice-status voice-status-${realtimeStatus}`}>
+            {realtimeStatusLabels[realtimeStatus]}
+          </span>
+          <button
+            className="header-action"
+            disabled={chatStatus === "loading" || isCreatingSession || isSendingMessage}
+            onClick={createNewSession}
+            type="button"
+          >
+            {isCreatingSession ? "Creating..." : "New session"}
+          </button>
+          <button
+            className="header-action secondary"
+            disabled={isSigningOut}
+            onClick={signOut}
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       <section
@@ -410,7 +887,17 @@ function PanelStudy() {
               role="separator"
             />
             <PanelWindow ariaLabel="Panel six" density="lower">
-              <ChatPanelContent />
+              <ChatPanelContent
+                error={chatError}
+                isSending={isSendingMessage}
+                messages={messages}
+                onSendMessage={sendChatMessage}
+                realtimeStatus={realtimeStatus}
+                session={session}
+                status={chatStatus}
+                turnAnchorMessageId={turnAnchorMessageId}
+                user={user}
+              />
             </PanelWindow>
           </section>
         </section>
@@ -541,56 +1028,171 @@ function MainPanelContent() {
   );
 }
 
-function ChatPanelContent() {
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState(initialChatMessages);
+type ChatPanelContentProps = {
+  error: string;
+  isSending: boolean;
+  messages: ChatMessage[];
+  onSendMessage: (content: string) => Promise<void>;
+  realtimeStatus: RealtimeStatus;
+  session: TutoringSession | null;
+  status: "loading" | "ready" | "error";
+  turnAnchorMessageId: string | null;
+  user: ApiUser | null;
+};
 
-  function sendMessage(event: FormEvent<HTMLFormElement>) {
+function ChatPanelContent({
+  error,
+  isSending,
+  messages,
+  onSendMessage,
+  realtimeStatus,
+  session,
+  status,
+  turnAnchorMessageId,
+  user,
+}: ChatPanelContentProps) {
+  const [draft, setDraft] = useState("");
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const messageRefs = useRef(new Map<string, HTMLDivElement>());
+
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      if (turnAnchorMessageId) {
+        const target = messageRefs.current.get(turnAnchorMessageId);
+        if (target) {
+          messageList.scrollTo({
+            behavior: "smooth",
+            top: Math.max(0, target.offsetTop - 2),
+          });
+        }
+        return;
+      }
+
+      messageList.scrollTo({
+        top: messageList.scrollHeight,
+      });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [messages.length, turnAnchorMessageId]);
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const nextMessage = draft.trim();
-    if (!nextMessage) return;
+    if (!nextMessage || !session || isSending || status === "loading") return;
 
-    setMessages((current) => [
-      ...current,
-      { author: "Student", text: nextMessage, tone: "student" },
-    ]);
     setDraft("");
+
+    try {
+      await onSendMessage(nextMessage);
+    } catch {
+      // Keep the draft available when saving fails.
+      setDraft(nextMessage);
+    }
   }
+
+  const isInputDisabled = !session || status === "loading";
+  const isSendDisabled = isInputDisabled || isSending || !draft.trim();
+  const sendButtonLabel =
+    realtimeStatus === "streaming" || isSending
+      ? "dLU is responding"
+      : "Send message";
 
   return (
     <div className="chat-stage">
       <div className="chat-thread">
-        <div className="chat-message-list" aria-live="polite">
-          {messages.map((message, index) => (
-            <div
-              className={`chat-message ${message.tone}`}
-              key={`${message.author}-${index}`}
-            >
-              <span>{message.author}</span>
-              <p>{message.text}</p>
-            </div>
-          ))}
+        <div
+          className={`chat-message-list ${turnAnchorMessageId ? "turn-anchored" : ""}`}
+          aria-live="polite"
+          ref={messageListRef}
+        >
+          {status === "loading" ? (
+            <div className="chat-status">Loading session...</div>
+          ) : null}
+          {status === "error" ? (
+            <div className="chat-status error">{error}</div>
+          ) : null}
+          {messages.map((message) => {
+            const tone = message.role === "user" ? "student" : "tutor";
+            const author =
+              message.role === "user"
+                ? user?.displayName || "You"
+                : message.role === "assistant"
+                  ? "dLU"
+                  : "System";
+            const body =
+              message.content ||
+              (message.metadata?.streaming ? "..." : "");
+
+            return (
+              <div
+                className={`chat-message ${tone}`}
+                key={message.id}
+                ref={(element) => {
+                  if (element) {
+                    messageRefs.current.set(message.id, element);
+                  } else {
+                    messageRefs.current.delete(message.id);
+                  }
+                }}
+              >
+                <span>{author}</span>
+                <p>{body}</p>
+              </div>
+            );
+          })}
         </div>
 
         <form className="composer-row" onSubmit={sendMessage}>
           <input
             aria-label="Message dLU"
+            disabled={isInputDisabled}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Message dLU..."
             type="text"
             value={draft}
           />
-          <button type="submit">Send</button>
+          <button
+            aria-label={sendButtonLabel}
+            disabled={isSendDisabled}
+            title={sendButtonLabel}
+            type="submit"
+          >
+            <SendIcon />
+          </button>
         </form>
       </div>
 
       <img
         alt="dLU"
         className="chat-dlu-figure"
-        src="/test-images/dLU-right.png"
+        src={publicAsset("test-images/dLU-right.png")}
       />
     </div>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="16"
+      viewBox="0 0 24 24"
+      width="16"
+    >
+      <path
+        d="M21 3 10.6 13.4M21 3l-6.7 18-3.7-7.6L3 9.7 21 3Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
   );
 }
 
