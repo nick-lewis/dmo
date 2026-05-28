@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type FormEvent,
   type PointerEvent,
   type ReactNode,
   useEffect,
@@ -12,6 +13,36 @@ const leftPanels = [
   { density: "compact", kind: "code", label: "Left panel two" },
   { density: "compact", kind: "reference", label: "Left panel three" },
   { density: "compact", kind: "checks", label: "Left panel four" },
+] as const;
+
+const dluFigures = [
+  { alt: "dLU tutor character", src: "/test-images/test-dmo.png" },
+  { alt: "Alternate dLU tutor character", src: "/test-images/test-dmo2.png" },
+] as const;
+
+const rowDividerHeight = 12;
+const minMainPanelHeight = 120;
+const minLowerPanelHeight = 150;
+const standardWorkspaceWidth = 1180;
+const minWorkspaceWidth = 860;
+const maxWorkspaceWidth = 1800;
+
+const initialChatMessages = [
+  {
+    author: "Student",
+    text: "I moved the 4 first because it was outside the parentheses.",
+    tone: "student",
+  },
+  {
+    author: "dLU draft",
+    text: "Good. After subtracting 4 from both sides, what equation is left?",
+    tone: "tutor",
+  },
+  {
+    author: "Student",
+    text: "3(x - 2) = 12",
+    tone: "student",
+  },
 ] as const;
 
 const pythonKeywords = new Set([
@@ -86,10 +117,38 @@ function PanelStudy() {
   const rightRef = useRef<HTMLDivElement | null>(null);
   const hasManualToolWidth = useRef(false);
   const latestToolWidth = useRef(330);
+  const latestWorkspaceWidth = useRef(standardWorkspaceWidth);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
+  const [workspaceWidth, setWorkspaceWidth] = useState(standardWorkspaceWidth);
   const [leftWidth, setLeftWidth] = useState(330);
   const [lowerHeight, setLowerHeight] = useState(210);
-  const shellStyle = { "--left-width": `${leftWidth}px` } as CSSProperties;
+  const shellStyle = {
+    "--left-width": `${leftWidth}px`,
+    "--workspace-width": `${workspaceWidth}px`,
+  } as CSSProperties;
+
+  function getWorkspaceWidthRange() {
+    const shell = shellRef.current;
+    const shellWidth = shell?.getBoundingClientRect().width ?? maxWorkspaceWidth;
+    const maxWidth = Math.max(
+      320,
+      Math.min(maxWorkspaceWidth, shellWidth - 32),
+    );
+    const minWidth = Math.min(minWorkspaceWidth, maxWidth);
+
+    return { maxWidth, minWidth };
+  }
+
+  function getLowerHeightRange() {
+    const right = rightRef.current;
+    const rightHeight = right?.getBoundingClientRect().height ?? 0;
+    const maxHeight = Math.max(
+      minLowerPanelHeight,
+      rightHeight - rowDividerHeight - minMainPanelHeight,
+    );
+
+    return { maxHeight, minHeight: minLowerPanelHeight };
+  }
 
   function isDrawerAttached(width: number) {
     const shell = shellRef.current;
@@ -115,41 +174,45 @@ function PanelStudy() {
     );
   }
 
+  function setDefaultToolWidth() {
+    if (hasManualToolWidth.current) return;
+
+    const shell = shellRef.current;
+    const right = rightRef.current;
+    if (!shell || !right) return;
+
+    const shellBounds = shell.getBoundingClientRect();
+    const rightBounds = right.getBoundingClientRect();
+    const maxWidth = Math.max(280, Math.min(1180, shellBounds.width - 80));
+    const minWidth = Math.min(280, maxWidth);
+    const gutterWidth = rightBounds.left - shellBounds.left;
+    const nextWidth = Math.round(
+      clamp(gutterWidth - drawerResizerWidth, minWidth, maxWidth),
+    );
+
+    latestToolWidth.current = nextWidth;
+    setLeftWidth(nextWidth);
+  }
+
   useEffect(() => {
-    function setDefaultToolWidth() {
-      if (hasManualToolWidth.current) return;
-
-      const shell = shellRef.current;
-      const right = rightRef.current;
-      if (!shell || !right) return;
-
-      const shellBounds = shell.getBoundingClientRect();
-      const rightBounds = right.getBoundingClientRect();
-      const maxWidth = Math.max(280, Math.min(1180, shellBounds.width - 80));
-      const minWidth = Math.min(280, maxWidth);
-      const gutterWidth = rightBounds.left - shellBounds.left;
-      const nextWidth = Math.round(
-        clamp(gutterWidth - drawerResizerWidth, minWidth, maxWidth),
-      );
-
-      latestToolWidth.current = nextWidth;
-      setLeftWidth(nextWidth);
-    }
-
     setDefaultToolWidth();
     window.addEventListener("resize", setDefaultToolWidth);
     return () => window.removeEventListener("resize", setDefaultToolWidth);
-  }, []);
+  }, [workspaceWidth]);
 
   useEffect(() => {
     function handleResize() {
       updateDrawerAttachment();
+      const { maxWidth, minWidth } = getWorkspaceWidthRange();
+      setWorkspaceWidth((current) => clamp(current, minWidth, maxWidth));
+      const { maxHeight, minHeight } = getLowerHeightRange();
+      setLowerHeight((current) => clamp(current, minHeight, maxHeight));
     }
 
     updateDrawerAttachment();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [isLeftOpen, leftWidth]);
+  }, [isLeftOpen, leftWidth, workspaceWidth]);
 
   function dragLeftDivider(event: PointerEvent<HTMLDivElement>) {
     const shell = shellRef.current;
@@ -205,13 +268,68 @@ function PanelStudy() {
     if (!right) return;
 
     const bounds = right.getBoundingClientRect();
+    const { maxHeight, minHeight } = getLowerHeightRange();
 
     function onMove(moveEvent: globalThis.PointerEvent) {
       const nextHeight = bounds.bottom - moveEvent.clientY;
-      setLowerHeight(clamp(nextHeight, 150, Math.max(180, bounds.height - 300)));
+      setLowerHeight(clamp(nextHeight, minHeight, maxHeight));
     }
 
     function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    event.preventDefault();
+  }
+
+  function dragWorkspaceDivider(event: PointerEvent<HTMLDivElement>) {
+    const shell = shellRef.current;
+    if (!shell) return;
+
+    const { maxWidth, minWidth } = getWorkspaceWidthRange();
+    const startX = event.clientX;
+    const startWidth =
+      Number.parseFloat(
+        getComputedStyle(shell).getPropertyValue("--workspace-width"),
+      ) || workspaceWidth;
+    let animationFrame = 0;
+    latestWorkspaceWidth.current = startWidth;
+    shell.classList.add("is-resizing-workspace");
+
+    function applyWidth(width: number) {
+      latestWorkspaceWidth.current = Math.round(width);
+
+      if (animationFrame) return;
+
+      animationFrame = window.requestAnimationFrame(() => {
+        shell.style.setProperty(
+          "--workspace-width",
+          `${latestWorkspaceWidth.current}px`,
+        );
+        updateDrawerAttachment();
+        animationFrame = 0;
+      });
+    }
+
+    function onMove(moveEvent: globalThis.PointerEvent) {
+      const nextWidth = startWidth + (moveEvent.clientX - startX) * 2;
+      applyWidth(clamp(nextWidth, minWidth, maxWidth));
+    }
+
+    function onUp() {
+      if (animationFrame) {
+        window.cancelAnimationFrame(animationFrame);
+        shell.style.setProperty(
+          "--workspace-width",
+          `${latestWorkspaceWidth.current}px`,
+        );
+      }
+
+      shell.classList.remove("is-resizing-workspace");
+      setWorkspaceWidth(latestWorkspaceWidth.current);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     }
@@ -275,7 +393,18 @@ function PanelStudy() {
         />
 
         <section className="panel-stage">
-          <section className="right-region" ref={rightRef}>
+          <div
+            aria-label="Resize workspace width"
+            className="vertical-resizer workspace-width-resizer"
+            onPointerDown={dragWorkspaceDivider}
+            role="separator"
+          />
+
+          <section
+            className="right-region"
+            ref={rightRef}
+            style={{ "--lower-height": `${lowerHeight}px` } as CSSProperties}
+          >
             <PanelWindow ariaLabel="Panel five" density="main">
               <MainPanelContent />
             </PanelWindow>
@@ -285,11 +414,7 @@ function PanelStudy() {
               onPointerDown={dragLowerDivider}
               role="separator"
             />
-            <PanelWindow
-              ariaLabel="Panel six"
-              density="lower"
-              style={{ height: lowerHeight }}
-            >
+            <PanelWindow ariaLabel="Panel six" density="lower">
               <ChatPanelContent />
             </PanelWindow>
           </section>
@@ -380,14 +505,32 @@ function LeftPanelContent({ kind }: { kind: LeftPanelKind }) {
 }
 
 function MainPanelContent() {
+  const [activeDluIndex, setActiveDluIndex] = useState(0);
+  const activeDlu = dluFigures[activeDluIndex];
+
   return (
     <div className="workspace-content">
+      <button
+        aria-label="Toggle dLU character image"
+        className="dmo-image-toggle"
+        onClick={() =>
+          setActiveDluIndex((current) => (current + 1) % dluFigures.length)
+        }
+        type="button"
+      >
+        <img
+          alt={activeDlu.alt}
+          className="dmo-figure"
+          src={activeDlu.src}
+        />
+      </button>
+
       <section className="copy-card">
         <h2 className="content-title">Reasoning before explanation</h2>
         <p>
-          The main panel needs to support reading, writing, and comparison. Normal
-          text should stay neutral; the brand color is reserved for selection,
-          emphasis, and small status cues.
+          The main panel needs to support reading, writing, and comparison.
+          Normal text should stay neutral; the brand color is reserved for
+          selection, emphasis, and small status cues.
         </p>
       </section>
 
@@ -422,24 +565,43 @@ function MainPanelContent() {
 }
 
 function ChatPanelContent() {
+  const [draft, setDraft] = useState("");
+  const [messages, setMessages] = useState(initialChatMessages);
+
+  function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextMessage = draft.trim();
+    if (!nextMessage) return;
+
+    setMessages((current) => [
+      ...current,
+      { author: "Student", text: nextMessage, tone: "student" },
+    ]);
+    setDraft("");
+  }
+
   return (
     <div className="chat-thread">
-      <div className="chat-message student">
-        <span>Student</span>
-        <p>I moved the 4 first because it was outside the parentheses.</p>
+      <div className="chat-message-list" aria-live="polite">
+        {messages.map((message, index) => (
+          <div className={`chat-message ${message.tone}`} key={`${message.author}-${index}`}>
+            <span>{message.author}</span>
+            <p>{message.text}</p>
+          </div>
+        ))}
       </div>
-      <div className="chat-message tutor">
-        <span>Tutor draft</span>
-        <p>Good. After subtracting 4 from both sides, what equation is left?</p>
-      </div>
-      <div className="chat-message student">
-        <span>Student</span>
-        <p>3(x - 2) = 12</p>
-      </div>
-      <div className="composer-row" aria-hidden="true">
-        <span>Ask one follow-up...</span>
-        <strong>Send</strong>
-      </div>
+
+      <form className="composer-row" onSubmit={sendMessage}>
+        <input
+          aria-label="Message dLU"
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Message dLU..."
+          type="text"
+          value={draft}
+        />
+        <button type="submit">Send</button>
+      </form>
     </div>
   );
 }
