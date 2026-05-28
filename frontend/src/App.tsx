@@ -15,14 +15,9 @@ const leftPanels = [
   { density: "compact", kind: "checks", label: "Left panel four" },
 ] as const;
 
-const dluFigures = [
-  { alt: "dLU tutor character", src: "/test-images/test-dmo.png" },
-  { alt: "Alternate dLU tutor character", src: "/test-images/test-dmo2.png" },
-] as const;
-
 const rowDividerHeight = 12;
 const minMainPanelHeight = 120;
-const minLowerPanelHeight = 150;
+const minLowerPanelHeight = 170;
 const standardWorkspaceWidth = 1180;
 const minWorkspaceWidth = 860;
 const maxWorkspaceWidth = 1800;
@@ -34,7 +29,7 @@ const initialChatMessages = [
     tone: "student",
   },
   {
-    author: "dLU draft",
+    author: "dLU",
     text: "Good. After subtracting 4 from both sides, what equation is left?",
     tone: "tutor",
   },
@@ -505,26 +500,8 @@ function LeftPanelContent({ kind }: { kind: LeftPanelKind }) {
 }
 
 function MainPanelContent() {
-  const [activeDluIndex, setActiveDluIndex] = useState(0);
-  const activeDlu = dluFigures[activeDluIndex];
-
   return (
     <div className="workspace-content">
-      <button
-        aria-label="Toggle dLU character image"
-        className="dmo-image-toggle"
-        onClick={() =>
-          setActiveDluIndex((current) => (current + 1) % dluFigures.length)
-        }
-        type="button"
-      >
-        <img
-          alt={activeDlu.alt}
-          className="dmo-figure"
-          src={activeDlu.src}
-        />
-      </button>
-
       <section className="copy-card">
         <h2 className="content-title">Reasoning before explanation</h2>
         <p>
@@ -582,29 +559,37 @@ function ChatPanelContent() {
   }
 
   return (
-    <div className="chat-thread">
-      <div className="chat-message-list" aria-live="polite">
-        {messages.map((message, index) => (
-          <div
-            className={`chat-message ${message.tone}`}
-            key={`${message.author}-${index}`}
-          >
-            <span>{message.author}</span>
-            <p>{message.text}</p>
-          </div>
-        ))}
+    <div className="chat-stage">
+      <div className="chat-thread">
+        <div className="chat-message-list" aria-live="polite">
+          {messages.map((message, index) => (
+            <div
+              className={`chat-message ${message.tone}`}
+              key={`${message.author}-${index}`}
+            >
+              <span>{message.author}</span>
+              <p>{message.text}</p>
+            </div>
+          ))}
+        </div>
+
+        <form className="composer-row" onSubmit={sendMessage}>
+          <input
+            aria-label="Message dLU"
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="Message dLU..."
+            type="text"
+            value={draft}
+          />
+          <button type="submit">Send</button>
+        </form>
       </div>
 
-      <form className="composer-row" onSubmit={sendMessage}>
-        <input
-          aria-label="Message dLU"
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="Message dLU..."
-          type="text"
-          value={draft}
-        />
-        <button type="submit">Send</button>
-      </form>
+      <img
+        alt="dLU"
+        className="chat-dlu-figure"
+        src="/test-images/dLU-right.png"
+      />
     </div>
   );
 }
