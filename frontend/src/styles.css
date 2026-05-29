@@ -515,6 +515,87 @@ button {
   opacity: 0.55;
 }
 
+.runtime-controls {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.runtime-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.runtime-control-header > span {
+  overflow: hidden;
+  color: var(--page-ink);
+  font-size: 0.78rem;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-control-header .voice-status {
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 0.67rem;
+}
+
+.control-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted-ink);
+  font-size: 0.7rem;
+  font-weight: 760;
+}
+
+.control-field select {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 26px 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 20%, var(--panel-soft-border));
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 88%, transparent);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
+.control-field select:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.control-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
+  gap: 7px;
+  min-width: 0;
+}
+
+.runtime-controls .header-action {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-user {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.7rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .left-panel-toggle {
   position: absolute;
   top: 8px;
@@ -947,7 +1028,7 @@ button {
 
 .chat-dlu-figure {
   position: absolute;
-  left: calc(var(--chat-side-space) - 18px);
+  left: calc(var(--chat-side-space) - 32px);
   bottom: 46px;
   display: block;
   width: var(--dlu-width);

@@ -17,7 +17,7 @@ import {
 } from "./realtime";
 
 const leftPanels = [
-  { density: "tall", kind: "brief", label: "Left panel one" },
+  { density: "tall", kind: "controls", label: "Runtime controls" },
   { density: "compact", kind: "code", label: "Left panel two" },
   { density: "compact", kind: "reference", label: "Left panel three" },
   { density: "compact", kind: "checks", label: "Left panel four" },
@@ -240,7 +240,7 @@ async function apiFetch<T>(url: string, options: RequestInit = {}) {
 function App() {
   const pathname = window.location.pathname;
 
-  if (pathname === "/surfaces/tutoring/panels") {
+  if (pathname === "/" || pathname === "/surfaces/tutoring/panels") {
     return <PanelStudy />;
   }
 
@@ -260,7 +260,7 @@ function PanelStudy() {
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
   );
   const realtimeConnectionRef = useRef<DluRealtimeConnection | null>(null);
-  const [isLeftOpen, setIsLeftOpen] = useState(false);
+  const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [workspaceWidth, setWorkspaceWidth] = useState(
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
   );
@@ -765,60 +765,6 @@ function PanelStudy() {
     >
       <header className="study-header">
         <p className="study-kicker">Tutoring workspace</p>
-        <div className="study-actions">
-          {user ? <span className="study-user">{user.displayName}</span> : null}
-          <label className="header-select">
-            <span>Model</span>
-            <select
-              disabled={chatStatus === "loading" || isSendingMessage}
-              onChange={(event) =>
-                setSelectedModel(event.target.value as RealtimeModelId)
-              }
-              value={selectedModel}
-            >
-              {realtimeModelOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="header-select">
-            <span>Voice</span>
-            <select
-              disabled={chatStatus === "loading" || isSendingMessage}
-              onChange={(event) =>
-                setSelectedVoice(event.target.value as RealtimeVoiceId)
-              }
-              value={selectedVoice}
-            >
-              {realtimeVoiceOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className={`voice-status voice-status-${realtimeStatus}`}>
-            {realtimeStatusLabels[realtimeStatus]}
-          </span>
-          <button
-            className="header-action"
-            disabled={chatStatus === "loading" || isCreatingSession || isSendingMessage}
-            onClick={createNewSession}
-            type="button"
-          >
-            {isCreatingSession ? "Creating..." : "New session"}
-          </button>
-          <button
-            className="header-action secondary"
-            disabled={isSigningOut}
-            onClick={signOut}
-            type="button"
-          >
-            Sign out
-          </button>
-        </div>
       </header>
 
       <section
@@ -851,7 +797,23 @@ function PanelStudy() {
                 density={panel.density}
                 key={panel.label}
               >
-                <LeftPanelContent kind={panel.kind} />
+                <LeftPanelContent
+                  controls={{
+                    chatStatus,
+                    isCreatingSession,
+                    isSendingMessage,
+                    isSigningOut,
+                    onCreateNewSession: createNewSession,
+                    onModelChange: setSelectedModel,
+                    onSignOut: signOut,
+                    onVoiceChange: setSelectedVoice,
+                    realtimeStatus,
+                    selectedModel,
+                    selectedVoice,
+                    user,
+                  }}
+                  kind={panel.kind}
+                />
               </PanelWindow>
             ))}
           </div>
@@ -923,7 +885,32 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
 
 type LeftPanelKind = (typeof leftPanels)[number]["kind"];
 
-function LeftPanelContent({ kind }: { kind: LeftPanelKind }) {
+type RuntimeControlsProps = {
+  chatStatus: "loading" | "ready" | "error";
+  isCreatingSession: boolean;
+  isSendingMessage: boolean;
+  isSigningOut: boolean;
+  onCreateNewSession: () => Promise<void>;
+  onModelChange: (model: RealtimeModelId) => void;
+  onSignOut: () => Promise<void>;
+  onVoiceChange: (voice: RealtimeVoiceId) => void;
+  realtimeStatus: RealtimeStatus;
+  selectedModel: RealtimeModelId;
+  selectedVoice: RealtimeVoiceId;
+  user: ApiUser | null;
+};
+
+function LeftPanelContent({
+  controls,
+  kind,
+}: {
+  controls: RuntimeControlsProps;
+  kind: LeftPanelKind;
+}) {
+  if (kind === "controls") {
+    return <RuntimeControls {...controls} />;
+  }
+
   if (kind === "code") {
     return (
       <CodeBlock
@@ -982,6 +969,89 @@ function LeftPanelContent({ kind }: { kind: LeftPanelKind }) {
       <p className="muted-copy">
         Preferred response shape: short question, one target, no full solution yet.
       </p>
+    </div>
+  );
+}
+
+function RuntimeControls({
+  chatStatus,
+  isCreatingSession,
+  isSendingMessage,
+  isSigningOut,
+  onCreateNewSession,
+  onModelChange,
+  onSignOut,
+  onVoiceChange,
+  realtimeStatus,
+  selectedModel,
+  selectedVoice,
+  user,
+}: RuntimeControlsProps) {
+  const isControlDisabled = chatStatus === "loading" || isSendingMessage;
+
+  return (
+    <div className="runtime-controls">
+      <div className="runtime-control-header">
+        <span>Controls</span>
+        <strong className={`voice-status voice-status-${realtimeStatus}`}>
+          {realtimeStatusLabels[realtimeStatus]}
+        </strong>
+      </div>
+
+      <label className="control-field">
+        <span>Model</span>
+        <select
+          disabled={isControlDisabled}
+          onChange={(event) =>
+            onModelChange(event.target.value as RealtimeModelId)
+          }
+          value={selectedModel}
+        >
+          {realtimeModelOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="control-field">
+        <span>Voice</span>
+        <select
+          disabled={isControlDisabled}
+          onChange={(event) =>
+            onVoiceChange(event.target.value as RealtimeVoiceId)
+          }
+          value={selectedVoice}
+        >
+          {realtimeVoiceOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="control-actions">
+        <button
+          className="header-action"
+          disabled={chatStatus === "loading" || isCreatingSession || isSendingMessage}
+          onClick={onCreateNewSession}
+          type="button"
+        >
+          {isCreatingSession ? "Creating..." : "New session"}
+        </button>
+        <button
+          className="header-action secondary"
+          disabled={isSigningOut}
+          onClick={onSignOut}
+          type="button"
+        >
+          Sign out
+        </button>
+      </div>
+
+      {user ? <p className="control-user">{user.displayName}</p> : null}
     </div>
   );
 }
