@@ -84,6 +84,7 @@ type ServerEvent = {
   };
   item?: unknown;
   name?: string;
+  part?: unknown;
   response?: unknown;
   text?: string;
   transcript?: string;
@@ -130,6 +131,12 @@ function itemText(item: unknown) {
   return contentText(itemObject.content);
 }
 
+function partText(part: unknown) {
+  const partObject = objectValue(part);
+  if (!partObject) return "";
+  return stringValue(partObject.text) || stringValue(partObject.transcript);
+}
+
 function responseText(response: unknown) {
   const responseObject = objectValue(response);
   const output = responseObject?.output;
@@ -142,6 +149,7 @@ function textFromServerEvent(event: ServerEvent) {
   return (
     stringValue(event.text) ||
     stringValue(event.transcript) ||
+    partText(event.part) ||
     itemText(event.item) ||
     responseText(event.response)
   );
@@ -204,6 +212,9 @@ function toolCallFromServerEvent(event: ServerEvent) {
       name,
     };
   }
+
+  const itemToolCall = toolCallFromRecord(objectValue(event.item));
+  if (itemToolCall) return itemToolCall;
 
   return toolCallFromResponse(event.response);
 }
