@@ -67,6 +67,7 @@ DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
+TOOL_DISPLAY_TITLE_KEY = "x-dluDisplayTitle"
 
 
 def serialize_user(user):
@@ -151,6 +152,7 @@ def serialize_event_chat_tool(tool):
 def openai_tool_parameters(parameters):
     schema = dict(parameters or {"type": "object", "properties": {}, "required": []})
     schema.pop(TOOL_CAPTURE_SAVE_MAP_KEY, None)
+    schema.pop(TOOL_DISPLAY_TITLE_KEY, None)
     return schema
 
 
@@ -588,6 +590,13 @@ def normalize_tool_parameters(value):
         if argument_name and context_key:
             normalized_capture_save_map[argument_name] = context_key
 
+    raw_display_title = parameters.get(TOOL_DISPLAY_TITLE_KEY, "")
+    display_title = (
+        str(raw_display_title).strip() if raw_display_title not in (None, "") else ""
+    )
+    if len(display_title) > 120:
+        return None, "Tool display title is too long."
+
     parameters["properties"] = properties
     parameters["required"] = [str(item) for item in required]
     parameters.setdefault("additionalProperties", False)
@@ -595,6 +604,10 @@ def normalize_tool_parameters(value):
         parameters[TOOL_CAPTURE_SAVE_MAP_KEY] = normalized_capture_save_map
     else:
         parameters.pop(TOOL_CAPTURE_SAVE_MAP_KEY, None)
+    if display_title:
+        parameters[TOOL_DISPLAY_TITLE_KEY] = display_title
+    else:
+        parameters.pop(TOOL_DISPLAY_TITLE_KEY, None)
     return parameters, ""
 
 

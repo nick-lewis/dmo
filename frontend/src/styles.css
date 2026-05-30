@@ -1037,6 +1037,40 @@ button {
   outline-offset: 3px;
 }
 
+.chat-exit-summary {
+  grid-template-columns: auto auto;
+  justify-content: start;
+  gap: 7px;
+}
+
+.chat-exit-expand-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.chat-exit-title-input {
+  min-width: 5ch;
+  max-width: 34ch;
+  min-height: 26px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: 0;
+  color: var(--page-ink);
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.chat-exit-title-input:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 24%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--panel-bg-strong) 64%, transparent);
+}
+
+.chat-exit-title-input::placeholder {
+  color: color-mix(in srgb, var(--muted-ink) 58%, transparent);
+}
+
 .event-step-kind {
   display: inline-flex;
   align-items: center;
@@ -1322,7 +1356,8 @@ button {
 }
 
 .chat-exit-core-line {
-  grid-template-columns: auto minmax(180px, 0.42fr);
+  grid-template-columns: auto minmax(180px, 260px);
+  justify-content: start;
 }
 
 .chat-exit-capture-block {
@@ -1334,7 +1369,7 @@ button {
 .chat-exit-capture-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   min-width: 0;
 }

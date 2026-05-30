@@ -56,6 +56,7 @@ const eventActionOptions = [
   { id: "button_choice", label: "Button choice" },
 ] as const;
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
+const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 
 type ChatMessage = {
   id: string;
@@ -200,6 +201,7 @@ type EventChatToolDraft = {
   id: string;
   name: string;
   sortOrder: number;
+  title: string;
   triggersEvent: string;
 };
 
@@ -535,6 +537,11 @@ function toolCaptureDraftsFromTool(tool: EventChatTool): EventChatCaptureDraft[]
   return captures;
 }
 
+function chatToolDisplayTitle(tool: EventChatTool) {
+  const rawTitle = tool.parameters[chatExitDisplayTitleKey];
+  return typeof rawTitle === "string" ? rawTitle : "";
+}
+
 function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
   return {
     captures: toolCaptureDraftsFromTool(tool),
@@ -543,6 +550,7 @@ function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
     id: tool.id,
     name: tool.name,
     sortOrder: tool.sortOrder,
+    title: chatToolDisplayTitle(tool),
     triggersEvent: tool.triggersEvent,
   };
 }
@@ -824,10 +832,13 @@ function normalizedChatToolParameters(tool: EventChatToolDraft) {
       saveAs: capture.saveAs.trim(),
     }))
     .filter((capture) => capture.saveAs);
+  const title = tool.title.trim();
+  const metadata = title ? { [chatExitDisplayTitleKey]: title } : {};
 
   if (!captures.length) {
     return {
       additionalProperties: false,
+      ...metadata,
       properties: {},
       required: [],
       type: "object",
@@ -841,13 +852,14 @@ function normalizedChatToolParameters(tool: EventChatToolDraft) {
   return {
     additionalProperties: false,
     [chatExitCaptureSaveMapKey]: captureSaveMap,
+    ...metadata,
     properties: Object.fromEntries(
       captures.map((capture) => [
         capture.saveAs,
         {
-        description:
+          description:
             capture.description || `The value to save as ${capture.saveAs}.`,
-        type: "string",
+          type: "string",
         },
       ]),
     ),
@@ -3352,25 +3364,38 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <GripIcon />
                         </span>
 
-                        <button
-                          aria-expanded={isExpanded}
-                          className="event-step-summary"
-                          onClick={() =>
-                            setExpandedStepId(isExpanded ? "" : tool.id)
-                          }
-                          type="button"
-                        >
-                          <span className="event-step-kind">Chat exit</span>
-                          <span className="event-step-copy">
-                            {compactPreview(
-                              tool.description,
-                              "Describe trigger conditions",
-                            )}{" "}
-                            | Destination:{" "}
-                            {eventTitleForTrigger(editorEvents, targetEventSlug) ||
-                              "Choose event"}
-                          </span>
-                        </button>
+                        <div className="event-step-summary chat-exit-summary">
+                          <button
+                            aria-expanded={isExpanded}
+                            className="event-step-kind chat-exit-expand-button"
+                            onClick={() =>
+                              setExpandedStepId(isExpanded ? "" : tool.id)
+                            }
+                            type="button"
+                          >
+                            Chat exit
+                          </button>
+                          <input
+                            aria-label="Chat exit title"
+                            className="chat-exit-title-input"
+                            onChange={(event) =>
+                              updateEventChatToolDraftField(
+                                tool.id,
+                                "title",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Title"
+                            style={inlineFieldWidthStyle(
+                              tool.title,
+                              "Title",
+                              5,
+                              34,
+                            )}
+                            type="text"
+                            value={tool.title}
+                          />
+                        </div>
 
                         <div className="event-step-tools">
                           <button
@@ -3449,9 +3474,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           </div>
                           <div className="chat-exit-capture-block">
                             <div className="chat-exit-capture-header">
-                              <span className="event-detail-label">
-                                CAPTURE ARGUMENTS
-                              </span>
                               <button
                                 className="event-add-button compact"
                                 onClick={() => addEventChatCapture(tool.id)}
