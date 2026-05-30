@@ -165,7 +165,7 @@ type EventStepDraft = {
   sortOrder: number;
 };
 
-type StartEventDraft = {
+type EventDraft = {
   title: string;
   description: string;
   steps: EventStepDraft[];
@@ -344,6 +344,26 @@ function getStartEvent(experience: Experience | null) {
   );
 }
 
+function sortedExperienceEvents(events: ExperienceEvent[]) {
+  return [...events].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+function getSelectedExperienceEvent(
+  experience: Experience | null,
+  eventId: string,
+) {
+  if (!experience) return null;
+
+  return (
+    experience.events.find((event) => event.id === eventId) ??
+    getStartEvent(experience)
+  );
+}
+
 function sortedEventSteps(steps: EventActionStep[]) {
   return [...steps].sort(
     (left, right) =>
@@ -390,15 +410,11 @@ function stepDraftFromStep(step: EventActionStep): EventStepDraft {
   };
 }
 
-function startEventDraftFromExperience(
-  experience: Experience | null,
-): StartEventDraft {
-  const startEvent = getStartEvent(experience);
-
+function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
   return {
-    description: startEvent?.description ?? "",
-    steps: startEvent ? sortedEventSteps(startEvent.steps).map(stepDraftFromStep) : [],
-    title: startEvent?.title ?? "Start",
+    description: event?.description ?? "",
+    steps: event ? sortedEventSteps(event.steps).map(stepDraftFromStep) : [],
+    title: event?.title ?? "Start",
   };
 }
 
@@ -421,11 +437,25 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
-      triggersEvent: "notes-opened",
+      triggersEvent: "",
     };
   }
 
   return { text: "" };
+}
+
+function defaultStepConfigForEvent(
+  actionType: EventActionStep["actionType"],
+  events: ExperienceEvent[],
+  currentEventId: string,
+) {
+  const config = defaultStepConfig(actionType);
+  if (actionType !== "set_ui_trigger") return config;
+
+  const destination = sortedExperienceEvents(events).find(
+    (event) => event.id !== currentEventId,
+  );
+  return destination ? { ...config, triggersEvent: destination.slug } : config;
 }
 
 function defaultStepLabel(actionType: EventActionStep["actionType"]) {
@@ -473,13 +503,51 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
   return "speech";
 }
 
+function eventTitleForTrigger(events: ExperienceEvent[], eventSlug: string) {
+  const target = events.find(
+    (event) => event.slug === eventSlug || event.id === eventSlug,
+  );
+  return target?.title ?? eventSlug;
+}
+
+function eventOutgoingSlugs(event: ExperienceEvent) {
+  const slugs = new Set<string>();
+  for (const step of event.steps) {
+    if (step.actionType !== "set_ui_trigger") continue;
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
+    if (triggersEvent) slugs.add(triggersEvent);
+  }
+  return [...slugs];
+}
+
+function eventTransitionStats(events: ExperienceEvent[], event: ExperienceEvent) {
+  const outgoingSlugs = eventOutgoingSlugs(event);
+  const incomingCount = events.filter((candidate) => {
+    if (candidate.id === event.id) return false;
+    return eventOutgoingSlugs(candidate).some(
+      (slug) => slug === event.slug || slug === event.id,
+    );
+  }).length;
+  const unresolvedCount = outgoingSlugs.filter(
+    (slug) =>
+      !events.some((candidate) => candidate.slug === slug || candidate.id === slug),
+  ).length;
+
+  return {
+    incomingCount,
+    isUnlinked: !event.isStart && incomingCount === 0,
+    outgoingCount: outgoingSlugs.length,
+    unresolvedCount,
+  };
+}
+
 function compactPreview(value: string, fallback: string) {
   const compact = value.trim().replace(/\s+/g, " ");
   if (!compact) return fallback;
   return compact.length > 112 ? `${compact.slice(0, 109)}...` : compact;
 }
 
-function eventStepSummary(step: EventStepDraft) {
+function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   if (step.actionType === "set_context") {
     const key = stringConfigValue(step.config, "key", "key");
     const value = stringConfigValue(step.config, "value", "value");
@@ -499,7 +567,8 @@ function eventStepSummary(step: EventStepDraft) {
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
     const triggersEvent = stringConfigValue(step.config, "triggersEvent", "event");
-    return `${selector || "target"} -> ${triggersEvent || "event"}`;
+    const targetEvent = eventTitleForTrigger(events, triggersEvent);
+    return `${selector || "target"} -> ${targetEvent || "event"}`;
   }
 
   return compactPreview(
@@ -547,9 +616,21 @@ function replaceExperienceEvent(
 ) {
   return {
     ...experience,
-    events: experience.events
-      .map((event) => (event.id === nextEvent.id ? nextEvent : event))
-      .sort((left, right) => left.sortOrder - right.sortOrder),
+    events: sortedExperienceEvents(
+      experience.events.map((event) =>
+        event.id === nextEvent.id ? nextEvent : event,
+      ),
+    ),
+  };
+}
+
+function addExperienceEvent(
+  experience: Experience,
+  nextEvent: ExperienceEvent,
+) {
+  return {
+    ...experience,
+    events: sortedExperienceEvents([...experience.events, nextEvent]),
   };
 }
 
@@ -1171,11 +1252,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     voice: "ash",
     voiceInstructions: "",
   });
-  const [startEventDraft, setStartEventDraft] = useState<StartEventDraft>({
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [eventDraft, setEventDraft] = useState<EventDraft>({
     description: "",
     steps: [],
     title: "Start",
   });
+  const [eventSearch, setEventSearch] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
   const [expandedStepId, setExpandedStepId] = useState("");
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
@@ -1196,13 +1279,18 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const eventAddBlockRef = useRef<HTMLDivElement | null>(null);
 
   function applyExperience(nextExperience: Experience) {
+    const selectedEvent = getSelectedExperienceEvent(
+      nextExperience,
+      selectedEventId,
+    );
     setExperience(nextExperience);
     setExperienceForm({
       description: nextExperience.description,
       title: nextExperience.title,
     });
     setTutorForm(nextExperience.tutor);
-    setStartEventDraft(startEventDraftFromExperience(nextExperience));
+    setSelectedEventId(selectedEvent?.id ?? "");
+    setEventDraft(eventDraftFromEvent(selectedEvent));
   }
 
   useEffect(() => {
@@ -1495,23 +1583,34 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     queueTutorAutosave(nextDraft);
   }
 
-  function getStartEventParts() {
-    const startEvent = getStartEvent(experience);
-    return { startEvent };
+  function clearEventAutosaveTimer() {
+    if (!eventAutosaveTimer.current) return;
+    window.clearTimeout(eventAutosaveTimer.current);
+    eventAutosaveTimer.current = null;
   }
 
-  function hasStartEventChanges(draft: StartEventDraft) {
-    const { startEvent } = getStartEventParts();
-    if (!startEvent) return false;
+  function nextEventAutosaveVersion() {
+    eventAutosaveVersion.current += 1;
+    return eventAutosaveVersion.current;
+  }
+
+  function getSelectedEventParts() {
+    const selectedEvent = getSelectedExperienceEvent(experience, selectedEventId);
+    return { selectedEvent };
+  }
+
+  function hasEventChanges(draft: EventDraft) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!selectedEvent) return false;
 
     if (
-      draft.title !== startEvent.title ||
-      draft.description !== startEvent.description
+      draft.title !== selectedEvent.title ||
+      draft.description !== selectedEvent.description
     ) {
       return true;
     }
 
-    const currentSteps = sortedEventSteps(startEvent.steps);
+    const currentSteps = sortedEventSteps(selectedEvent.steps);
     if (draft.steps.length !== currentSteps.length) return true;
 
     return draft.steps.some((draftStep) => {
@@ -1525,34 +1624,23 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     });
   }
 
-  function clearEventAutosaveTimer() {
-    if (!eventAutosaveTimer.current) return;
-    window.clearTimeout(eventAutosaveTimer.current);
-    eventAutosaveTimer.current = null;
-  }
-
-  function nextEventAutosaveVersion() {
-    eventAutosaveVersion.current += 1;
-    return eventAutosaveVersion.current;
-  }
-
-  async function persistStartEventDraft(draft: StartEventDraft, version: number) {
-    const { startEvent } = getStartEventParts();
-    if (!experience || !startEvent || !draft.title.trim()) {
+  async function persistEventDraft(draft: EventDraft, version: number) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent || !draft.title.trim()) {
       return true;
     }
 
     setError("");
 
     try {
-      const currentSteps = sortedEventSteps(startEvent.steps);
+      const currentSteps = sortedEventSteps(selectedEvent.steps);
 
       if (
-        draft.title !== startEvent.title ||
-        draft.description !== startEvent.description
+        draft.title !== selectedEvent.title ||
+        draft.description !== selectedEvent.description
       ) {
         const eventPayload = await apiFetch<{ event: ExperienceEvent }>(
-          `/api/experiences/${experience.id}/events/${startEvent.id}/`,
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/`,
           {
             method: "PATCH",
             body: JSON.stringify({
@@ -1583,7 +1671,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         }
 
         const stepPayload = await apiFetch<{ step: EventActionStep }>(
-          `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${draftStep.id}/`,
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${draftStep.id}/`,
           {
             method: "PATCH",
             body: JSON.stringify({
@@ -1602,7 +1690,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             current && current.id === experience.id
               ? replaceExperienceEventStep(
                   current,
-                  startEvent.id,
+                  selectedEvent.id,
                   stepPayload.step,
                 )
               : current,
@@ -1616,68 +1704,68 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         setError(
           saveError instanceof Error
             ? saveError.message
-            : "Could not save start event.",
+            : "Could not save event.",
         );
       }
       return false;
     }
   }
 
-  function queueEventAutosave(draft: StartEventDraft) {
+  function queueEventAutosave(draft: EventDraft) {
     clearEventAutosaveTimer();
 
-    if (!draft.title.trim() || !hasStartEventChanges(draft)) return;
+    if (!draft.title.trim() || !hasEventChanges(draft)) return;
 
     const version = nextEventAutosaveVersion();
     eventAutosaveTimer.current = window.setTimeout(() => {
       eventAutosaveTimer.current = null;
-      void persistStartEventDraft(draft, version);
+      void persistEventDraft(draft, version);
     }, experienceAutosaveDelayMs);
   }
 
   async function flushEventAutosave() {
     clearEventAutosaveTimer();
 
-    if (!hasStartEventChanges(startEventDraft)) return true;
+    if (!hasEventChanges(eventDraft)) return true;
 
     const version = nextEventAutosaveVersion();
-    return persistStartEventDraft(startEventDraft, version);
+    return persistEventDraft(eventDraft, version);
   }
 
-  function updateStartEventDraft(
+  function updateEventDraft(
     field: "description" | "title",
     value: string,
   ) {
     const nextDraft = {
-      ...startEventDraft,
+      ...eventDraft,
       [field]: value,
     };
 
-    setStartEventDraft(nextDraft);
+    setEventDraft(nextDraft);
     queueEventAutosave(nextDraft);
   }
 
-  function updateStartEventStepDraft(
+  function updateEventStepDraft(
     stepId: string,
     updater: (step: EventStepDraft) => EventStepDraft,
   ) {
     const nextDraft = {
-      ...startEventDraft,
-      steps: startEventDraft.steps.map((step) =>
+      ...eventDraft,
+      steps: eventDraft.steps.map((step) =>
         step.id === stepId ? updater(step) : step,
       ),
     };
 
-    setStartEventDraft(nextDraft);
+    setEventDraft(nextDraft);
     queueEventAutosave(nextDraft);
   }
 
-  function updateStartEventStepConfig(
+  function updateEventStepConfig(
     stepId: string,
     key: string,
     value: string,
   ) {
-    updateStartEventStepDraft(stepId, (step) => ({
+    updateEventStepDraft(stepId, (step) => ({
       ...step,
       config: {
         ...step.config,
@@ -1686,11 +1774,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }));
   }
 
-  function updateStartEventStepCondition(
+  function updateEventStepCondition(
     stepId: string,
     condition: Partial<StepConditionDraft>,
   ) {
-    updateStartEventStepDraft(stepId, (step) => {
+    updateEventStepDraft(stepId, (step) => {
       const nextCondition = {
         ...step.condition,
         ...condition,
@@ -1708,30 +1796,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     });
   }
 
-  function updateStartEventStepAction(
-    stepId: string,
-    actionType: EventActionStep["actionType"],
-  ) {
-    updateStartEventStepDraft(stepId, (step) => ({
-      ...step,
-      actionType,
-      config:
-        step.actionType === actionType ? step.config : defaultStepConfig(actionType),
-      label: step.label || defaultStepLabel(actionType),
-    }));
-  }
-
-  function applyUpdatedStartEvent(nextEvent: ExperienceEvent) {
+  function applyUpdatedEvent(nextEvent: ExperienceEvent) {
     if (!experience) return;
 
     const nextExperience = replaceExperienceEvent(experience, nextEvent);
     setExperience(nextExperience);
-    setStartEventDraft(startEventDraftFromExperience(nextExperience));
+    setSelectedEventId(nextEvent.id);
+    setEventDraft(eventDraftFromEvent(nextEvent));
   }
 
-  async function addStartEventStep(actionType: EventActionStep["actionType"]) {
-    const { startEvent } = getStartEventParts();
-    if (!experience || !startEvent) return;
+  async function selectEditorEvent(nextEventId: string) {
+    if (!experience || nextEventId === selectedEventId) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    const nextEvent = getSelectedExperienceEvent(experience, nextEventId);
+    setSelectedEventId(nextEvent?.id ?? "");
+    setEventDraft(eventDraftFromEvent(nextEvent));
+    setExpandedStepId("");
+    setDraggingStepId("");
+    setIsEventAddMenuOpen(false);
+  }
+
+  async function createEditorEvent() {
+    if (!experience) return;
 
     const didSave = await flushEventAutosave();
     if (!didSave) return;
@@ -1739,19 +1828,60 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      const existingStepIds = new Set(startEvent.steps.map((step) => step.id));
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/`,
+        `/api/experiences/${experience.id}/events/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ description: "", title: "New event" }),
+        },
+      );
+
+      setExperience((current) =>
+        current && current.id === experience.id
+          ? addExperienceEvent(current, payload.event)
+          : current,
+      );
+      setSelectedEventId(payload.event.id);
+      setEventDraft(eventDraftFromEvent(payload.event));
+      setExpandedStepId("");
+      setDraggingStepId("");
+      setIsEventAddMenuOpen(false);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not create event.",
+      );
+    }
+  }
+
+  async function addEventStep(actionType: EventActionStep["actionType"]) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const existingStepIds = new Set(selectedEvent.steps.map((step) => step.id));
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/`,
         {
           method: "POST",
           body: JSON.stringify({
             actionType,
-            config: defaultStepConfig(actionType),
+            config: defaultStepConfigForEvent(
+              actionType,
+              experience.events,
+              selectedEvent.id,
+            ),
             label: defaultStepLabel(actionType),
           }),
         },
       );
-      applyUpdatedStartEvent(payload.event);
+      applyUpdatedEvent(payload.event);
       const nextSortedSteps = sortedEventSteps(payload.event.steps);
       const newStep =
         nextSortedSteps.find((step) => !existingStepIds.has(step.id)) ??
@@ -1769,9 +1899,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
-  async function deleteStartEventStep(stepId: string) {
-    const { startEvent } = getStartEventParts();
-    if (!experience || !startEvent || startEventDraft.steps.length <= 1) return;
+  async function deleteEventStep(stepId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent || eventDraft.steps.length <= 1) return;
 
     const didSave = await flushEventAutosave();
     if (!didSave) return;
@@ -1780,12 +1910,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     try {
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${stepId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${stepId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedStartEvent(payload.event);
+      applyUpdatedEvent(payload.event);
       if (expandedStepId === stepId) {
         setExpandedStepId("");
       }
@@ -1798,12 +1928,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
-  async function reorderStartEventStep(stepId: string, targetStepId: string) {
-    const { startEvent } = getStartEventParts();
-    if (!experience || !startEvent) return;
+  async function reorderEventStep(stepId: string, targetStepId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
 
-    const currentIndex = startEventDraft.steps.findIndex((step) => step.id === stepId);
-    const targetIndex = startEventDraft.steps.findIndex(
+    const currentIndex = eventDraft.steps.findIndex((step) => step.id === stepId);
+    const targetIndex = eventDraft.steps.findIndex(
       (step) => step.id === targetStepId,
     );
     if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
@@ -1813,7 +1943,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const didSave = await flushEventAutosave();
     if (!didSave) return;
 
-    const reorderedSteps = [...startEventDraft.steps];
+    const reorderedSteps = [...eventDraft.steps];
     const [movedStep] = reorderedSteps.splice(currentIndex, 1);
     reorderedSteps.splice(targetIndex, 0, movedStep);
     const nextSteps = reorderedSteps.map((step, index) => ({
@@ -1821,15 +1951,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       sortOrder: index,
     }));
 
-    setStartEventDraft({
-      ...startEventDraft,
+    setEventDraft({
+      ...eventDraft,
       steps: nextSteps,
     });
     setError("");
 
     try {
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/reorder/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/reorder/`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -1837,16 +1967,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           }),
         },
       );
-      applyUpdatedStartEvent(payload.event);
+      applyUpdatedEvent(payload.event);
     } catch (moveError) {
       setError(
         moveError instanceof Error ? moveError.message : "Could not reorder steps.",
       );
-      setStartEventDraft(startEventDraftFromExperience(experience));
+      setEventDraft(eventDraftFromEvent(selectedEvent));
     }
   }
 
-  function dragStartEventStep(
+  function dragEventStep(
     event: DragEvent<HTMLElement>,
     stepId: string,
   ) {
@@ -1855,12 +1985,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     event.dataTransfer.setData("text/plain", stepId);
   }
 
-  function dragOverStartEventStep(event: DragEvent<HTMLElement>) {
+  function dragOverEventStep(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
   }
 
-  async function dropStartEventStep(
+  async function dropEventStep(
     event: DragEvent<HTMLElement>,
     targetStepId: string,
   ) {
@@ -1869,7 +1999,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       event.dataTransfer.getData("text/plain") || draggingStepId;
     setDraggingStepId("");
     if (!sourceStepId || sourceStepId === targetStepId) return;
-    await reorderStartEventStep(sourceStepId, targetStepId);
+    await reorderEventStep(sourceStepId, targetStepId);
   }
 
   async function flushEditorAutosave() {
@@ -1987,6 +2117,21 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  const editorEvents = experience
+    ? sortedExperienceEvents(experience.events)
+    : [];
+  const selectedEvent = getSelectedExperienceEvent(experience, selectedEventId);
+  const normalizedEventSearch = eventSearch.trim().toLowerCase();
+  const visibleEditorEvents = normalizedEventSearch
+    ? editorEvents.filter((event) =>
+        [
+          event.title,
+          event.description,
+          event.slug,
+        ].some((value) => value.toLowerCase().includes(normalizedEventSearch)),
+      )
+    : editorEvents;
+
   return (
     <main
       className="panel-study experience-editor-page"
@@ -2091,39 +2236,118 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             </section>
 
             <section className="editor-section event-editor-section">
-              <div className="event-document-header">
+              <div className="event-authoring-grid">
+                <aside className="event-outline" aria-label="Events">
+                  <div className="event-outline-tools">
+                    <input
+                      aria-label="Find event"
+                      className="event-search-input"
+                      onChange={(event) => setEventSearch(event.target.value)}
+                      placeholder="Find event"
+                      type="search"
+                      value={eventSearch}
+                    />
+                    <button
+                      className="event-create-button"
+                      onClick={() => void createEditorEvent()}
+                      type="button"
+                    >
+                      <PlusIcon />
+                      Event
+                    </button>
+                  </div>
+
+                  <div className="event-outline-list">
+                    {visibleEditorEvents.map((event) => {
+                      const stats = eventTransitionStats(editorEvents, event);
+                      const description =
+                        event.description.trim() || event.slug || "---";
+
+                      return (
+                        <button
+                          className={`event-outline-row${
+                            event.id === selectedEvent?.id ? " is-selected" : ""
+                          }`}
+                          key={event.id}
+                          onClick={() => void selectEditorEvent(event.id)}
+                          type="button"
+                        >
+                          <span className="event-outline-copy">
+                            <span className="event-outline-title">
+                              {event.title || "Untitled event"}
+                            </span>
+                            <span className="event-outline-description">
+                              {description}
+                            </span>
+                          </span>
+                          <span className="event-outline-meta">
+                            {event.isStart ? (
+                              <span className="event-outline-badge">Start</span>
+                            ) : null}
+                            {stats.outgoingCount ? (
+                              <span className="event-outline-count">
+                                {stats.outgoingCount} out
+                              </span>
+                            ) : null}
+                            {stats.incomingCount ? (
+                              <span className="event-outline-count">
+                                {stats.incomingCount} in
+                              </span>
+                            ) : null}
+                            {stats.isUnlinked ? (
+                              <span className="event-outline-warning">
+                                Unlinked
+                              </span>
+                            ) : null}
+                            {stats.unresolvedCount ? (
+                              <span className="event-outline-warning">
+                                Missing
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {!visibleEditorEvents.length ? (
+                      <div className="event-outline-empty">No events</div>
+                    ) : null}
+                  </div>
+                </aside>
+
+                <div className="event-workspace">
+                  <div className="event-document-header">
                 <div className="event-title-stack">
                   <div className="event-title-line">
                     <input
                       aria-label="Event title"
                       className="event-title-text"
                       onChange={(event) =>
-                        updateStartEventDraft("title", event.target.value)
+                        updateEventDraft("title", event.target.value)
                       }
                       style={inlineFieldWidthStyle(
-                        startEventDraft.title,
+                        eventDraft.title,
                         "Start",
                         6,
                         32,
                       )}
                       type="text"
-                      value={startEventDraft.title}
+                      value={eventDraft.title}
                     />
                     <input
                       aria-label="Event description"
                       className="event-description-text"
                       onChange={(event) =>
-                        updateStartEventDraft("description", event.target.value)
+                        updateEventDraft("description", event.target.value)
                       }
                       placeholder="---"
                       style={inlineFieldWidthStyle(
-                        startEventDraft.description,
+                        eventDraft.description,
                         "---",
                         4,
                         54,
                       )}
                       type="text"
-                      value={startEventDraft.description}
+                      value={eventDraft.description}
                     />
                   </div>
                 </div>
@@ -2134,10 +2358,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               </div>
 
               <div className="event-step-list">
-                {startEventDraft.steps.map((step, index) => {
+                {eventDraft.steps.map((step, index) => {
                   const conditionText = eventConditionSummary(step.condition);
                   const isExpanded = expandedStepId === step.id;
                   const toneClass = eventActionToneClass(step.actionType);
+                  const triggerEventSlug = stringConfigValue(
+                    step.config,
+                    "triggersEvent",
+                  );
+                  const hasTriggerEventOption = editorEvents.some(
+                    (event) => event.slug === triggerEventSlug,
+                  );
 
                   return (
                     <article
@@ -2151,8 +2382,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         .filter(Boolean)
                         .join(" ")}
                       key={step.id}
-                      onDragOver={dragOverStartEventStep}
-                      onDrop={(event) => void dropStartEventStep(event, step.id)}
+                      onDragOver={dragOverEventStep}
+                      onDrop={(event) => void dropEventStep(event, step.id)}
                     >
                       <div className="event-step-main">
                         <span
@@ -2161,7 +2392,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           draggable
                           onDragEnd={() => setDraggingStepId("")}
                           onDragStart={(event) =>
-                            dragStartEventStep(event, step.id)
+                            dragEventStep(event, step.id)
                           }
                           title="Drag to reorder"
                         >
@@ -2180,7 +2411,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             {eventActionLabel(step.actionType)}
                           </span>
                           <span className="event-step-copy">
-                            {eventStepSummary(step)}
+                            {eventStepSummary(step, editorEvents)}
                           </span>
                         </button>
 
@@ -2207,7 +2438,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               step.enabled ? "" : " is-off"
                             }`}
                             onClick={() =>
-                              updateStartEventStepDraft(
+                              updateEventStepDraft(
                                 step.id,
                                 (currentStep) => ({
                                   ...currentStep,
@@ -2223,8 +2454,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <button
                             aria-label="Delete step"
                             className="event-icon-button danger"
-                            disabled={startEventDraft.steps.length <= 1}
-                            onClick={() => void deleteStartEventStep(step.id)}
+                            disabled={eventDraft.steps.length <= 1}
+                            onClick={() => void deleteEventStep(step.id)}
                             type="button"
                           >
                             <TrashIcon />
@@ -2241,7 +2472,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 <input
                                   aria-label="Condition context key"
                                   onChange={(event) =>
-                                    updateStartEventStepCondition(step.id, {
+                                    updateEventStepCondition(step.id, {
                                       key: event.target.value,
                                     })
                                   }
@@ -2253,7 +2484,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 <input
                                   aria-label="Condition context value"
                                   onChange={(event) =>
-                                    updateStartEventStepCondition(step.id, {
+                                    updateEventStepCondition(step.id, {
                                       value: event.target.value,
                                     })
                                   }
@@ -2264,7 +2495,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 <button
                                   className="event-text-button"
                                   onClick={() =>
-                                    updateStartEventStepCondition(step.id, {
+                                    updateEventStepCondition(step.id, {
                                       type: "always",
                                     })
                                   }
@@ -2277,7 +2508,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <button
                                 className="event-add-condition-button"
                                 onClick={() =>
-                                  updateStartEventStepCondition(step.id, {
+                                  updateEventStepCondition(step.id, {
                                     type: "context_equals",
                                   })
                                 }
@@ -2293,7 +2524,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               aria-label="Speech text"
                               className="event-script-textarea"
                               onChange={(event) =>
-                                updateStartEventStepConfig(
+                                updateEventStepConfig(
                                   step.id,
                                   "text",
                                   event.target.value,
@@ -2310,7 +2541,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Context key"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "key",
                                     event.target.value,
@@ -2324,7 +2555,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Context value"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "value",
                                     event.target.value,
@@ -2343,7 +2574,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="UI state key"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "stateKey",
                                     event.target.value,
@@ -2357,7 +2588,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Context key"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "contextKey",
                                     event.target.value,
@@ -2376,7 +2607,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Highlight selector"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "selector",
                                     event.target.value,
@@ -2390,7 +2621,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Highlight color"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "color",
                                     event.target.value,
@@ -2409,7 +2640,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Highlight selector"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "selector",
                                     event.target.value,
@@ -2428,7 +2659,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <input
                                 aria-label="Trigger selector"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "selector",
                                     event.target.value,
@@ -2439,19 +2670,30 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 value={stringConfigValue(step.config, "selector")}
                               />
                               <span className="event-inline-operator">{"->"}</span>
-                              <input
+                              <select
                                 aria-label="Triggered event"
                                 onChange={(event) =>
-                                  updateStartEventStepConfig(
+                                  updateEventStepConfig(
                                     step.id,
                                     "triggersEvent",
                                     event.target.value,
                                   )
                                 }
-                                placeholder="notes-opened"
-                                type="text"
-                                value={stringConfigValue(step.config, "triggersEvent")}
-                              />
+                                value={triggerEventSlug}
+                              >
+                                <option value="">Choose event</option>
+                                {triggerEventSlug && !hasTriggerEventOption ? (
+                                  <option value={triggerEventSlug}>
+                                    {triggerEventSlug}
+                                  </option>
+                                ) : null}
+                                {editorEvents.map((event) => (
+                                  <option key={event.id} value={event.slug}>
+                                    {event.title || event.slug}
+                                    {event.isStart ? " (start)" : ""}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           ) : null}
                         </div>
@@ -2479,7 +2721,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           option.id,
                         )}`}
                         key={option.id}
-                        onClick={() => void addStartEventStep(option.id)}
+                        onClick={() => void addEventStep(option.id)}
                         type="button"
                       >
                         <span>{option.label}</span>
@@ -2488,6 +2730,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     ))}
                   </div>
                 ) : null}
+              </div>
+                </div>
               </div>
             </section>
           </>
