@@ -5,11 +5,13 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib.auth import get_user_model, login
 from django.contrib.auth import logout
 from django.db import transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import redirect
+from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -20,7 +22,14 @@ from .audio_cache import (
     get_or_create_voice_sample,
     voice_sample_audio_path,
 )
-from .models import Experience, SessionMessage, TutoringSession, TutorSettings
+from .models import (
+    EventActionStep,
+    Experience,
+    ExperienceEvent,
+    SessionMessage,
+    TutoringSession,
+    TutorSettings,
+)
 from .slides import (
     SlideFetchError,
     SlideResolutionError,
@@ -51,6 +60,8 @@ REALTIME_VOICES = {
 REALTIME_CONTEXT_MESSAGE_LIMIT = 24
 REALTIME_CONTEXT_CHAR_LIMIT = 8000
 DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
+DEFAULT_START_EVENT_TITLE = "Start"
+DEFAULT_SCRIPT_STEP_LABEL = "Say"
 
 
 def serialize_user(user):
@@ -70,6 +81,8 @@ def serialize_session(session):
         "id": str(session.id),
         "experienceId": str(session.experience_id) if session.experience_id else "",
         "title": session.title,
+        "runtimeContext": session.runtime_context,
+        "runtimeState": session.runtime_state,
         "status": session.status,
         "createdAt": session.created_at.isoformat(),
         "updatedAt": session.updated_at.isoformat(),
@@ -98,14 +111,52 @@ def serialize_tutor_settings(tutor_settings):
     }
 
 
+def serialize_event_action_step(step):
+    return {
+        "id": str(step.id),
+        "eventId": str(step.event_id),
+        "actionType": step.action_type,
+        "label": step.label,
+        "config": step.config,
+        "enabled": step.enabled,
+        "sortOrder": step.sort_order,
+        "createdAt": step.created_at.isoformat(),
+        "updatedAt": step.updated_at.isoformat(),
+    }
+
+
+def serialize_experience_event(event):
+    ensure_default_event_step(event)
+    return {
+        "id": str(event.id),
+        "experienceId": str(event.experience_id),
+        "title": event.title,
+        "slug": event.slug,
+        "description": event.description,
+        "isStart": event.is_start,
+        "sortOrder": event.sort_order,
+        "steps": [
+            serialize_event_action_step(step)
+            for step in event.steps.order_by("sort_order", "created_at")
+        ],
+        "createdAt": event.created_at.isoformat(),
+        "updatedAt": event.updated_at.isoformat(),
+    }
+
+
 def serialize_experience(experience):
     tutor_settings = ensure_tutor_settings(experience)
+    ensure_start_event(experience)
     return {
         "id": str(experience.id),
         "title": experience.title,
         "slug": experience.slug,
         "description": experience.description,
         "tutor": serialize_tutor_settings(tutor_settings),
+        "events": [
+            serialize_experience_event(event)
+            for event in experience.events.order_by("sort_order", "created_at")
+        ],
         "createdAt": experience.created_at.isoformat(),
         "updatedAt": experience.updated_at.isoformat(),
     }
@@ -145,6 +196,21 @@ def unique_experience_slug(user, title):
     return candidate
 
 
+def unique_event_slug(experience, title):
+    base_slug = slugify(title or DEFAULT_START_EVENT_TITLE) or "event"
+    candidate = base_slug
+    suffix = 2
+
+    while ExperienceEvent.objects.filter(
+        experience=experience,
+        slug=candidate,
+    ).exists():
+        candidate = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    return candidate
+
+
 def create_default_experience(user):
     experience = Experience.objects.create(
         user=user,
@@ -153,6 +219,7 @@ def create_default_experience(user):
         description="",
     )
     ensure_tutor_settings(experience)
+    ensure_start_event(experience)
     return experience
 
 
@@ -171,13 +238,61 @@ def ensure_tutor_settings(experience):
     return tutor_settings
 
 
+def ensure_default_event_step(event):
+    if event.steps.exists():
+        return event.steps.order_by("sort_order", "created_at").first()
+
+    return EventActionStep.objects.create(
+        event=event,
+        action_type=EventActionStep.ActionType.SCRIPT,
+        label=DEFAULT_SCRIPT_STEP_LABEL,
+        config={"text": ""},
+        sort_order=0,
+    )
+
+
+def ensure_start_event(experience):
+    start_event = (
+        experience.events.filter(is_start=True)
+        .order_by("sort_order", "created_at")
+        .first()
+    )
+    if not start_event:
+        start_event = experience.events.order_by("sort_order", "created_at").first()
+
+    if start_event:
+        if not start_event.is_start:
+            start_event.is_start = True
+            start_event.save(update_fields=["is_start", "updated_at"])
+    else:
+        start_event = ExperienceEvent.objects.create(
+            experience=experience,
+            title=DEFAULT_START_EVENT_TITLE,
+            slug=unique_event_slug(experience, DEFAULT_START_EVENT_TITLE),
+            is_start=True,
+            sort_order=0,
+        )
+
+    ExperienceEvent.objects.filter(
+        experience=experience,
+        is_start=True,
+    ).exclude(id=start_event.id).update(is_start=False)
+    ensure_default_event_step(start_event)
+    return start_event
+
+
 def get_current_experience(user, experience_id=None):
     if experience_id:
-        return Experience.objects.filter(id=experience_id, user=user).first()
+        experience = Experience.objects.filter(id=experience_id, user=user).first()
+        if experience:
+            ensure_tutor_settings(experience)
+            ensure_start_event(experience)
+        return experience
 
     experience = Experience.objects.filter(user=user).order_by("-updated_at").first()
     if experience:
         ensure_tutor_settings(experience)
+        ensure_start_event(experience)
         return experience
 
     return create_default_experience(user)
@@ -280,6 +395,97 @@ def normalize_realtime_choice(value, allowed_values, default_value):
     return choice
 
 
+def validate_action_config(action_type, value):
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        return None, "Action config must be an object."
+
+    if action_type == EventActionStep.ActionType.SCRIPT:
+        text = str(value.get("text", ""))
+        if len(text) > 12000:
+            return None, "Script text is too long."
+        return {"text": text}, ""
+
+    if action_type == EventActionStep.ActionType.SET_CONTEXT:
+        key = str(value.get("key", "")).strip()
+        if not key:
+            return None, "Context key is required."
+        if len(key) > 120:
+            return None, "Context key is too long."
+        return {"key": key, "value": value.get("value")}, ""
+
+    return None, "Action type is not supported."
+
+
+def create_message_for_runtime(session, role, content, metadata=None):
+    next_sequence = (
+        SessionMessage.objects.filter(session=session).aggregate(Max("sequence"))[
+            "sequence__max"
+        ]
+        or 0
+    ) + 1
+    return SessionMessage.objects.create(
+        session=session,
+        role=role,
+        content=content,
+        sequence=next_sequence,
+        metadata=metadata or {},
+    )
+
+
+def run_event_steps(session, event):
+    actions = []
+    messages = []
+    runtime_context = dict(session.runtime_context or {})
+
+    for step in event.steps.filter(enabled=True).order_by("sort_order", "created_at"):
+        if step.action_type == EventActionStep.ActionType.SCRIPT:
+            text = str(step.config.get("text", "")).strip()
+            if not text:
+                continue
+
+            message = create_message_for_runtime(
+                session=session,
+                role=SessionMessage.Role.ASSISTANT,
+                content=text,
+                metadata={
+                    "actionType": step.action_type,
+                    "eventId": str(event.id),
+                    "source": "event-action",
+                    "stepId": str(step.id),
+                },
+            )
+            messages.append(message)
+            actions.append(
+                {
+                    "type": "chat_message",
+                    "eventId": str(event.id),
+                    "stepId": str(step.id),
+                    "message": serialize_message(message),
+                }
+            )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.SET_CONTEXT:
+            key = str(step.config.get("key", "")).strip()
+            if not key:
+                continue
+            runtime_context[key] = step.config.get("value")
+            actions.append(
+                {
+                    "type": "set_context",
+                    "eventId": str(event.id),
+                    "stepId": str(step.id),
+                    "key": key,
+                    "value": runtime_context[key],
+                }
+            )
+
+    session.runtime_context = runtime_context
+    return actions, messages
+
+
 def health(request):
     return JsonResponse({"status": "ok", "service": "dmo"})
 
@@ -302,6 +508,43 @@ def logout_user(request):
 
     logout(request)
     return JsonResponse({"ok": True})
+
+
+@require_POST
+def dev_login(request):
+    if not settings.DEBUG or not settings.DLU_DEV_AUTH_BYPASS:
+        raise Http404("Local sign-in is not enabled.")
+
+    email = str(settings.DLU_DEV_LOGIN_EMAIL or "").strip().lower()
+    if not email or "@" not in email:
+        email = "nicky@deeplearning.ai"
+
+    username = email.split("@", 1)[0] or "dev-user"
+    User = get_user_model()
+    user, _ = User.objects.get_or_create(
+        username=username,
+        defaults={
+            "email": email,
+            "first_name": "Nicky",
+            "last_name": "",
+        },
+    )
+    update_fields = []
+    if user.email != email:
+        user.email = email
+        update_fields.append("email")
+    if not user.first_name:
+        user.first_name = "Nicky"
+        update_fields.append("first_name")
+    if update_fields:
+        user.save(update_fields=update_fields)
+
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+
+    next_path = str(request.POST.get("next") or settings.LOGIN_REDIRECT_URL)
+    if not next_path.startswith("/") or next_path.startswith("//"):
+        next_path = settings.LOGIN_REDIRECT_URL
+    return redirect(next_path)
 
 
 @require_http_methods(["GET", "POST"])
@@ -343,6 +586,7 @@ def experiences(request):
         description=description,
     )
     ensure_tutor_settings(experience)
+    ensure_start_event(experience)
     return JsonResponse({"experience": serialize_experience(experience)}, status=201)
 
 
@@ -452,6 +696,178 @@ def update_experience(request, experience_id):
     return JsonResponse({"experience": serialize_experience(experience)})
 
 
+@require_http_methods(["GET", "POST"])
+def experience_events(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    ensure_start_event(experience)
+
+    if request.method == "GET":
+        return JsonResponse(
+            {
+                "events": [
+                    serialize_experience_event(event)
+                    for event in experience.events.order_by("sort_order", "created_at")
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    title = str(data.get("title", "")).strip() or "New event"
+    description = str(data.get("description", "")).strip()
+    if len(title) > 160:
+        return JsonResponse({"detail": "Event title is too long."}, status=400)
+    if len(description) > 4000:
+        return JsonResponse({"detail": "Event description is too long."}, status=400)
+
+    sort_order = (
+        experience.events.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    event = ExperienceEvent.objects.create(
+        experience=experience,
+        title=title,
+        slug=unique_event_slug(experience, title),
+        description=description,
+        is_start=bool(data.get("isStart", False)),
+        sort_order=sort_order,
+    )
+    if event.is_start:
+        ExperienceEvent.objects.filter(experience=experience).exclude(
+            id=event.id,
+        ).update(is_start=False)
+    ensure_default_event_step(event)
+
+    return JsonResponse({"event": serialize_experience_event(event)}, status=201)
+
+
+@require_http_methods(["DELETE", "PATCH"])
+def update_experience_event(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    if request.method == "DELETE":
+        if experience.events.count() <= 1:
+            return JsonResponse(
+                {"detail": "An experience needs at least one event."},
+                status=400,
+            )
+        was_start = event.is_start
+        event.delete()
+        if was_start:
+            next_event = experience.events.order_by("sort_order", "created_at").first()
+            if next_event:
+                next_event.is_start = True
+                next_event.save(update_fields=["is_start", "updated_at"])
+        ensure_start_event(experience)
+        return JsonResponse(
+            {
+                "events": [
+                    serialize_experience_event(next_event)
+                    for next_event in experience.events.order_by(
+                        "sort_order",
+                        "created_at",
+                    )
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    if "title" in data:
+        title = str(data.get("title", "")).strip()
+        if not title:
+            return JsonResponse({"detail": "Event title is required."}, status=400)
+        if len(title) > 160:
+            return JsonResponse({"detail": "Event title is too long."}, status=400)
+        event.title = title
+
+    if "description" in data:
+        description = str(data.get("description", "")).strip()
+        if len(description) > 4000:
+            return JsonResponse({"detail": "Event description is too long."}, status=400)
+        event.description = description
+
+    if "isStart" in data and bool(data.get("isStart")):
+        event.is_start = True
+        ExperienceEvent.objects.filter(experience=experience).exclude(
+            id=event.id,
+        ).update(is_start=False)
+
+    event.save()
+    ensure_default_event_step(event)
+    return JsonResponse({"event": serialize_experience_event(event)})
+
+
+@require_http_methods(["PATCH"])
+def update_event_action_step(request, experience_id, event_id, step_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    step = event.steps.filter(id=step_id).first()
+    if not step:
+        return JsonResponse({"detail": "Action step not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    action_type = str(data.get("actionType", step.action_type)).strip()
+    if action_type not in EventActionStep.ActionType.values:
+        return JsonResponse({"detail": "Action type is not supported."}, status=400)
+
+    if "label" in data:
+        label = str(data.get("label", "")).strip()
+        if len(label) > 160:
+            return JsonResponse({"detail": "Action label is too long."}, status=400)
+        step.label = label
+
+    if "enabled" in data:
+        step.enabled = bool(data.get("enabled"))
+
+    if "config" in data or action_type != step.action_type:
+        config, config_error = validate_action_config(
+            action_type,
+            data.get("config", step.config),
+        )
+        if config_error:
+            return JsonResponse({"detail": config_error}, status=400)
+        step.config = config
+
+    step.action_type = action_type
+    step.save()
+
+    return JsonResponse({"step": serialize_event_action_step(step)})
+
+
 @require_GET
 def current_session(request):
     auth_response = auth_required_response(request)
@@ -484,6 +900,87 @@ def create_session(request):
 
     session = TutoringSession.objects.create(user=request.user, experience=experience)
     return JsonResponse(session_payload(session), status=201)
+
+
+@require_POST
+def run_start_event(request, session_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    with transaction.atomic():
+        session = (
+            TutoringSession.objects.select_for_update()
+            .filter(
+                id=session_id,
+                user=request.user,
+                status=TutoringSession.Status.ACTIVE,
+            )
+            .first()
+        )
+        if not session:
+            return JsonResponse({"detail": "Session not found."}, status=404)
+        if not session.experience:
+            return JsonResponse(
+                {"detail": "Session does not have an experience."},
+                status=400,
+            )
+
+        event = ensure_start_event(session.experience)
+        state = dict(session.runtime_state or {})
+        event_runs = dict(state.get("eventRuns") or {})
+        run_key = str(event.id)
+
+        if event_runs.get(run_key, {}).get("status") == "complete":
+            return JsonResponse(
+                {
+                    **session_payload(session),
+                    "actions": [],
+                    "event": serialize_experience_event(event),
+                    "ran": False,
+                }
+            )
+
+        if not event_runs and session.messages.exists():
+            event_runs[run_key] = {
+                "completedAt": timezone.now().isoformat(),
+                "reason": "Session already had messages.",
+                "status": "skipped",
+            }
+            state["eventRuns"] = event_runs
+            state["startEventId"] = str(event.id)
+            state["startEventComplete"] = True
+            session.runtime_state = state
+            session.save(update_fields=["runtime_state", "updated_at"])
+            return JsonResponse(
+                {
+                    **session_payload(session),
+                    "actions": [],
+                    "event": serialize_experience_event(event),
+                    "ran": False,
+                }
+            )
+
+        actions, messages = run_event_steps(session, event)
+        event_runs[run_key] = {
+            "completedAt": timezone.now().isoformat(),
+            "status": "complete",
+        }
+        state["eventRuns"] = event_runs
+        state["startEventId"] = str(event.id)
+        state["startEventComplete"] = True
+        session.runtime_state = state
+        session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
+
+    return JsonResponse(
+        {
+            **session_payload(session),
+            "actions": actions,
+            "event": serialize_experience_event(event),
+            "ran": True,
+            "ranMessages": [serialize_message(message) for message in messages],
+        }
+    )
 
 
 @require_POST

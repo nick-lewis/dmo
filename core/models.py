@@ -55,6 +55,80 @@ class TutorSettings(models.Model):
         return f"Tutor settings for {self.experience}"
 
 
+class ExperienceEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    experience = models.ForeignKey(
+        Experience,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    title = models.CharField(max_length=160, default="Start")
+    slug = models.SlugField(max_length=180)
+    description = models.TextField(blank=True, default="")
+    is_start = models.BooleanField(default=False)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["experience", "slug"],
+                name="unique_experience_event_slug",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["experience", "sort_order"],
+                name="core_experi_experie_997895_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.experience}: {self.title}"
+
+
+class EventActionStep(models.Model):
+    class ActionType(models.TextChoices):
+        SCRIPT = "script", "Script"
+        SET_CONTEXT = "set_context", "Set context"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(
+        ExperienceEvent,
+        on_delete=models.CASCADE,
+        related_name="steps",
+    )
+    action_type = models.CharField(
+        max_length=40,
+        choices=ActionType.choices,
+        default=ActionType.SCRIPT,
+    )
+    label = models.CharField(max_length=160, blank=True, default="")
+    config = models.JSONField(default=dict, blank=True)
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        indexes = [
+            models.Index(
+                fields=["event", "sort_order"],
+                name="core_eventa_event_i_f33e77_idx",
+            ),
+            models.Index(
+                fields=["action_type"],
+                name="core_eventa_action__9770a9_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event}: {self.action_type}"
+
+
 class TutoringSession(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -74,6 +148,8 @@ class TutoringSession(models.Model):
         related_name="sessions",
     )
     title = models.CharField(max_length=160, blank=True, default="")
+    runtime_context = models.JSONField(default=dict, blank=True)
+    runtime_state = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,

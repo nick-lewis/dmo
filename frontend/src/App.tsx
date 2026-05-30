@@ -66,6 +66,8 @@ type TutoringSession = {
   id: string;
   experienceId: string;
   title: string;
+  runtimeContext?: Record<string, unknown>;
+  runtimeState?: Record<string, unknown>;
   status: "active" | "archived";
   createdAt: string;
   updatedAt: string;
@@ -85,12 +87,38 @@ type TutorSettings = {
   voiceInstructions: string;
 };
 
+type EventActionStep = {
+  id: string;
+  eventId: string;
+  actionType: "script" | "set_context";
+  label: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ExperienceEvent = {
+  id: string;
+  experienceId: string;
+  title: string;
+  slug: string;
+  description: string;
+  isStart: boolean;
+  sortOrder: number;
+  steps: EventActionStep[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Experience = {
   id: string;
   title: string;
   slug: string;
   description: string;
   tutor: TutorSettings;
+  events: ExperienceEvent[];
   createdAt: string;
   updatedAt: string;
 };
@@ -103,6 +131,19 @@ type ExperiencesPayload = {
 type ExperienceForm = {
   title: string;
   description: string;
+};
+
+type StartEventDraft = {
+  title: string;
+  description: string;
+  scriptText: string;
+};
+
+type StartEventPayload = SessionPayload & {
+  actions: Array<Record<string, unknown>>;
+  event: ExperienceEvent;
+  ran: boolean;
+  ranMessages?: ChatMessage[];
 };
 
 type VoiceSampleStatus = "idle" | "loading" | "playing";
@@ -228,6 +269,72 @@ function localMessageId(prefix: string) {
 
 function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => left.sequence - right.sequence);
+}
+
+function getStartEvent(experience: Experience | null) {
+  if (!experience) return null;
+  return (
+    experience.events.find((event) => event.isStart) ??
+    experience.events[0] ??
+    null
+  );
+}
+
+function getPrimaryScriptStep(event: ExperienceEvent | null) {
+  if (!event) return null;
+  return (
+    event.steps.find((step) => step.actionType === "script") ??
+    event.steps[0] ??
+    null
+  );
+}
+
+function getScriptText(step: EventActionStep | null) {
+  const text = step?.config?.text;
+  return typeof text === "string" ? text : "";
+}
+
+function startEventDraftFromExperience(experience: Experience | null): StartEventDraft {
+  const startEvent = getStartEvent(experience);
+  const scriptStep = getPrimaryScriptStep(startEvent);
+
+  return {
+    description: startEvent?.description ?? "",
+    scriptText: getScriptText(scriptStep),
+    title: startEvent?.title ?? "Start",
+  };
+}
+
+function replaceExperienceEvent(
+  experience: Experience,
+  nextEvent: ExperienceEvent,
+) {
+  return {
+    ...experience,
+    events: experience.events
+      .map((event) => (event.id === nextEvent.id ? nextEvent : event))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+  };
+}
+
+function replaceExperienceEventStep(
+  experience: Experience,
+  eventId: string,
+  nextStep: EventActionStep,
+) {
+  return {
+    ...experience,
+    events: experience.events.map((event) => {
+      if (event.id !== eventId) return event;
+
+      return {
+        ...event,
+        steps: event.steps
+          .map((step) => (step.id === nextStep.id ? nextStep : step))
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
 }
 
 function experienceRunPath(experienceId: string) {
@@ -814,6 +921,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     voice: "ash",
     voiceInstructions: "",
   });
+  const [startEventDraft, setStartEventDraft] = useState<StartEventDraft>({
+    description: "",
+    scriptText: "",
+    title: "Start",
+  });
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isSavingTutor, setIsSavingTutor] = useState(false);
@@ -824,6 +936,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const overviewAutosaveVersion = useRef(0);
   const tutorAutosaveTimer = useRef<number | null>(null);
   const tutorAutosaveVersion = useRef(0);
+  const eventAutosaveTimer = useRef<number | null>(null);
+  const eventAutosaveVersion = useRef(0);
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
 
   function applyExperience(nextExperience: Experience) {
@@ -833,6 +947,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       title: nextExperience.title,
     });
     setTutorForm(nextExperience.tutor);
+    setStartEventDraft(startEventDraftFromExperience(nextExperience));
   }
 
   useEffect(() => {
@@ -885,6 +1000,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       }
       if (tutorAutosaveTimer.current) {
         window.clearTimeout(tutorAutosaveTimer.current);
+      }
+      if (eventAutosaveTimer.current) {
+        window.clearTimeout(eventAutosaveTimer.current);
       }
       voiceSampleAudioRef.current?.pause();
       voiceSampleAudioRef.current = null;
@@ -1088,11 +1206,144 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     queueTutorAutosave(nextDraft);
   }
 
+  function getStartEventParts() {
+    const startEvent = getStartEvent(experience);
+    const scriptStep = getPrimaryScriptStep(startEvent);
+    return { scriptStep, startEvent };
+  }
+
+  function hasStartEventChanges(draft: StartEventDraft) {
+    const { scriptStep, startEvent } = getStartEventParts();
+    if (!startEvent || !scriptStep) return false;
+
+    return (
+      draft.title !== startEvent.title ||
+      draft.description !== startEvent.description ||
+      draft.scriptText !== getScriptText(scriptStep)
+    );
+  }
+
+  function clearEventAutosaveTimer() {
+    if (!eventAutosaveTimer.current) return;
+    window.clearTimeout(eventAutosaveTimer.current);
+    eventAutosaveTimer.current = null;
+  }
+
+  function nextEventAutosaveVersion() {
+    eventAutosaveVersion.current += 1;
+    return eventAutosaveVersion.current;
+  }
+
+  async function persistStartEventDraft(draft: StartEventDraft, version: number) {
+    const { scriptStep, startEvent } = getStartEventParts();
+    if (!experience || !startEvent || !scriptStep || !draft.title.trim()) {
+      return true;
+    }
+
+    setError("");
+
+    try {
+      if (
+        draft.title !== startEvent.title ||
+        draft.description !== startEvent.description
+      ) {
+        const eventPayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${startEvent.id}/`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              description: draft.description,
+              title: draft.title,
+            }),
+          },
+        );
+
+        if (eventAutosaveVersion.current === version) {
+          setExperience((current) =>
+            current && current.id === experience.id
+              ? replaceExperienceEvent(current, eventPayload.event)
+              : current,
+          );
+        }
+      }
+
+      if (draft.scriptText !== getScriptText(scriptStep)) {
+        const stepPayload = await apiFetch<{ step: EventActionStep }>(
+          `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${scriptStep.id}/`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              actionType: "script",
+              config: { text: draft.scriptText },
+            }),
+          },
+        );
+
+        if (eventAutosaveVersion.current === version) {
+          setExperience((current) =>
+            current && current.id === experience.id
+              ? replaceExperienceEventStep(
+                  current,
+                  startEvent.id,
+                  stepPayload.step,
+                )
+              : current,
+          );
+        }
+      }
+
+      return true;
+    } catch (saveError) {
+      if (eventAutosaveVersion.current === version) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "Could not save start event.",
+        );
+      }
+      return false;
+    }
+  }
+
+  function queueEventAutosave(draft: StartEventDraft) {
+    clearEventAutosaveTimer();
+
+    if (!draft.title.trim() || !hasStartEventChanges(draft)) return;
+
+    const version = nextEventAutosaveVersion();
+    eventAutosaveTimer.current = window.setTimeout(() => {
+      eventAutosaveTimer.current = null;
+      void persistStartEventDraft(draft, version);
+    }, experienceAutosaveDelayMs);
+  }
+
+  async function flushEventAutosave() {
+    clearEventAutosaveTimer();
+
+    if (!hasStartEventChanges(startEventDraft)) return true;
+
+    const version = nextEventAutosaveVersion();
+    return persistStartEventDraft(startEventDraft, version);
+  }
+
+  function updateStartEventDraft(field: keyof StartEventDraft, value: string) {
+    const nextDraft = {
+      ...startEventDraft,
+      [field]: value,
+    };
+
+    setStartEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
   async function flushEditorAutosave() {
     const didSaveOverview = await flushOverviewAutosave();
     if (!didSaveOverview) return false;
 
-    return flushTutorAutosave();
+    const didSaveTutor = await flushTutorAutosave();
+    if (!didSaveTutor) return false;
+
+    return flushEventAutosave();
   }
 
   async function saveTutorSettings() {
@@ -1283,6 +1534,49 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 tutor={tutorForm}
               />
             </section>
+
+            <section className="editor-section event-editor-section">
+              <div className="runtime-control-header">
+                <span>On entry</span>
+              </div>
+
+              <div className="event-inline-grid">
+                <label className="control-field">
+                  <span>Event</span>
+                  <input
+                    onChange={(event) =>
+                      updateStartEventDraft("title", event.target.value)
+                    }
+                    type="text"
+                    value={startEventDraft.title}
+                  />
+                </label>
+
+                <label className="control-field">
+                  <span>Description</span>
+                  <input
+                    onChange={(event) =>
+                      updateStartEventDraft("description", event.target.value)
+                    }
+                    placeholder="---"
+                    type="text"
+                    value={startEventDraft.description}
+                  />
+                </label>
+              </div>
+
+              <label className="control-field event-script-field">
+                <span>Script</span>
+                <textarea
+                  className="event-script-textarea"
+                  onChange={(event) =>
+                    updateStartEventDraft("scriptText", event.target.value)
+                  }
+                  placeholder="What dee-lou says when a new run starts..."
+                  value={startEventDraft.scriptText}
+                />
+              </label>
+            </section>
           </>
         ) : null}
       </section>
@@ -1296,6 +1590,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const rightRef = useRef<HTMLDivElement | null>(null);
   const initialPanelLayout = useRef(readPanelLayout());
   const initialSlideSettings = useRef(readSlideSettings());
+  const startedSessionIds = useRef(new Set<string>());
   const hasManualToolWidth = useRef(
     typeof initialPanelLayout.current.leftWidth === "number",
   );
@@ -1556,6 +1851,51 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     realtimeConnectionRef.current = null;
     setRealtimeStatus("idle");
   }, [selectedModel, selectedVoice, session?.id]);
+
+  useEffect(() => {
+    if (!session || chatStatus !== "ready") return;
+    const activeSession = session;
+    if (startedSessionIds.current.has(activeSession.id)) return;
+
+    startedSessionIds.current.add(activeSession.id);
+    let isCancelled = false;
+
+    async function runStartEventForSession() {
+      try {
+        const payload = await apiFetch<StartEventPayload>(
+          `/api/sessions/${activeSession.id}/start-event/`,
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+          },
+        );
+
+        if (isCancelled) return;
+
+        setSession(payload.session);
+        setMessages(payload.messages);
+        if (payload.ranMessages?.[0]) {
+          setTurnAnchorMessageId(payload.ranMessages[0].id);
+        }
+      } catch (error) {
+        if (isCancelled) return;
+
+        startedSessionIds.current.delete(activeSession.id);
+        setChatStatus("error");
+        setChatError(
+          error instanceof Error
+            ? error.message
+            : "Could not run the start event.",
+        );
+      }
+    }
+
+    void runStartEventForSession();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [chatStatus, session]);
 
   useEffect(() => {
     function handleResize() {

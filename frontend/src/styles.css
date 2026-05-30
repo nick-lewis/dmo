@@ -664,6 +664,27 @@ button {
   min-height: 46px;
 }
 
+.event-editor-section {
+  gap: 10px;
+}
+
+.event-inline-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(260px, 1.45fr);
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.event-script-field {
+  min-width: 0;
+}
+
+.control-field textarea.event-script-textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
 .tutor-sample-button {
   display: inline-flex;
   align-items: center;
@@ -729,6 +750,7 @@ button {
   }
 
   .tutor-editor-section .tutor-compact-grid,
+  .event-inline-grid,
   .tutor-editor-section .tutor-prompt-grid {
     grid-template-columns: minmax(0, 1fr);
   }

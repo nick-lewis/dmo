@@ -71,6 +71,11 @@ ALLOWED_LOGIN_EMAIL_DOMAINS = env_list(
     "ALLOWED_LOGIN_EMAIL_DOMAINS",
     "deeplearning.ai",
 )
+DLU_DEV_AUTH_BYPASS = env_bool("DLU_DEV_AUTH_BYPASS", default=DEBUG)
+DLU_DEV_LOGIN_EMAIL = os.environ.get(
+    "DLU_DEV_LOGIN_EMAIL",
+    "nicky@deeplearning.ai",
+)
 
 
 # Application definition

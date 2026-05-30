@@ -94,6 +94,11 @@
         background: color-mix(in srgb, #f65b66 10%, #ffffff);
         font-size: 0.85rem;
       }
+
+      .dev-button {
+        border-style: dashed;
+        color: #237b94;
+      }
     </style>
   </head>
   <body>
@@ -117,6 +122,17 @@
         <button type="submit">
           <span class="mark" aria-hidden="true">G</span>
           Continue with Google
+        </button>
+      </form>
+
+      <form action="/accounts/dev-login/" method="post">
+        {% csrf_token %}
+        {% if request.GET.next %}
+          <input type="hidden" name="next" value="{{ request.GET.next }}" />
+        {% endif %}
+        <button class="dev-button" type="submit">
+          <span class="mark" aria-hidden="true">d</span>
+          Continue locally
         </button>
       </form>
 
