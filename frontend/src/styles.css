@@ -1176,6 +1176,12 @@ button {
   background: color-mix(in srgb, var(--accent-5) 12%, transparent);
 }
 
+.classifier-if-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(360px, 100%);
+}
+
 .event-enable-button {
   display: inline-grid;
   place-items: center;
@@ -1392,10 +1398,24 @@ button {
   min-width: 0;
 }
 
+.conversation-block-label {
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  font-size: 0.66rem;
+  font-weight: 880;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .chat-exit-capture-line {
   grid-template-columns:
     auto minmax(120px, 0.56fr) auto minmax(180px, 1fr)
     auto;
+}
+
+.chat-exit-capture-line.classifier-line {
+  grid-template-columns:
+    auto minmax(92px, 0.34fr) auto minmax(220px, 1fr)
+    minmax(180px, 0.64fr) auto auto;
 }
 
 .chat-exit-empty {

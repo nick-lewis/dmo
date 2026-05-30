@@ -1210,13 +1210,50 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
 
 function eventConditionSummary(condition: StepConditionDraft) {
   if (condition.type === "custom") {
-    return compactRuntimeValue(condition.raw, "custom");
+    return conditionRecordSummary(condition.raw ?? {});
   }
   if (condition.type !== "context_equals") return "";
 
   const key = condition.key.trim() || "context";
   const value = condition.value.trim() || "value";
   return `${key} == ${value}`;
+}
+
+function conditionValueSummary(value: unknown): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return compactRuntimeValue(value, "value");
+}
+
+function conditionRecordSummary(condition: Record<string, unknown>): string {
+  const type = typeof condition.type === "string" ? condition.type : "always";
+  const key = typeof condition.key === "string" ? condition.key : "context";
+  const value = conditionValueSummary(condition.value);
+
+  if (!condition.type || type === "always") return "";
+  if (type === "context_equals") return `${key} == ${value}`;
+  if (type === "context_not_equals") return `${key} != ${value}`;
+  if (type === "context_contains") return `${key} has ${value}`;
+  if (type === "context_not_contains") return `${key} lacks ${value}`;
+  if (type === "context_exists") return `${key} exists`;
+  if (type === "context_missing") return `${key} missing`;
+
+  if (type === "all" || type === "any") {
+    const conditions = Array.isArray(condition.conditions)
+      ? condition.conditions
+      : [];
+    const summaries: string[] = conditions
+      .map((item) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? conditionRecordSummary(item as Record<string, unknown>)
+          : "",
+      )
+      .filter(Boolean);
+    if (!summaries.length) return type;
+    const joiner = type === "all" ? " and " : " or ";
+    return summaries.join(joiner);
+  }
+
+  return compactRuntimeValue(condition, "custom");
 }
 
 function normalizedStepCondition(condition: StepConditionDraft) {
@@ -6022,6 +6059,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
                           <div className="chat-exit-capture-block">
                             <div className="chat-exit-capture-header">
+                              <span className="conversation-block-label">
+                                Classifiers
+                              </span>
                               <button
                                 className="event-add-button compact"
                                 onClick={() => void addEventClassifier(group.id)}
@@ -6033,7 +6073,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             </div>
                             {group.classifiers.map((classifier) => (
                               <div
-                                className="event-context-line chat-exit-capture-line"
+                                className="event-context-line chat-exit-capture-line classifier-line"
                                 key={classifier.id}
                               >
                                 <span className="event-detail-label">NAME</span>
@@ -6066,29 +6106,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   type="text"
                                   value={classifier.prompt}
                                 />
-                                <button
-                                  className={`event-if-chip${
+                                <span
+                                  className={`event-if-chip classifier-if-chip${
                                     eventConditionSummary(classifier.condition)
                                       ? ""
                                       : " is-empty"
                                   }`}
-                                  onClick={() =>
-                                    updateEventClassifierCondition(
-                                      group.id,
-                                      classifier.id,
-                                      classifier.condition.type === "always"
-                                        ? { type: "context_equals" }
-                                        : { type: "always" },
-                                    )
-                                  }
-                                  title="Toggle classifier condition"
-                                  type="button"
+                                  title="Classifier run condition"
                                 >
-                                  IF
+                                  RUN IF
                                   {eventConditionSummary(classifier.condition)
                                     ? ` ${eventConditionSummary(classifier.condition)}`
-                                    : ""}
-                                </button>
+                                    : " always"}
+                                </span>
                                 <button
                                   aria-label={
                                     classifier.enabled
@@ -6134,6 +6164,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           </div>
 
                           <div className="chat-tool-actions-block">
+                            <div className="conversation-block-label">
+                              Handler actions
+                            </div>
                             <div
                               className="event-add-block chat-tool-action-add"
                               ref={
