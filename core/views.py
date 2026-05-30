@@ -66,6 +66,7 @@ DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
+TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
 
 
 def serialize_user(user):
@@ -145,6 +146,31 @@ def serialize_event_chat_tool(tool):
         "createdAt": tool.created_at.isoformat(),
         "updatedAt": tool.updated_at.isoformat(),
     }
+
+
+def openai_tool_parameters(parameters):
+    schema = dict(parameters or {"type": "object", "properties": {}, "required": []})
+    schema.pop(TOOL_CAPTURE_SAVE_MAP_KEY, None)
+    return schema
+
+
+def tool_capture_save_map(tool):
+    parameters = tool.parameters if isinstance(tool.parameters, dict) else {}
+    raw_map = parameters.get(TOOL_CAPTURE_SAVE_MAP_KEY)
+    if isinstance(raw_map, dict):
+        captures = {
+            str(argument_name).strip(): str(context_key).strip()
+            for argument_name, context_key in raw_map.items()
+            if str(argument_name).strip() and str(context_key).strip()
+        }
+        if captures:
+            return captures
+
+    if tool.save_context_key:
+        if tool.save_argument:
+            return {tool.save_argument: tool.save_context_key}
+        return {"": tool.save_context_key}
+    return {}
 
 
 def serialize_experience_event(event):
@@ -383,8 +409,7 @@ def realtime_tools_for_event(event):
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters
-                or {"type": "object", "properties": {}, "required": []},
+                "parameters": openai_tool_parameters(tool.parameters),
             }
         )
     return tools
@@ -549,9 +574,27 @@ def normalize_tool_parameters(value):
         if not isinstance(key, str) or len(key) > 120:
             return None, "Tool parameter names are invalid."
 
+    capture_save_map = parameters.get(TOOL_CAPTURE_SAVE_MAP_KEY, {})
+    if capture_save_map in (None, ""):
+        capture_save_map = {}
+    if not isinstance(capture_save_map, dict):
+        return None, "Tool capture settings must be an object."
+    normalized_capture_save_map = {}
+    for argument_name, context_key in capture_save_map.items():
+        argument_name = str(argument_name).strip()
+        context_key = str(context_key).strip()
+        if len(argument_name) > 120 or len(context_key) > 120:
+            return None, "Tool capture settings are too long."
+        if argument_name and context_key:
+            normalized_capture_save_map[argument_name] = context_key
+
     parameters["properties"] = properties
     parameters["required"] = [str(item) for item in required]
     parameters.setdefault("additionalProperties", False)
+    if normalized_capture_save_map:
+        parameters[TOOL_CAPTURE_SAVE_MAP_KEY] = normalized_capture_save_map
+    else:
+        parameters.pop(TOOL_CAPTURE_SAVE_MAP_KEY, None)
     return parameters, ""
 
 
@@ -1955,12 +1998,19 @@ def run_session_chat_tool(request, session_id):
         state = dict(session.runtime_state or {})
         runtime_context = dict(session.runtime_context or {})
         saved_value = None
-        if tool.save_context_key:
-            if tool.save_argument:
-                saved_value = arguments.get(tool.save_argument, "")
+        saved_values = {}
+        capture_saves = tool_capture_save_map(tool)
+        if capture_saves:
+            for argument_name, context_key in capture_saves.items():
+                if argument_name:
+                    saved_values[context_key] = arguments.get(argument_name, "")
+                else:
+                    saved_values[context_key] = arguments
+            runtime_context.update(saved_values)
+            if len(saved_values) == 1:
+                saved_value = next(iter(saved_values.values()))
             else:
-                saved_value = arguments
-            runtime_context[tool.save_context_key] = saved_value
+                saved_value = saved_values
             session.runtime_context = runtime_context
 
         actions = [
@@ -1970,6 +2020,7 @@ def run_session_chat_tool(request, session_id):
                 "saveArgument": tool.save_argument,
                 "saveContextKey": tool.save_context_key,
                 "savedValue": saved_value,
+                "savedValues": saved_values,
                 "toolName": tool.name,
                 "triggersEvent": tool.triggers_event,
                 "type": "chat_tool_call",

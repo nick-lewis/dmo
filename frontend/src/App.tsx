@@ -55,6 +55,7 @@ const eventActionOptions = [
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
 ] as const;
+const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 
 type ChatMessage = {
   id: string;
@@ -186,15 +187,18 @@ type EventStepDraft = {
   sortOrder: number;
 };
 
+type EventChatCaptureDraft = {
+  description: string;
+  id: string;
+  saveAs: string;
+};
+
 type EventChatToolDraft = {
+  captures: EventChatCaptureDraft[];
+  description: string;
+  enabled: boolean;
   id: string;
   name: string;
-  description: string;
-  argumentDescription: string;
-  argumentName: string;
-  enabled: boolean;
-  saveArgument: string;
-  saveContextKey: string;
   sortOrder: number;
   triggersEvent: string;
 };
@@ -470,7 +474,8 @@ function stepDraftFromStep(step: EventActionStep): EventStepDraft {
   };
 }
 
-function firstToolArgument(parameters: Record<string, unknown>) {
+function toolCaptureDraftsFromTool(tool: EventChatTool): EventChatCaptureDraft[] {
+  const parameters = tool.parameters;
   const properties =
     parameters.properties &&
     typeof parameters.properties === "object" &&
@@ -480,33 +485,63 @@ function firstToolArgument(parameters: Record<string, unknown>) {
   const required = Array.isArray(parameters.required)
     ? parameters.required.filter((item): item is string => typeof item === "string")
     : [];
-  const argumentName = required[0] ?? Object.keys(properties)[0] ?? "";
-  const argumentValue = argumentName ? properties[argumentName] : null;
-  const argumentObject =
-    argumentValue && typeof argumentValue === "object" && !Array.isArray(argumentValue)
-      ? (argumentValue as Record<string, unknown>)
+  const rawCaptureSaveMap = parameters[chatExitCaptureSaveMapKey];
+  const captureSaveMap =
+    rawCaptureSaveMap &&
+    typeof rawCaptureSaveMap === "object" &&
+    !Array.isArray(rawCaptureSaveMap)
+      ? (rawCaptureSaveMap as Record<string, unknown>)
       : {};
+  const orderedArgumentNames = [
+    ...required,
+    ...Object.keys(properties).filter((name) => !required.includes(name)),
+  ];
 
-  return {
-    description:
-      typeof argumentObject.description === "string"
-        ? argumentObject.description
-        : "",
-    name: argumentName,
-  };
+  const captures = orderedArgumentNames.map((argumentName) => {
+    const argumentValue = properties[argumentName];
+    const argumentObject =
+      argumentValue &&
+      typeof argumentValue === "object" &&
+      !Array.isArray(argumentValue)
+        ? (argumentValue as Record<string, unknown>)
+        : {};
+    const mappedSaveKey = captureSaveMap[argumentName];
+    const legacySaveKey =
+      tool.saveArgument === argumentName || (!tool.saveArgument && required.length <= 1)
+        ? tool.saveContextKey
+        : "";
+
+    return {
+      description:
+        typeof argumentObject.description === "string"
+          ? argumentObject.description
+          : "",
+      id: localMessageId("capture"),
+      saveAs:
+        (typeof mappedSaveKey === "string" ? mappedSaveKey : "") ||
+        legacySaveKey ||
+        argumentName,
+    };
+  });
+
+  if (!captures.length && tool.saveContextKey) {
+    captures.push({
+      description: "",
+      id: localMessageId("capture"),
+      saveAs: tool.saveContextKey,
+    });
+  }
+
+  return captures;
 }
 
 function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
-  const argument = firstToolArgument(tool.parameters);
   return {
-    argumentDescription: argument.description,
-    argumentName: argument.name,
+    captures: toolCaptureDraftsFromTool(tool),
     description: tool.description,
     enabled: tool.enabled,
     id: tool.id,
     name: tool.name,
-    saveArgument: tool.saveArgument,
-    saveContextKey: tool.saveContextKey,
     sortOrder: tool.sortOrder,
     triggersEvent: tool.triggersEvent,
   };
@@ -783,8 +818,14 @@ function comparableStep(step: EventActionStep) {
 }
 
 function normalizedChatToolParameters(tool: EventChatToolDraft) {
-  const argumentName = tool.argumentName.trim();
-  if (!argumentName) {
+  const captures = tool.captures
+    .map((capture) => ({
+      description: capture.description.trim(),
+      saveAs: capture.saveAs.trim(),
+    }))
+    .filter((capture) => capture.saveAs);
+
+  if (!captures.length) {
     return {
       additionalProperties: false,
       properties: {},
@@ -793,29 +834,37 @@ function normalizedChatToolParameters(tool: EventChatToolDraft) {
     };
   }
 
+  const captureSaveMap = Object.fromEntries(
+    captures.map((capture) => [capture.saveAs, capture.saveAs]),
+  );
+
   return {
     additionalProperties: false,
-    properties: {
-      [argumentName]: {
+    [chatExitCaptureSaveMapKey]: captureSaveMap,
+    properties: Object.fromEntries(
+      captures.map((capture) => [
+        capture.saveAs,
+        {
         description:
-          tool.argumentDescription.trim() ||
-          `Value to save for ${argumentName}.`,
+            capture.description || `The value to save as ${capture.saveAs}.`,
         type: "string",
-      },
-    },
-    required: [argumentName],
+        },
+      ]),
+    ),
+    required: captures.map((capture) => capture.saveAs),
     type: "object",
   };
 }
 
 function comparableChatToolDraft(tool: EventChatToolDraft) {
+  const primaryCapture = tool.captures.find((capture) => capture.saveAs.trim());
   return {
     description: tool.description,
     enabled: tool.enabled,
     name: tool.name,
     parameters: normalizedChatToolParameters(tool),
-    saveArgument: tool.saveArgument,
-    saveContextKey: tool.saveContextKey,
+    saveArgument: primaryCapture?.saveAs.trim() ?? "",
+    saveContextKey: primaryCapture?.saveAs.trim() ?? "",
     sortOrder: tool.sortOrder,
     triggersEvent: tool.triggersEvent,
   };
@@ -1952,6 +2001,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       for (const draftTool of draft.chatTools) {
         const currentTool = currentTools.find((tool) => tool.id === draftTool.id);
         if (!currentTool) continue;
+        const primaryCapture = draftTool.captures.find((capture) =>
+          capture.saveAs.trim(),
+        );
 
         if (
           JSON.stringify(comparableChatToolDraft(draftTool)) ===
@@ -1969,8 +2021,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               enabled: draftTool.enabled,
               name: draftTool.name,
               parameters: normalizedChatToolParameters(draftTool),
-              saveArgument: draftTool.saveArgument,
-              saveContextKey: draftTool.saveContextKey,
+              saveArgument: primaryCapture?.saveAs.trim() ?? "",
+              saveContextKey: primaryCapture?.saveAs.trim() ?? "",
               sortOrder: draftTool.sortOrder,
               triggersEvent: draftTool.triggersEvent,
             }),
@@ -2108,21 +2160,44 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     field: K,
     value: EventChatToolDraft[K],
   ) {
-    updateEventChatToolDraft(toolId, (tool) => {
-      const nextTool = {
-        ...tool,
-        [field]: value,
-      };
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      [field]: value,
+    }));
+  }
 
-      if (field === "argumentName" && typeof value === "string") {
-        const nextValue = value.trim();
-        if (tool.saveArgument === tool.argumentName) {
-          nextTool.saveArgument = nextValue;
-        }
-      }
+  function updateEventChatCaptureDraft(
+    toolId: string,
+    captureId: string,
+    updater: (capture: EventChatCaptureDraft) => EventChatCaptureDraft,
+  ) {
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      captures: tool.captures.map((capture) =>
+        capture.id === captureId ? updater(capture) : capture,
+      ),
+    }));
+  }
 
-      return nextTool;
-    });
+  function addEventChatCapture(toolId: string) {
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      captures: [
+        ...tool.captures,
+        {
+          description: "",
+          id: localMessageId("capture"),
+          saveAs: "",
+        },
+      ],
+    }));
+  }
+
+  function deleteEventChatCapture(toolId: string, captureId: string) {
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      captures: tool.captures.filter((capture) => capture.id !== captureId),
+    }));
   }
 
   function applyUpdatedEvent(nextEvent: ExperienceEvent) {
@@ -2241,10 +2316,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       const existingNames = new Set(
         selectedEvent.chatTools.map((tool) => tool.name),
       );
-      let toolName = "student_done";
+      let toolName = "chat_exit";
       let suffix = 2;
       while (existingNames.has(toolName)) {
-        toolName = `student_done_${suffix}`;
+        toolName = `chat_exit_${suffix}`;
         suffix += 1;
       }
 
@@ -3287,7 +3362,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         >
                           <span className="event-step-kind">Chat exit</span>
                           <span className="event-step-copy">
-                            {tool.name || "student_done"} {"->"}{" "}
+                            {compactPreview(
+                              tool.description,
+                              "Describe trigger conditions",
+                            )}{" "}
+                            | Destination:{" "}
                             {eventTitleForTrigger(editorEvents, targetEventSlug) ||
                               "Choose event"}
                           </span>
@@ -3324,23 +3403,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       {isExpanded ? (
                         <div className="event-step-detail chat-exit-detail">
                           <div className="event-context-line chat-exit-core-line">
-                            <span className="event-detail-label">TOOL</span>
-                            <input
-                              aria-label="Tool name"
-                              onChange={(event) =>
-                                updateEventChatToolDraftField(
-                                  tool.id,
-                                  "name",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="student_done"
-                              type="text"
-                              value={tool.name}
-                            />
-                            <span className="event-detail-label">GO</span>
+                            <span className="event-detail-label">DESTINATION</span>
                             <select
-                              aria-label="Tool target event"
+                              aria-label="Chat exit destination event"
                               onChange={(event) =>
                                 updateEventChatToolDraftField(
                                   tool.id,
@@ -3365,9 +3430,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             </select>
                           </div>
                           <div className="event-context-line single-value">
-                            <span className="event-detail-label">WHEN</span>
+                            <span className="event-detail-label">
+                              FUNCTION CALL DESCRIPTION
+                            </span>
                             <input
-                              aria-label="Tool description"
+                              aria-label="Function call trigger conditions"
                               onChange={(event) =>
                                 updateEventChatToolDraftField(
                                   tool.id,
@@ -3375,59 +3442,82 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   event.target.value,
                                 )
                               }
-                              placeholder="Call this when the learner is ready to move on."
+                              placeholder="Describe the conditions that should trigger this exit."
                               type="text"
                               value={tool.description}
                             />
                           </div>
-                          <div className="event-context-line chat-exit-save-line">
-                            <span className="event-detail-label">ARG</span>
-                            <input
-                              aria-label="Argument name"
-                              onChange={(event) =>
-                                updateEventChatToolDraftField(
-                                  tool.id,
-                                  "argumentName",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="estimate"
-                              type="text"
-                              value={tool.argumentName}
-                            />
-                            <span className="event-inline-operator">{"->"}</span>
-                            <input
-                              aria-label="Save argument as context key"
-                              onChange={(event) =>
-                                updateEventChatToolDraft(tool.id, (currentTool) => ({
-                                  ...currentTool,
-                                  saveArgument: currentTool.argumentName,
-                                  saveContextKey: event.target.value,
-                                }))
-                              }
-                              placeholder="delivery_estimate"
-                              type="text"
-                              value={tool.saveContextKey}
-                            />
-                          </div>
-                          {tool.argumentName ? (
-                            <div className="event-context-line single-value">
-                              <span className="event-detail-label">ARG NOTE</span>
-                              <input
-                                aria-label="Argument description"
-                                onChange={(event) =>
-                                  updateEventChatToolDraftField(
-                                    tool.id,
-                                    "argumentDescription",
-                                    event.target.value,
-                                  )
-                                }
-                                placeholder="The learner's estimate."
-                                type="text"
-                                value={tool.argumentDescription}
-                              />
+                          <div className="chat-exit-capture-block">
+                            <div className="chat-exit-capture-header">
+                              <span className="event-detail-label">
+                                CAPTURE ARGUMENTS
+                              </span>
+                              <button
+                                className="event-add-button compact"
+                                onClick={() => addEventChatCapture(tool.id)}
+                                type="button"
+                              >
+                                <PlusIcon />
+                                Argument
+                              </button>
                             </div>
-                          ) : null}
+                            {tool.captures.map((capture) => (
+                              <div
+                                className="event-context-line chat-exit-capture-line"
+                                key={capture.id}
+                              >
+                                <span className="event-detail-label">SAVE AS</span>
+                                <input
+                                  aria-label="Save argument as context key"
+                                  onChange={(event) =>
+                                    updateEventChatCaptureDraft(
+                                      tool.id,
+                                      capture.id,
+                                      (currentCapture) => ({
+                                        ...currentCapture,
+                                        saveAs: event.target.value,
+                                      }),
+                                    )
+                                  }
+                                  placeholder="delivery_estimate"
+                                  type="text"
+                                  value={capture.saveAs}
+                                />
+                                <span className="event-detail-label">
+                                  ARGUMENT DESCRIPTION
+                                </span>
+                                <input
+                                  aria-label="Argument description"
+                                  onChange={(event) =>
+                                    updateEventChatCaptureDraft(
+                                      tool.id,
+                                      capture.id,
+                                      (currentCapture) => ({
+                                        ...currentCapture,
+                                        description: event.target.value,
+                                      }),
+                                    )
+                                  }
+                                  placeholder="The learner's delivery-time estimate."
+                                  type="text"
+                                  value={capture.description}
+                                />
+                                <button
+                                  aria-label="Delete argument"
+                                  className="event-icon-button danger"
+                                  onClick={() =>
+                                    deleteEventChatCapture(tool.id, capture.id)
+                                  }
+                                  type="button"
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </div>
+                            ))}
+                            {!tool.captures.length ? (
+                              <div className="chat-exit-empty">---</div>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                     </article>

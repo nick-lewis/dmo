@@ -1322,11 +1322,27 @@ button {
 }
 
 .chat-exit-core-line {
-  grid-template-columns: auto minmax(120px, 0.72fr) auto minmax(160px, 1fr);
+  grid-template-columns: auto minmax(180px, 0.42fr);
 }
 
-.chat-exit-save-line {
-  grid-template-columns: auto minmax(100px, 0.6fr) auto minmax(130px, 1fr);
+.chat-exit-capture-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-exit-capture-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-exit-capture-line {
+  grid-template-columns:
+    auto minmax(120px, 0.56fr) auto minmax(180px, 1fr)
+    auto;
 }
 
 .chat-exit-empty {
@@ -1468,7 +1484,7 @@ button {
   .event-condition-editor,
   .event-context-line,
   .chat-exit-core-line,
-  .chat-exit-save-line,
+  .chat-exit-capture-line,
   .tutor-editor-section .tutor-prompt-grid {
     grid-template-columns: minmax(0, 1fr);
   }
