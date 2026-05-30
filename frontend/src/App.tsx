@@ -4610,15 +4610,22 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
       const finalContent = turnResult.text.trim();
       if (!finalContent && !turnResult.toolCall) {
-        const recentEvents = turnResult.eventSummaries.slice(-10).join(" | ");
+        const diagnosticsVersion = "realtime-diagnostics-2026-05-30-b";
+        const eventSummaries = Array.isArray(turnResult.eventSummaries)
+          ? turnResult.eventSummaries
+          : [];
+        const recentEvents =
+          eventSummaries.slice(-12).join(" | ") || "no client events captured";
         console.warn(
           "Realtime turn ended without transcript or tool call.",
-          turnResult.eventSummaries,
+          {
+            diagnosticsVersion,
+            eventSummaries,
+            turnResult,
+          },
         );
         throw new Error(
-          recentEvents
-            ? `dLU responded with audio but no text transcript. Recent Realtime events: ${recentEvents}`
-            : "dLU responded with audio but no text transcript.",
+          `dLU responded with audio but no text transcript. Diagnostics ${diagnosticsVersion}: ${recentEvents}`,
         );
       }
 

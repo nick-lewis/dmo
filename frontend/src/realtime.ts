@@ -347,6 +347,7 @@ export class DluRealtimeConnection {
   private audioElement: HTMLAudioElement | null = null;
   private channel: RTCDataChannel | null = null;
   private peerConnection: RTCPeerConnection | null = null;
+  private recentEventSummaries: string[] = [];
 
   private constructor(
     private readonly config: RealtimeConnectionConfig,
@@ -609,9 +610,21 @@ export class DluRealtimeConnection {
   };
 
   private captureEventSummary(event: ServerEvent) {
+    const summary = summarizeServerEvent(event);
+    this.recentEventSummaries.push(summary);
+    if (this.recentEventSummaries.length > 60) {
+      this.recentEventSummaries.shift();
+    }
+
+    const diagnosticsWindow = window as Window & {
+      __dluRealtimeEvents?: string[];
+    };
+    diagnosticsWindow.__dluRealtimeEvents = [...this.recentEventSummaries];
+    console.debug("[dLU realtime]", summary);
+
     if (!this.activeResponse) return;
 
-    this.activeResponse.eventSummaries.push(summarizeServerEvent(event));
+    this.activeResponse.eventSummaries.push(summary);
     if (this.activeResponse.eventSummaries.length > 40) {
       this.activeResponse.eventSummaries.shift();
     }
@@ -685,7 +698,10 @@ export class DluRealtimeConnection {
     window.clearTimeout(activeResponse.timeoutId);
     this.activeResponse = null;
     activeResponse.resolve({
-      eventSummaries: [...activeResponse.eventSummaries],
+      eventSummaries:
+        activeResponse.eventSummaries.length > 0
+          ? [...activeResponse.eventSummaries]
+          : [...this.recentEventSummaries],
       text: finalText || activeResponse.text,
       toolCall: toolCall ?? activeResponse.toolCall,
     });
