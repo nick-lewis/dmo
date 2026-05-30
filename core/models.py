@@ -93,6 +93,10 @@ class EventActionStep(models.Model):
     class ActionType(models.TextChoices):
         SCRIPT = "script", "Script"
         SET_CONTEXT = "set_context", "Set context"
+        GET_UI_STATE = "get_ui_state", "Get UI state"
+        HIGHLIGHT_ON = "highlight_on", "Highlight on"
+        HIGHLIGHT_OFF = "highlight_off", "Highlight off"
+        SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey(

@@ -47,6 +47,10 @@ const tutorAvatarOptions = [
 const eventActionOptions = [
   { id: "script", label: "Say" },
   { id: "set_context", label: "Set context" },
+  { id: "get_ui_state", label: "Read UI" },
+  { id: "highlight_on", label: "Highlight" },
+  { id: "highlight_off", label: "Clear highlight" },
+  { id: "set_ui_trigger", label: "UI trigger" },
 ] as const;
 
 type ChatMessage = {
@@ -95,7 +99,13 @@ type TutorSettings = {
 type EventActionStep = {
   id: string;
   eventId: string;
-  actionType: "script" | "set_context";
+  actionType:
+    | "script"
+    | "set_context"
+    | "get_ui_state"
+    | "highlight_on"
+    | "highlight_off"
+    | "set_ui_trigger";
   label: string;
   config: Record<string, unknown>;
   condition: Record<string, unknown>;
@@ -166,6 +176,22 @@ type StartEventPayload = SessionPayload & {
   event: ExperienceEvent;
   ran: boolean;
   ranMessages?: ChatMessage[];
+};
+
+type RuntimeUiState = {
+  notesVisible: boolean;
+};
+
+type RuntimeHighlight = {
+  color: string;
+  selector: string;
+};
+
+type RuntimeUiTrigger = {
+  eventId: string;
+  selector: string;
+  stepId: string;
+  triggersEvent: string;
 };
 
 type VoiceSampleStatus = "idle" | "loading" | "playing";
@@ -380,12 +406,35 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context") {
     return { key: "entry_ready", value: "yes" };
   }
+  if (actionType === "get_ui_state") {
+    return { contextKey: "notes_visible", stateKey: "notesVisible" };
+  }
+  if (actionType === "highlight_on") {
+    return {
+      color: "rgba(59, 130, 246, 0.6)",
+      selector: ".runtime-notes-toggle",
+    };
+  }
+  if (actionType === "highlight_off") {
+    return { selector: ".runtime-notes-toggle" };
+  }
+  if (actionType === "set_ui_trigger") {
+    return {
+      selector: ".runtime-notes-toggle",
+      triggersEvent: "notes-opened",
+    };
+  }
 
   return { text: "" };
 }
 
 function defaultStepLabel(actionType: EventActionStep["actionType"]) {
-  return actionType === "set_context" ? "Set entry_ready" : "Say";
+  if (actionType === "set_context") return "Set entry_ready";
+  if (actionType === "get_ui_state") return "Read UI state";
+  if (actionType === "highlight_on") return "Highlight UI";
+  if (actionType === "highlight_off") return "Clear highlight";
+  if (actionType === "set_ui_trigger") return "Wait for UI";
+  return "Say";
 }
 
 function eventActionLabel(actionType: EventActionStep["actionType"]) {
@@ -399,12 +448,29 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context") {
     return "Write a value into the run context";
   }
+  if (actionType === "get_ui_state") {
+    return "Copy current interface state into context";
+  }
+  if (actionType === "highlight_on") {
+    return "Visually mark an interface target";
+  }
+  if (actionType === "highlight_off") {
+    return "Remove a highlight from an interface target";
+  }
+  if (actionType === "set_ui_trigger") {
+    return "Run another event after a UI click";
+  }
 
   return "Have the agent speak in the chat";
 }
 
 function eventActionToneClass(actionType: EventActionStep["actionType"]) {
-  return actionType === "set_context" ? "state" : "speech";
+  if (actionType === "set_context" || actionType === "get_ui_state") {
+    return "state";
+  }
+  if (actionType === "set_ui_trigger") return "flow";
+  if (actionType === "highlight_on" || actionType === "highlight_off") return "ui";
+  return "speech";
 }
 
 function compactPreview(value: string, fallback: string) {
@@ -418,6 +484,22 @@ function eventStepSummary(step: EventStepDraft) {
     const key = stringConfigValue(step.config, "key", "key");
     const value = stringConfigValue(step.config, "value", "value");
     return `${key || "key"} = ${value || "value"}`;
+  }
+  if (step.actionType === "get_ui_state") {
+    const stateKey = stringConfigValue(step.config, "stateKey", "ui state");
+    const contextKey = stringConfigValue(step.config, "contextKey", "context");
+    return `${stateKey || "ui state"} -> ${contextKey || "context"}`;
+  }
+  if (step.actionType === "highlight_on") {
+    return `highlight ${stringConfigValue(step.config, "selector", "target")}`;
+  }
+  if (step.actionType === "highlight_off") {
+    return `clear ${stringConfigValue(step.config, "selector", "target")}`;
+  }
+  if (step.actionType === "set_ui_trigger") {
+    const selector = stringConfigValue(step.config, "selector", "target");
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent", "event");
+    return `${selector || "target"} -> ${triggersEvent || "event"}`;
   }
 
   return compactPreview(
@@ -2220,7 +2302,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               placeholder="What the agent says..."
                               value={stringConfigValue(step.config, "text")}
                             />
-                          ) : (
+                          ) : null}
+
+                          {step.actionType === "set_context" ? (
                             <div className="event-context-line">
                               <span className="event-detail-label">SET</span>
                               <input
@@ -2251,7 +2335,125 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 value={stringConfigValue(step.config, "value")}
                               />
                             </div>
-                          )}
+                          ) : null}
+
+                          {step.actionType === "get_ui_state" ? (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">READ</span>
+                              <input
+                                aria-label="UI state key"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "stateKey",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="notesVisible"
+                                type="text"
+                                value={stringConfigValue(step.config, "stateKey")}
+                              />
+                              <span className="event-inline-operator">{"->"}</span>
+                              <input
+                                aria-label="Context key"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "contextKey",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="notes_visible"
+                                type="text"
+                                value={stringConfigValue(step.config, "contextKey")}
+                              />
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "highlight_on" ? (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">TARGET</span>
+                              <input
+                                aria-label="Highlight selector"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "selector",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder=".runtime-notes-toggle"
+                                type="text"
+                                value={stringConfigValue(step.config, "selector")}
+                              />
+                              <span className="event-detail-label">COLOR</span>
+                              <input
+                                aria-label="Highlight color"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "color",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="rgba(59, 130, 246, 0.6)"
+                                type="text"
+                                value={stringConfigValue(step.config, "color")}
+                              />
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "highlight_off" ? (
+                            <div className="event-context-line single-value">
+                              <span className="event-detail-label">CLEAR</span>
+                              <input
+                                aria-label="Highlight selector"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "selector",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder=".runtime-notes-toggle"
+                                type="text"
+                                value={stringConfigValue(step.config, "selector")}
+                              />
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "set_ui_trigger" ? (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">WHEN</span>
+                              <input
+                                aria-label="Trigger selector"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "selector",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder=".runtime-notes-toggle"
+                                type="text"
+                                value={stringConfigValue(step.config, "selector")}
+                              />
+                              <span className="event-inline-operator">{"->"}</span>
+                              <input
+                                aria-label="Triggered event"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "triggersEvent",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="notes-opened"
+                                type="text"
+                                value={stringConfigValue(step.config, "triggersEvent")}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </article>
@@ -2364,12 +2566,134 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [turnAnchorMessageId, setTurnAnchorMessageId] = useState<string | null>(
     null,
   );
+  const [notesVisible, setNotesVisible] = useState(false);
+  const [runtimeHighlights, setRuntimeHighlights] = useState<
+    Record<string, RuntimeHighlight>
+  >({});
+  const [runtimeTriggers, setRuntimeTriggers] = useState<RuntimeUiTrigger[]>([]);
   const shellStyle = {
     "--left-width": `${leftWidth}px`,
     "--workspace-width": `${workspaceWidth}px`,
   } as CSSProperties;
   const selectedExperience =
     experiences.find((experience) => experience.id === selectedExperienceId) ?? null;
+
+  function currentRuntimeUiState(
+    overrides: Partial<RuntimeUiState> = {},
+  ): RuntimeUiState {
+    return {
+      notesVisible,
+      ...overrides,
+    };
+  }
+
+  function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
+    if (!actions.length) return;
+
+    setRuntimeHighlights((current) => {
+      const next = { ...current };
+      for (const action of actions) {
+        const type = action.type;
+        const selector =
+          typeof action.selector === "string" ? action.selector.trim() : "";
+        if (!selector) continue;
+
+        if (type === "highlight_on") {
+          next[selector] = {
+            color:
+              typeof action.color === "string"
+                ? action.color
+                : "rgba(59, 130, 246, 0.6)",
+            selector,
+          };
+        }
+        if (type === "highlight_off") {
+          delete next[selector];
+        }
+      }
+      return next;
+    });
+
+    setRuntimeTriggers((current) => {
+      let next = [...current];
+      for (const action of actions) {
+        if (action.type !== "set_ui_trigger") continue;
+        const selector =
+          typeof action.selector === "string" ? action.selector.trim() : "";
+        const triggersEvent =
+          typeof action.triggersEvent === "string"
+            ? action.triggersEvent.trim()
+            : "";
+        if (!selector || !triggersEvent) continue;
+
+        next = next.filter(
+          (trigger) =>
+            trigger.selector !== selector ||
+            trigger.triggersEvent !== triggersEvent,
+        );
+        next.push({
+          eventId: typeof action.eventId === "string" ? action.eventId : "",
+          selector,
+          stepId: typeof action.stepId === "string" ? action.stepId : "",
+          triggersEvent,
+        });
+      }
+      return next;
+    });
+  }
+
+  function applySessionRuntimeEffects(activeSession: TutoringSession | null) {
+    const uiRuntime =
+      activeSession?.runtimeState &&
+      typeof activeSession.runtimeState.uiRuntime === "object" &&
+      activeSession.runtimeState.uiRuntime !== null
+        ? (activeSession.runtimeState.uiRuntime as Record<string, unknown>)
+        : {};
+    const highlightsValue = uiRuntime.highlights;
+    const triggersValue = uiRuntime.triggers;
+    const nextHighlights: Record<string, RuntimeHighlight> = {};
+
+    if (
+      highlightsValue &&
+      typeof highlightsValue === "object" &&
+      !Array.isArray(highlightsValue)
+    ) {
+      for (const [selector, value] of Object.entries(
+        highlightsValue as Record<string, unknown>,
+      )) {
+        if (!selector || !value || typeof value !== "object") continue;
+        const color =
+          "color" in value && typeof value.color === "string"
+            ? value.color
+            : "rgba(59, 130, 246, 0.6)";
+        nextHighlights[selector] = { color, selector };
+      }
+    }
+
+    const nextTriggers: RuntimeUiTrigger[] = [];
+    if (Array.isArray(triggersValue)) {
+      triggersValue.forEach((value) => {
+        if (!value || typeof value !== "object") return;
+        const trigger = value as Record<string, unknown>;
+        const selector =
+          typeof trigger.selector === "string" ? trigger.selector : "";
+        const triggersEvent =
+          typeof trigger.triggersEvent === "string"
+            ? trigger.triggersEvent
+            : "";
+        if (!selector || !triggersEvent) return;
+        nextTriggers.push({
+          eventId: typeof trigger.eventId === "string" ? trigger.eventId : "",
+          selector,
+          stepId: typeof trigger.stepId === "string" ? trigger.stepId : "",
+          triggersEvent,
+        });
+      });
+    }
+
+    setRuntimeHighlights(nextHighlights);
+    setRuntimeTriggers(nextTriggers);
+  }
 
   function getWorkspaceWidthRange() {
     const shell = shellRef.current;
@@ -2481,6 +2805,41 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   }, [selectedExperienceId]);
 
   useEffect(() => {
+    setNotesVisible(false);
+  }, [session?.id]);
+
+  useEffect(() => {
+    applySessionRuntimeEffects(session);
+  }, [session?.runtimeState]);
+
+  useEffect(() => {
+    const highlightedElements: HTMLElement[] = [];
+
+    for (const highlight of Object.values(runtimeHighlights)) {
+      let targets: NodeListOf<Element>;
+      try {
+        targets = document.querySelectorAll(highlight.selector);
+      } catch {
+        continue;
+      }
+
+      targets.forEach((target) => {
+        if (!(target instanceof HTMLElement)) return;
+        target.classList.add("runtime-highlight");
+        target.style.setProperty("--runtime-highlight-color", highlight.color);
+        highlightedElements.push(target);
+      });
+    }
+
+    return () => {
+      highlightedElements.forEach((target) => {
+        target.classList.remove("runtime-highlight");
+        target.style.removeProperty("--runtime-highlight-color");
+      });
+    };
+  }, [runtimeHighlights]);
+
+  useEffect(() => {
     setResolvedSlide(null);
     setSlideError("");
     setSlideStatus("empty");
@@ -2577,7 +2936,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           `/api/sessions/${activeSession.id}/start-event/`,
           {
             method: "POST",
-            body: JSON.stringify({}),
+            body: JSON.stringify({ uiState: currentRuntimeUiState() }),
           },
         );
 
@@ -2585,6 +2944,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
         setSession(payload.session);
         setMessages(payload.messages);
+        applyRuntimeActions(payload.actions);
         if (payload.ranMessages?.[0]) {
           setTurnAnchorMessageId(payload.ranMessages[0].id);
         }
@@ -2621,6 +2981,64 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [isLeftOpen, leftWidth, workspaceWidth]);
+
+  async function runSessionEventBySlug(
+    eventSlug: string,
+    uiState: RuntimeUiState,
+    triggerSelector = "",
+  ) {
+    if (!session) return;
+
+    try {
+      const payload = await apiFetch<StartEventPayload>(
+        `/api/sessions/${session.id}/events/run/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            eventSlug,
+            triggerSelector,
+            uiState,
+          }),
+        },
+      );
+
+      setSession(payload.session);
+      setMessages(payload.messages);
+      applyRuntimeActions(payload.actions);
+      if (payload.ranMessages?.[0]) {
+        setTurnAnchorMessageId(payload.ranMessages[0].id);
+      }
+    } catch (error) {
+      setChatStatus("error");
+      setChatError(
+        error instanceof Error ? error.message : "Could not run triggered event.",
+      );
+    }
+  }
+
+  function triggerRuntimeUiEvent(selector: string, uiState: RuntimeUiState) {
+    const matchingTriggers = runtimeTriggers.filter(
+      (trigger) => trigger.selector === selector,
+    );
+    if (!matchingTriggers.length) return;
+
+    setRuntimeTriggers((current) =>
+      current.filter((trigger) => trigger.selector !== selector),
+    );
+    matchingTriggers.forEach((trigger) => {
+      void runSessionEventBySlug(trigger.triggersEvent, uiState, selector);
+    });
+  }
+
+  function toggleRuntimeNotes() {
+    const nextNotesVisible = !notesVisible;
+    const nextUiState = currentRuntimeUiState({
+      notesVisible: nextNotesVisible,
+    });
+
+    setNotesVisible(nextNotesVisible);
+    triggerRuntimeUiEvent(".runtime-notes-toggle", nextUiState);
+  }
 
   function dragLeftDivider(event: PointerEvent<HTMLDivElement>) {
     const shell = shellRef.current;
@@ -3199,6 +3617,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                     user,
                   }}
                   kind={panel.kind}
+                  runtime={{
+                    notesVisible,
+                    onToggleNotes: toggleRuntimeNotes,
+                  }}
                   slides={{
                     deckUrl: slideDeckUrl,
                     error: slideError,
@@ -3380,11 +3802,16 @@ type SlideControlsProps = {
 function LeftPanelContent({
   experience,
   kind,
+  runtime,
   slides,
   tutor,
 }: {
   experience: ExperienceControlsProps;
   kind: LeftPanelKind;
+  runtime: {
+    notesVisible: boolean;
+    onToggleNotes: () => void;
+  };
   slides: SlideControlsProps;
   tutor: TutorControlsProps;
 }) {
@@ -3402,6 +3829,14 @@ function LeftPanelContent({
         <p className="muted-copy">
           Authoring settings now live in the experience editor.
         </p>
+        <button
+          aria-pressed={runtime.notesVisible}
+          className="runtime-inline-button runtime-notes-toggle"
+          onClick={runtime.onToggleNotes}
+          type="button"
+        >
+          {runtime.notesVisible ? "Notes open" : "Open notes"}
+        </button>
       </RuntimePlaceholderPanel>
     );
   }

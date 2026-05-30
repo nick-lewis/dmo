@@ -396,6 +396,29 @@ def normalize_realtime_choice(value, allowed_values, default_value):
     return choice
 
 
+def normalize_runtime_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    return str(value)
+
+
+def parse_client_ui_state(value):
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def validate_selector(value, label="Selector"):
+    selector = str(value or "").strip()
+    if not selector:
+        return None, f"{label} is required."
+    if len(selector) > 500:
+        return None, f"{label} is too long."
+    return selector, ""
+
+
 def validate_action_config(action_type, value):
     if value is None:
         value = {}
@@ -415,6 +438,43 @@ def validate_action_config(action_type, value):
         if len(key) > 120:
             return None, "Context key is too long."
         return {"key": key, "value": value.get("value")}, ""
+
+    if action_type == EventActionStep.ActionType.GET_UI_STATE:
+        state_key = str(value.get("stateKey", "")).strip()
+        context_key = str(value.get("contextKey", state_key)).strip()
+        if not state_key:
+            return None, "UI state key is required."
+        if not context_key:
+            return None, "Context key is required."
+        if len(state_key) > 120 or len(context_key) > 120:
+            return None, "UI state keys are too long."
+        return {"contextKey": context_key, "stateKey": state_key}, ""
+
+    if action_type == EventActionStep.ActionType.HIGHLIGHT_ON:
+        selector, selector_error = validate_selector(value.get("selector"))
+        if selector_error:
+            return None, selector_error
+        color = str(value.get("color", "rgba(59, 130, 246, 0.6)")).strip()
+        if len(color) > 120:
+            return None, "Highlight color is too long."
+        return {"color": color, "selector": selector}, ""
+
+    if action_type == EventActionStep.ActionType.HIGHLIGHT_OFF:
+        selector, selector_error = validate_selector(value.get("selector"))
+        if selector_error:
+            return None, selector_error
+        return {"selector": selector}, ""
+
+    if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
+        selector, selector_error = validate_selector(value.get("selector"))
+        if selector_error:
+            return None, selector_error
+        triggers_event = str(value.get("triggersEvent", "")).strip()
+        if not triggers_event:
+            return None, "Triggered event is required."
+        if len(triggers_event) > 180:
+            return None, "Triggered event is too long."
+        return {"selector": selector, "triggersEvent": triggers_event}, ""
 
     return None, "Action type is not supported."
 
@@ -477,10 +537,59 @@ def create_message_for_runtime(session, role, content, metadata=None):
     )
 
 
-def run_event_steps(session, event):
+def apply_runtime_actions_to_state(state, actions, clear_trigger_selector=""):
+    ui_runtime = dict(state.get("uiRuntime") or {})
+    highlights = dict(ui_runtime.get("highlights") or {})
+    triggers = list(ui_runtime.get("triggers") or [])
+
+    if clear_trigger_selector:
+        triggers = [
+            trigger
+            for trigger in triggers
+            if trigger.get("selector") != clear_trigger_selector
+        ]
+
+    for action in actions:
+        selector = str(action.get("selector", "")).strip()
+        if not selector:
+            continue
+
+        if action.get("type") == "highlight_on":
+            highlights[selector] = {
+                "color": str(action.get("color", "rgba(59, 130, 246, 0.6)")),
+                "selector": selector,
+            }
+        elif action.get("type") == "highlight_off":
+            highlights.pop(selector, None)
+        elif action.get("type") == "set_ui_trigger":
+            triggers = [
+                trigger
+                for trigger in triggers
+                if not (
+                    trigger.get("selector") == selector
+                    and trigger.get("triggersEvent") == action.get("triggersEvent")
+                )
+            ]
+            triggers.append(
+                {
+                    "eventId": str(action.get("eventId", "")),
+                    "selector": selector,
+                    "stepId": str(action.get("stepId", "")),
+                    "triggersEvent": str(action.get("triggersEvent", "")),
+                }
+            )
+
+    ui_runtime["highlights"] = highlights
+    ui_runtime["triggers"] = triggers
+    state["uiRuntime"] = ui_runtime
+    return state
+
+
+def run_event_steps(session, event, client_ui_state=None):
     actions = []
     messages = []
     runtime_context = dict(session.runtime_context or {})
+    client_ui_state = parse_client_ui_state(client_ui_state)
 
     for step in event.steps.filter(enabled=True).order_by("sort_order", "created_at"):
         if not step_condition_matches(step, runtime_context):
@@ -534,6 +643,73 @@ def run_event_steps(session, event):
                     "stepId": str(step.id),
                     "key": key,
                     "value": runtime_context[key],
+                }
+            )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.GET_UI_STATE:
+            state_key = str(step.config.get("stateKey", "")).strip()
+            context_key = str(step.config.get("contextKey", state_key)).strip()
+            if not state_key or not context_key:
+                continue
+            runtime_context[context_key] = normalize_runtime_value(
+                client_ui_state.get(state_key)
+            )
+            actions.append(
+                {
+                    "type": "get_ui_state",
+                    "contextKey": context_key,
+                    "eventId": str(event.id),
+                    "stateKey": state_key,
+                    "stepId": str(step.id),
+                    "value": runtime_context[context_key],
+                }
+            )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.HIGHLIGHT_ON:
+            selector = str(step.config.get("selector", "")).strip()
+            if not selector:
+                continue
+            actions.append(
+                {
+                    "type": "highlight_on",
+                    "color": str(
+                        step.config.get("color", "rgba(59, 130, 246, 0.6)")
+                    ),
+                    "eventId": str(event.id),
+                    "selector": selector,
+                    "stepId": str(step.id),
+                }
+            )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.HIGHLIGHT_OFF:
+            selector = str(step.config.get("selector", "")).strip()
+            if not selector:
+                continue
+            actions.append(
+                {
+                    "type": "highlight_off",
+                    "eventId": str(event.id),
+                    "selector": selector,
+                    "stepId": str(step.id),
+                }
+            )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
+            selector = str(step.config.get("selector", "")).strip()
+            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+            if not selector or not triggers_event:
+                continue
+            actions.append(
+                {
+                    "type": "set_ui_trigger",
+                    "eventId": str(event.id),
+                    "selector": selector,
+                    "stepId": str(step.id),
+                    "triggersEvent": triggers_event,
                 }
             )
 
@@ -1091,6 +1267,11 @@ def run_start_event(request, session_id):
     if auth_response:
         return auth_response
 
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+    client_ui_state = parse_client_ui_state(data.get("uiState"))
+
     with transaction.atomic():
         session = (
             TutoringSession.objects.select_for_update()
@@ -1144,7 +1325,11 @@ def run_start_event(request, session_id):
                 }
             )
 
-        actions, messages = run_event_steps(session, event)
+        actions, messages = run_event_steps(
+            session,
+            event,
+            client_ui_state=client_ui_state,
+        )
         event_runs[run_key] = {
             "completedAt": timezone.now().isoformat(),
             "status": "complete",
@@ -1152,6 +1337,93 @@ def run_start_event(request, session_id):
         state["eventRuns"] = event_runs
         state["startEventId"] = str(event.id)
         state["startEventComplete"] = True
+        state = apply_runtime_actions_to_state(state, actions)
+        session.runtime_state = state
+        session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
+
+    return JsonResponse(
+        {
+            **session_payload(session),
+            "actions": actions,
+            "event": serialize_experience_event(event),
+            "ran": True,
+            "ranMessages": [serialize_message(message) for message in messages],
+        }
+    )
+
+
+@require_POST
+def run_session_event(request, session_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    event_id = str(data.get("eventId", "")).strip()
+    event_slug = str(data.get("eventSlug", "")).strip()
+    trigger_selector = str(data.get("triggerSelector", "")).strip()
+    client_ui_state = parse_client_ui_state(data.get("uiState"))
+
+    if not event_id and not event_slug:
+        return JsonResponse({"detail": "Event is required."}, status=400)
+
+    with transaction.atomic():
+        session = (
+            TutoringSession.objects.select_for_update()
+            .filter(
+                id=session_id,
+                user=request.user,
+                status=TutoringSession.Status.ACTIVE,
+            )
+            .first()
+        )
+        if not session:
+            return JsonResponse({"detail": "Session not found."}, status=404)
+        if not session.experience:
+            return JsonResponse(
+                {"detail": "Session does not have an experience."},
+                status=400,
+            )
+
+        event_query = session.experience.events.all()
+        if event_id:
+            event = event_query.filter(id=event_id).first()
+        else:
+            event = event_query.filter(slug=event_slug).first()
+        if not event:
+            return JsonResponse({"detail": "Event not found."}, status=404)
+
+        state = dict(session.runtime_state or {})
+        event_runs = dict(state.get("eventRuns") or {})
+        run_key = str(event.id)
+        if event_runs.get(run_key, {}).get("status") == "complete":
+            return JsonResponse(
+                {
+                    **session_payload(session),
+                    "actions": [],
+                    "event": serialize_experience_event(event),
+                    "ran": False,
+                }
+            )
+
+        actions, messages = run_event_steps(
+            session,
+            event,
+            client_ui_state=client_ui_state,
+        )
+        event_runs[run_key] = {
+            "completedAt": timezone.now().isoformat(),
+            "status": "complete",
+        }
+        state["eventRuns"] = event_runs
+        state = apply_runtime_actions_to_state(
+            state,
+            actions,
+            clear_trigger_selector=trigger_selector,
+        )
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 

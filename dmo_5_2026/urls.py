@@ -23,6 +23,7 @@ from core.views import (
     logout_user,
     resolve_google_slide,
     reorder_event_action_steps,
+    run_session_event,
     run_start_event,
     serve_google_slide_image,
     serve_voice_sample_audio,
@@ -95,6 +96,11 @@ urlpatterns = [
         "api/sessions/<uuid:session_id>/start-event/",
         run_start_event,
         name="run-start-event",
+    ),
+    path(
+        "api/sessions/<uuid:session_id>/events/run/",
+        run_session_event,
+        name="run-session-event",
     ),
     path("api/slides/resolve/", resolve_google_slide, name="resolve-google-slide"),
     path(

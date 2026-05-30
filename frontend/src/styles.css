@@ -838,6 +838,18 @@ button {
   background: color-mix(in srgb, var(--accent-4) 12%, transparent);
 }
 
+.tone-ui .event-step-kind,
+.event-add-option.tone-ui > span {
+  color: color-mix(in srgb, var(--accent-3) 78%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-3) 12%, transparent);
+}
+
+.tone-flow .event-step-kind,
+.event-add-option.tone-flow > span {
+  color: color-mix(in srgb, var(--accent-5) 78%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-5) 12%, transparent);
+}
+
 .event-step-copy {
   min-width: 0;
   overflow: hidden;
@@ -971,6 +983,10 @@ button {
 
 .event-context-line {
   grid-template-columns: auto minmax(120px, 0.78fr) auto minmax(120px, 1fr);
+}
+
+.event-context-line.single-value {
+  grid-template-columns: auto minmax(160px, 1fr);
 }
 
 .event-detail-label,
@@ -1834,6 +1850,32 @@ button {
   font-weight: 820;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.runtime-inline-button {
+  justify-self: start;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 22%, var(--panel-soft-border));
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+  font-size: 0.74rem;
+  font-weight: 780;
+}
+
+.runtime-inline-button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent-4) 30%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-4) 80%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-4) 12%, transparent);
+}
+
+.runtime-highlight {
+  position: relative;
+  z-index: 1;
+  box-shadow:
+    0 0 0 2px var(--runtime-highlight-color, rgba(59, 130, 246, 0.6)),
+    0 0 0 7px color-mix(in srgb, var(--runtime-highlight-color, rgba(59, 130, 246, 0.6)) 22%, transparent);
 }
 
 .tag-row {
