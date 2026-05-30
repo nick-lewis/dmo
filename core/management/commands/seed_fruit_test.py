@@ -16,12 +16,72 @@ from core.views import ensure_tutor_settings
 FRUIT_SCHEMA = {
     "type": "object",
     "properties": {
-        "mentioned": {"type": "boolean"},
-        "context": {"type": ["string", "null"]},
+        "mentioned": {
+            "type": "boolean",
+            "description": "Multi-classifier demo with banana, apple, orange detection",
+        },
+        "context": {
+            "type": ["string", "null"],
+            "description": "Multi-classifier demo with banana, apple, orange detection",
+        },
     },
     "required": ["mentioned", "context"],
     "additionalProperties": False,
 }
+
+FRUIT_CLASSIFIER_PROMPTS = {
+    "banana": '''Analyze the conversation. Was "banana" mentioned
+in the user's most recent message? Consider both explicit mentions and
+variations (bananas, banana's, etc.).''',
+    "apple": '''Analyze the conversation. Was "apple" mentioned
+in the user's most recent message? Consider both the fruit and variations
+(apples, apple's). Do NOT count Apple the company/brand.''',
+    "orange": '''Analyze the conversation. Was "orange" mentioned
+in the user's most recent message? Consider the fruit (oranges, orange juice, etc.)
+Do NOT count orange the color unless clearly referring to the fruit.''',
+}
+
+CHAT_SYSTEM_TEMPLATE = '''{{#if fruits_mentioned}}You are a friendly assistant tracking fruit mentions.
+
+Fruits mentioned so far: {{fruits_mentioned}}
+
+When responding:
+1. Acknowledge any NEW fruits the classifiers detected (the system will tell you)
+2. Naturally continue the conversation about fruits
+3. If the user says "summary", list all fruits mentioned so far
+4. Keep responses brief and fun!{{else}}You are a friendly assistant tracking fruit mentions.
+
+No fruits have been mentioned yet!
+
+Encourage the user to talk about bananas, apples, or oranges.
+Keep responses brief and fun!{{/if}}'''
+
+INTRO_SCRIPT = """
+Welcome to the Fruit Demo!
+
+This experience demonstrates multi-classifier parallel classification.
+I have THREE classifiers running in parallel before each response:
+- One checking if you mentioned a banana
+- One checking if you mentioned an apple
+- One checking if you mentioned an orange
+
+Try talking about fruits and I'll track which ones you've mentioned!
+Say "summary" when you want to see the full list.
+"""
+
+CELEBRATION_SCRIPT = """
+Congratulations! You've mentioned all three fruits!
+
+Your fruit collection: {{fruits_mentioned}}
+
+This demonstrates how multi-classifier parallel classification works:
+- Three classifiers ran independently in parallel
+- Each checked for a different fruit
+- Results were combined in handle_classifications()
+- When all three were detected, we transitioned here!
+
+You can restart to try again, or explore other experiences.
+"""
 
 
 class Command(BaseCommand):
@@ -60,12 +120,12 @@ class Command(BaseCommand):
             user=user,
             slug="fruit-test",
             defaults={
-                "description": "Parallel fruit classifiers with context routing.",
-                "title": "Fruit test",
+                "description": "Multi-classifier demo with banana, apple, orange detection",
+                "title": "Fruit Demo",
             },
         )
-        experience.title = "Fruit test"
-        experience.description = "Parallel fruit classifiers with context routing."
+        experience.title = "Fruit Demo"
+        experience.description = "Multi-classifier demo with banana, apple, orange detection"
         experience.save(update_fields=["title", "description", "updated_at"])
 
         tutor_settings = ensure_tutor_settings(experience)
@@ -86,17 +146,10 @@ class Command(BaseCommand):
         )
         chat = ExperienceEvent.objects.create(
             experience=experience,
-            title="Fruit chat",
+            title="Chat",
             slug="fruit-chat",
-            description="Stay here while classifiers watch for fruit mentions.",
-            chat_instructions=(
-                "You are running the Fruit test. Fruits mentioned so far: "
-                "{{fruits_mentioned}}. Newly mentioned this turn: "
-                "{{newly_mentioned}}. If newly_mentioned is not empty, briefly "
-                "acknowledge it. Ask naturally for any of banana, apple, or "
-                "orange not yet mentioned. Do not claim a fruit was mentioned "
-                "unless it appears in runtime context."
-            ),
+            description="Main chat with active multi-classification.",
+            chat_instructions=CHAT_SYSTEM_TEMPLATE,
             sort_order=1,
         )
         celebration = ExperienceEvent.objects.create(
@@ -126,12 +179,7 @@ class Command(BaseCommand):
             2,
             "script",
             "Welcome",
-            {
-                "text": (
-                    "Let's test the conversation classifiers. Mention banana, "
-                    "apple, and orange in any order, and I will keep track."
-                )
-            },
+            {"text": INTRO_SCRIPT},
         )
         self.create_step(
             intro,
@@ -146,21 +194,13 @@ class Command(BaseCommand):
             0,
             "script",
             "Celebrate",
-            {
-                "text": (
-                    "Nice. I have now detected all three fruit: "
-                    "{{fruits_mentioned}}."
-                )
-            },
+            {"text": CELEBRATION_SCRIPT},
         )
 
         group = EventClassifierGroup.objects.create(
             event=chat,
             title="Fruit classifiers",
-            instructions=(
-                "Run each classifier independently against the user's latest "
-                "message. Do not use prior classifier results."
-            ),
+            instructions="Return three parallel classifiers - one per fruit.",
             result_context_key="_classifier_results",
             handler_actions=self.fruit_handler_actions(),
             sort_order=0,
@@ -169,11 +209,7 @@ class Command(BaseCommand):
             EventClassifier.objects.create(
                 group=group,
                 name=fruit,
-                prompt=(
-                    f"Return mentioned=true if the learner's latest message "
-                    f"mentions {fruit} or {fruit}s. Include a short context "
-                    "quote when true; otherwise context=null."
-                ),
+                prompt=FRUIT_CLASSIFIER_PROMPTS[fruit],
                 schema=FRUIT_SCHEMA,
                 condition={
                     "type": "context_not_contains",

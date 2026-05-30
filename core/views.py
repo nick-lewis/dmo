@@ -651,10 +651,35 @@ def value_contains(container, expected):
     return str(expected) in normalize_runtime_value(container)
 
 
+def runtime_value_is_truthy(value):
+    if isinstance(value, (list, dict, str)):
+        return bool(value)
+    return bool(value)
+
+
 def render_context_template(text, runtime_context):
     text = str(text or "")
     if "{{" not in text:
         return text
+
+    conditional_pattern = re.compile(
+        r"\{\{#if\s+([^{}]+?)\s*\}\}(.*?)"
+        r"(?:\{\{else\}\}(.*?))?\{\{/if\}\}",
+        flags=re.DOTALL,
+    )
+
+    def replace_conditional(match):
+        key = match.group(1).strip()
+        if_content = match.group(2)
+        else_content = match.group(3) or ""
+        _, value = runtime_context_lookup(runtime_context, key)
+        selected = if_content if runtime_value_is_truthy(value) else else_content
+        return render_context_template(selected, runtime_context)
+
+    previous_text = None
+    while previous_text != text:
+        previous_text = text
+        text = conditional_pattern.sub(replace_conditional, text)
 
     def replace_match(match):
         key = match.group(1).strip()
