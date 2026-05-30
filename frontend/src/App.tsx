@@ -18,7 +18,7 @@ import {
 
 const leftPanels = [
   { density: "tall", kind: "controls", label: "Runtime controls" },
-  { density: "compact", kind: "code", label: "Left panel two" },
+  { density: "compact", kind: "slides", label: "Slide controls" },
   { density: "compact", kind: "reference", label: "Left panel three" },
   { density: "compact", kind: "checks", label: "Left panel four" },
 ] as const;
@@ -31,6 +31,9 @@ const standardWorkspaceWidth = 1180;
 const minWorkspaceWidth = 860;
 const maxWorkspaceWidth = 1800;
 const panelLayoutStorageKey = "dlu.panel-layout.v1";
+const slideSettingsStorageKey = "dlu.slide-settings.v1";
+const sampleSlideDeckUrl =
+  "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 
 type ChatMessage = {
   id: string;
@@ -68,6 +71,21 @@ type StoredPanelLayout = {
   lowerHeight?: number;
   workspaceWidth?: number;
 };
+
+type SlideSettings = {
+  deckUrl: string;
+  slideRef: string;
+};
+
+type ResolvedSlide = {
+  cached: boolean;
+  imageUrl: string;
+  pageId: string;
+  presentationId: string;
+  slideRef: string;
+};
+
+type SlideStatus = "empty" | "loading" | "ready" | "error";
 
 const pythonKeywords = new Set([
   "False",
@@ -198,6 +216,36 @@ function writePanelLayout(layout: StoredPanelLayout) {
   }
 }
 
+function readSlideSettings(): SlideSettings {
+  if (typeof window === "undefined") return { deckUrl: "", slideRef: "1" };
+
+  try {
+    const rawValue = window.localStorage.getItem(slideSettingsStorageKey);
+    if (!rawValue) return { deckUrl: "", slideRef: "1" };
+
+    const value = JSON.parse(rawValue) as Partial<SlideSettings>;
+    return {
+      deckUrl: typeof value.deckUrl === "string" ? value.deckUrl : "",
+      slideRef:
+        typeof value.slideRef === "string" && value.slideRef.trim()
+          ? value.slideRef
+          : "1",
+    };
+  } catch {
+    return { deckUrl: "", slideRef: "1" };
+  }
+}
+
+function writeSlideSettings(settings: SlideSettings) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(slideSettingsStorageKey, JSON.stringify(settings));
+  } catch {
+    // Ignore storage failures; slide display can still run from local state.
+  }
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}) {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
@@ -252,6 +300,7 @@ function PanelStudy() {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
   const initialPanelLayout = useRef(readPanelLayout());
+  const initialSlideSettings = useRef(readSlideSettings());
   const hasManualToolWidth = useRef(
     typeof initialPanelLayout.current.leftWidth === "number",
   );
@@ -276,6 +325,15 @@ function PanelStudy() {
   const [selectedModel, setSelectedModel] =
     useState<RealtimeModelId>("gpt-realtime-mini");
   const [selectedVoice, setSelectedVoice] = useState<RealtimeVoiceId>("marin");
+  const [slideDeckUrl, setSlideDeckUrl] = useState(
+    initialSlideSettings.current.deckUrl,
+  );
+  const [slideRef, setSlideRef] = useState(
+    initialSlideSettings.current.slideRef,
+  );
+  const [resolvedSlide, setResolvedSlide] = useState<ResolvedSlide | null>(null);
+  const [slideStatus, setSlideStatus] = useState<SlideStatus>("empty");
+  const [slideError, setSlideError] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("idle");
   const [chatStatus, setChatStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -368,6 +426,19 @@ function PanelStudy() {
   useEffect(() => {
     writePanelLayout({ leftWidth, lowerHeight, workspaceWidth });
   }, [leftWidth, lowerHeight, workspaceWidth]);
+
+  useEffect(() => {
+    writeSlideSettings({
+      deckUrl: slideDeckUrl,
+      slideRef,
+    });
+  }, [slideDeckUrl, slideRef]);
+
+  useEffect(() => {
+    setResolvedSlide(null);
+    setSlideError("");
+    setSlideStatus("empty");
+  }, [slideDeckUrl, slideRef]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -555,6 +626,52 @@ function PanelStudy() {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     event.preventDefault();
+  }
+
+  async function resolveCurrentSlide(forceRefresh = false) {
+    if (!slideDeckUrl.trim()) {
+      setResolvedSlide(null);
+      setSlideError("");
+      setSlideStatus("empty");
+      return;
+    }
+
+    setSlideStatus("loading");
+    setSlideError("");
+
+    try {
+      const payload = await apiFetch<ResolvedSlide>("/api/slides/resolve/", {
+        method: "POST",
+        body: JSON.stringify({
+          deckUrl: slideDeckUrl,
+          forceRefresh,
+          slideRef,
+        }),
+      });
+      setResolvedSlide({
+        ...payload,
+        imageUrl: `${payload.imageUrl}?v=${Date.now()}`,
+      });
+      setSlideStatus("ready");
+    } catch (error) {
+      setSlideStatus("error");
+      setSlideError(
+        error instanceof Error ? error.message : "Could not load that slide.",
+      );
+    }
+  }
+
+  function loadSampleSlideDeck() {
+    setSlideDeckUrl(sampleSlideDeckUrl);
+    setSlideRef("1");
+  }
+
+  function clearSlides() {
+    setSlideDeckUrl("");
+    setSlideRef("1");
+    setResolvedSlide(null);
+    setSlideError("");
+    setSlideStatus("empty");
   }
 
   async function createNewSession() {
@@ -813,6 +930,19 @@ function PanelStudy() {
                     user,
                   }}
                   kind={panel.kind}
+                  slides={{
+                    deckUrl: slideDeckUrl,
+                    error: slideError,
+                    onClear: clearSlides,
+                    onDeckUrlChange: setSlideDeckUrl,
+                    onRefreshSlide: () => resolveCurrentSlide(true),
+                    onResolveSlide: () => resolveCurrentSlide(false),
+                    onSampleDeck: loadSampleSlideDeck,
+                    onSlideRefChange: setSlideRef,
+                    resolvedSlide,
+                    slideRef,
+                    status: slideStatus,
+                  }}
                 />
               </PanelWindow>
             ))}
@@ -840,7 +970,11 @@ function PanelStudy() {
             style={{ "--lower-height": `${lowerHeight}px` } as CSSProperties}
           >
             <PanelWindow ariaLabel="Panel five" density="main">
-              <MainPanelContent />
+              <MainPanelContent
+                error={slideError}
+                slide={resolvedSlide}
+                status={slideStatus}
+              />
             </PanelWindow>
             <div
               aria-label="Resize rows"
@@ -900,27 +1034,35 @@ type RuntimeControlsProps = {
   user: ApiUser | null;
 };
 
+type SlideControlsProps = {
+  deckUrl: string;
+  error: string;
+  onClear: () => void;
+  onDeckUrlChange: (url: string) => void;
+  onRefreshSlide: () => void;
+  onResolveSlide: () => void;
+  onSampleDeck: () => void;
+  onSlideRefChange: (slideRef: string) => void;
+  resolvedSlide: ResolvedSlide | null;
+  slideRef: string;
+  status: SlideStatus;
+};
+
 function LeftPanelContent({
   controls,
   kind,
+  slides,
 }: {
   controls: RuntimeControlsProps;
   kind: LeftPanelKind;
+  slides: SlideControlsProps;
 }) {
   if (kind === "controls") {
     return <RuntimeControls {...controls} />;
   }
 
-  if (kind === "code") {
-    return (
-      <CodeBlock
-        code={`def next_tutor_move(state: dict) -> str:
-    if state["reasoning"] == "hidden":
-        return "ask_for_visible_step"
-
-    return "confirm_and_extend"`}
-      />
-    );
+  if (kind === "slides") {
+    return <SlideControls {...slides} />;
   }
 
   if (kind === "reference") {
@@ -1056,44 +1198,134 @@ function RuntimeControls({
   );
 }
 
-function MainPanelContent() {
+function SlideControls({
+  deckUrl,
+  error,
+  onClear,
+  onDeckUrlChange,
+  onRefreshSlide,
+  onResolveSlide,
+  onSampleDeck,
+  onSlideRefChange,
+  resolvedSlide,
+  slideRef,
+  status,
+}: SlideControlsProps) {
+  const canLoad = Boolean(deckUrl.trim()) && status !== "loading";
+  const statusLabel =
+    status === "loading"
+      ? "Loading"
+      : status === "error"
+        ? "Error"
+        : resolvedSlide
+          ? "Ready"
+          : "Empty";
+
   return (
-    <div className="workspace-content">
-      <section className="copy-card">
-        <h2 className="content-title">Reasoning before explanation</h2>
-        <p>
-          The main panel needs to support reading, writing, and comparison.
-          Normal text should stay neutral; the brand color is reserved for
-          selection, emphasis, and small status cues.
-        </p>
-      </section>
+    <form
+      className="slide-controls"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canLoad) onResolveSlide();
+      }}
+    >
+      <div className="runtime-control-header">
+        <span>Slides</span>
+        <strong className={`slide-status ${status}`}>
+          {statusLabel}
+        </strong>
+      </div>
 
-      <section className="split-work">
-        <div className="copy-card">
-          <h2 className="content-title">Plain text area</h2>
-          <p>
-            Before we solve the whole thing, what is the first operation you would
-            undo, and what equation remains after that step?
-          </p>
-        </div>
-
-        <CodeBlock
-          code={`response_shape = {
-    "mode": "question",
-    "target": "first_operation",
-    "reveal_solution": False,
-    "max_sentences": 2,
-}`}
+      <label className="control-field">
+        <span>Deck URL</span>
+        <input
+          onChange={(event) => onDeckUrlChange(event.target.value)}
+          placeholder="Paste Google Slides URL..."
+          type="url"
+          value={deckUrl}
         />
-      </section>
+      </label>
 
-      <section className="copy-card subtle-card">
-        <h2 className="content-title">Resize without losing hierarchy</h2>
-        <p>
-          The left stack can carry reference material and tools. The lower panel can
-          stay conversational while the main panel holds the durable work surface.
+      <label className="control-field">
+        <span>Slide</span>
+        <input
+          inputMode="text"
+          onChange={(event) => onSlideRefChange(event.target.value)}
+          placeholder="1 or page id"
+          type="text"
+          value={slideRef}
+        />
+      </label>
+
+      <div className="control-actions slide-actions">
+        <button className="header-action" disabled={!canLoad} type="submit">
+          {status === "loading" ? "Loading..." : "Load"}
+        </button>
+        <button
+          className="header-action secondary"
+          disabled={!canLoad}
+          onClick={onRefreshSlide}
+          type="button"
+        >
+          Refresh
+        </button>
+      </div>
+
+      <div className="control-actions slide-actions">
+        <button className="header-action secondary" onClick={onSampleDeck} type="button">
+          Sample
+        </button>
+        <button
+          className="header-action secondary"
+          disabled={!deckUrl && slideRef === "1" && !resolvedSlide}
+          onClick={onClear}
+          type="button"
+        >
+          Clear
+        </button>
+      </div>
+
+      {resolvedSlide ? (
+        <p className="slide-control-note">
+          Slide {resolvedSlide.slideRef} / {resolvedSlide.pageId}
         </p>
-      </section>
+      ) : null}
+      {error ? <p className="control-error">{error}</p> : null}
+    </form>
+  );
+}
+
+function MainPanelContent({
+  error,
+  slide,
+  status,
+}: {
+  error: string;
+  slide: ResolvedSlide | null;
+  status: SlideStatus;
+}) {
+  if (slide) {
+    return (
+      <div className="slide-workspace">
+        <div className="slide-image-stage">
+          <img
+            alt={`Google slide ${slide.slideRef}`}
+            className="google-slide-image"
+            src={slide.imageUrl}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const emptyLabel =
+    status === "loading" ? "Loading slide" : error ? "Slide unavailable" : "Slides";
+
+  return (
+    <div className="slide-workspace empty">
+      <div className="slide-empty-state">
+        <span>{emptyLabel}</span>
+      </div>
     </div>
   );
 }

@@ -14,6 +14,12 @@ from django.views.decorators.http import require_GET, require_POST
 import requests
 
 from .models import SessionMessage, TutoringSession
+from .slides import (
+    SlideFetchError,
+    SlideResolutionError,
+    get_slide_image_path,
+    resolve_slide_image,
+)
 
 
 DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
@@ -382,6 +388,58 @@ def create_realtime_client_secret(request):
             "voice": voice,
         }
     )
+
+
+@require_POST
+def resolve_google_slide(request):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    deck_url = str(data.get("deckUrl", "")).strip()
+    slide_ref = str(data.get("slideRef", "1")).strip() or "1"
+    force_refresh = bool(data.get("forceRefresh", False))
+
+    if len(deck_url) > 2048:
+        return JsonResponse({"detail": "Deck URL is too long."}, status=400)
+
+    try:
+        resolved = resolve_slide_image(deck_url, slide_ref, force_refresh)
+    except SlideResolutionError as error:
+        return JsonResponse({"detail": str(error)}, status=400)
+    except SlideFetchError as error:
+        return JsonResponse({"detail": str(error)}, status=502)
+
+    return JsonResponse(
+        {
+            "cached": resolved.cache_hit,
+            "imageUrl": f"/api/slides/images/{resolved.filename}/",
+            "pageId": resolved.page_id,
+            "presentationId": resolved.presentation_id,
+            "slideRef": slide_ref,
+        }
+    )
+
+
+@require_GET
+def serve_google_slide_image(request, filename):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    try:
+        path = get_slide_image_path(filename)
+    except SlideResolutionError:
+        raise Http404("Slide image not found.")
+
+    if not path.exists():
+        raise Http404("Slide image not found.")
+
+    return FileResponse(path.open("rb"), content_type="image/png")
 
 
 def frontend_index(request):

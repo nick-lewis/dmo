@@ -515,7 +515,8 @@ button {
   opacity: 0.55;
 }
 
-.runtime-controls {
+.runtime-controls,
+.slide-controls {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -553,6 +554,7 @@ button {
   font-weight: 760;
 }
 
+.control-field input,
 .control-field select {
   width: 100%;
   min-height: 30px;
@@ -565,6 +567,15 @@ button {
   font-weight: 720;
 }
 
+.control-field input {
+  padding-right: 8px;
+}
+
+.control-field input::placeholder {
+  color: var(--muted-ink);
+}
+
+.control-field input:disabled,
 .control-field select:disabled {
   cursor: default;
   opacity: 0.58;
@@ -577,13 +588,69 @@ button {
   min-width: 0;
 }
 
-.runtime-controls .header-action {
+.runtime-controls .header-action,
+.slide-controls .header-action {
   width: 100%;
   min-width: 0;
   overflow: hidden;
   padding: 5px 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.slide-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.slide-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 8px;
+  color: var(--muted-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, transparent);
+  font-size: 0.67rem;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.slide-status.ready {
+  border-color: color-mix(in srgb, var(--accent-2) 28%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-2) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--panel-bg-strong));
+}
+
+.slide-status.loading {
+  border-color: color-mix(in srgb, var(--accent-5) 34%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-5) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-5) 12%, var(--panel-bg-strong));
+}
+
+.slide-status.error {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 52%, var(--panel-bg-strong));
+}
+
+.slide-control-note,
+.control-error {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.slide-control-note {
+  overflow: hidden;
+  color: var(--muted-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-error {
+  color: color-mix(in srgb, var(--accent) 78%, var(--page-ink));
 }
 
 .control-user {
@@ -812,18 +879,21 @@ button {
 }
 
 .panel-main .panel-body {
-  display: block;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 .text-stack,
-.workspace-content,
 .chat-thread {
   display: grid;
   gap: 10px;
 }
 
-.text-stack p,
-.copy-card p {
+.text-stack p {
   margin: 0;
   color: var(--page-ink);
   font-size: 0.86rem;
@@ -966,33 +1036,59 @@ button {
   --syntax-string: color-mix(in srgb, var(--accent-2) 76%, white);
 }
 
-.copy-card {
+.slide-workspace {
   display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--panel-soft-border);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 58%, transparent);
-}
-
-.subtle-card {
-  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-}
-
-.content-title {
-  margin: 0;
-  color: var(--page-ink);
-  font-family: var(--heading-font);
-  font-size: 0.98rem;
-  font-weight: 720;
-  line-height: 1.22;
-}
-
-.split-work {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.05fr) minmax(230px, 0.95fr);
-  gap: 10px;
+  place-items: center;
+  width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.slide-image-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.google-slide-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: #ffffff;
+  object-fit: contain;
+}
+
+.slide-workspace.empty {
+  place-items: center;
+  border: 1px dashed var(--panel-soft-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 44%, transparent);
+}
+
+.slide-empty-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 8px;
+  color: var(--muted-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 76%, transparent);
+  font-size: 0.74rem;
+  font-weight: 760;
 }
 
 .chat-stage {
@@ -1358,10 +1454,6 @@ button {
   .right-region {
     grid-template-rows: minmax(260px, auto) auto;
     gap: 10px;
-  }
-
-  .split-work {
-    grid-template-columns: 1fr;
   }
 
   .panel-lower {

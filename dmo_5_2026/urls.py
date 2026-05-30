@@ -16,6 +16,8 @@ from core.views import (
     frontend_index,
     health,
     logout_user,
+    resolve_google_slide,
+    serve_google_slide_image,
 )
 
 urlpatterns = [
@@ -35,6 +37,12 @@ urlpatterns = [
         "api/sessions/<uuid:session_id>/messages/",
         create_message,
         name="create-message",
+    ),
+    path("api/slides/resolve/", resolve_google_slide, name="resolve-google-slide"),
+    path(
+        "api/slides/images/<str:filename>/",
+        serve_google_slide_image,
+        name="serve-google-slide-image",
     ),
     path("", frontend_index, name="frontend-index"),
     re_path(r"^(?!api/|admin/|accounts/).*$", frontend_index, name="frontend-fallback"),
