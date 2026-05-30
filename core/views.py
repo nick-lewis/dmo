@@ -2354,7 +2354,7 @@ def create_realtime_client_secret(request):
                 session,
                 exclude_message_id=data.get("excludeMessageId"),
             ),
-            "output_modalities": ["text", "audio"],
+            "output_modalities": ["audio"],
             "audio": {
                 "output": {
                     "voice": voice,
