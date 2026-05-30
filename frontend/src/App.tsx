@@ -249,6 +249,15 @@ type VoiceSamplePayload = {
   voice: RealtimeVoiceId;
 };
 
+type MessageAudioPayload = {
+  audioUrl: string;
+  cached: boolean;
+  messageId: string;
+  realtimeModel: RealtimeModelId;
+  ttsModel: string;
+  voice: RealtimeVoiceId;
+};
+
 type StoredPanelLayout = {
   leftWidth?: number;
   lowerHeight?: number;
@@ -3453,6 +3462,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
   );
   const realtimeConnectionRef = useRef<DluRealtimeConnection | null>(null);
+  const activeSessionIdRef = useRef("");
+  const playedScriptMessageIdsRef = useRef(new Set<string>());
+  const scriptAudioRef = useRef<HTMLAudioElement | null>(null);
+  const scriptAudioQueueRef = useRef(Promise.resolve());
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [workspaceWidth, setWorkspaceWidth] = useState(
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
@@ -3903,14 +3916,27 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   useEffect(() => {
     return () => {
       realtimeConnectionRef.current?.close();
+      scriptAudioRef.current?.pause();
+      scriptAudioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    activeSessionIdRef.current = session?.id ?? "";
+  }, [session?.id]);
 
   useEffect(() => {
     realtimeConnectionRef.current?.close();
     realtimeConnectionRef.current = null;
     setRealtimeStatus("idle");
   }, [currentRuntimeEventId, selectedModel, selectedVoice, session?.id]);
+
+  useEffect(() => {
+    scriptAudioQueueRef.current = Promise.resolve();
+    playedScriptMessageIdsRef.current.clear();
+    scriptAudioRef.current?.pause();
+    scriptAudioRef.current = null;
+  }, [selectedModel, selectedVoice, session?.id]);
 
   useEffect(() => {
     if (!session || chatStatus !== "ready") return;
@@ -3938,6 +3964,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (payload.ranMessages?.[0]) {
           setTurnAnchorMessageId(payload.ranMessages[0].id);
         }
+        queueScriptMessages(payload.session, payload.ranMessages);
       } catch (error) {
         if (isCancelled) return;
 
@@ -4000,6 +4027,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (payload.ranMessages?.[0]) {
         setTurnAnchorMessageId(payload.ranMessages[0].id);
       }
+      queueScriptMessages(payload.session, payload.ranMessages);
     } catch (error) {
       setChatStatus("error");
       setChatError(
@@ -4210,6 +4238,93 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setResolvedSlide(null);
     setSlideError("");
     setSlideStatus("empty");
+  }
+
+  function isScriptAudioMessage(message: ChatMessage) {
+    return (
+      message.role === "assistant" &&
+      message.content.trim().length > 0 &&
+      message.metadata?.source === "event-action"
+    );
+  }
+
+  function playAudioUrl(audioUrl: string) {
+    return new Promise<void>((resolve, reject) => {
+      const audio = new Audio(audioUrl);
+      scriptAudioRef.current = audio;
+      audio.preload = "auto";
+
+      const cleanup = () => {
+        audio.removeEventListener("ended", handleEnded);
+        audio.removeEventListener("error", handleError);
+        if (scriptAudioRef.current === audio) {
+          scriptAudioRef.current = null;
+        }
+      };
+      const handleEnded = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error("Could not play the scripted audio recording."));
+      };
+
+      audio.addEventListener("ended", handleEnded);
+      audio.addEventListener("error", handleError);
+      void audio.play().catch((error: unknown) => {
+        cleanup();
+        reject(error instanceof Error ? error : new Error("Audio playback was blocked."));
+      });
+    });
+  }
+
+  async function playScriptMessages(
+    activeSession: TutoringSession,
+    candidateMessages: ChatMessage[],
+  ) {
+    const scriptMessages = candidateMessages.filter(isScriptAudioMessage);
+    if (!scriptMessages.length) return;
+
+    for (const message of scriptMessages) {
+      if (activeSessionIdRef.current !== activeSession.id) break;
+      if (playedScriptMessageIdsRef.current.has(message.id)) continue;
+      playedScriptMessageIdsRef.current.add(message.id);
+
+      try {
+        const payload = await apiFetch<MessageAudioPayload>(
+          `/api/sessions/${activeSession.id}/messages/${message.id}/audio/`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              model: selectedModel,
+              voice: selectedVoice,
+            }),
+          },
+        );
+        await playAudioUrl(payload.audioUrl);
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? error.message
+            : "Could not play the scripted audio recording.";
+        setRealtimeStatus("audio-blocked");
+        setChatError(detail);
+        break;
+      }
+    }
+  }
+
+  function queueScriptMessages(
+    activeSession: TutoringSession,
+    candidateMessages: ChatMessage[] | undefined,
+  ) {
+    const scriptMessages = candidateMessages?.filter(isScriptAudioMessage) ?? [];
+    if (!scriptMessages.length) return;
+
+    scriptAudioQueueRef.current = scriptAudioQueueRef.current
+      .catch(() => undefined)
+      .then(() => playScriptMessages(activeSession, scriptMessages));
   }
 
   async function selectExperience(experienceId: string) {
@@ -4424,6 +4539,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     if (payload.ranMessages?.[0]) {
       setTurnAnchorMessageId(payload.ranMessages[0].id);
     }
+    queueScriptMessages(payload.session, payload.ranMessages);
   }
 
   async function saveSessionMessage(

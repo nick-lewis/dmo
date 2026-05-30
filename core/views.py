@@ -19,7 +19,9 @@ import requests
 
 from .audio_cache import (
     AudioGenerationError,
+    get_or_create_script_audio,
     get_or_create_voice_sample,
+    script_audio_audio_path,
     voice_sample_audio_path,
 )
 from .models import (
@@ -2078,6 +2080,100 @@ def create_message(request, session_id):
 
 
 @require_POST
+def create_message_audio(request, session_id, message_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if not settings.OPENAI_API_KEY:
+        return JsonResponse(
+            {"detail": "OPENAI_API_KEY is not configured."},
+            status=500,
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    session = TutoringSession.objects.filter(
+        id=session_id,
+        user=request.user,
+        status=TutoringSession.Status.ACTIVE,
+    ).first()
+    if not session:
+        return JsonResponse({"detail": "Session not found."}, status=404)
+    if not session.experience:
+        return JsonResponse(
+            {"detail": "Session does not have an experience."},
+            status=400,
+        )
+
+    message = session.messages.filter(
+        id=message_id,
+        role=SessionMessage.Role.ASSISTANT,
+    ).first()
+    if not message:
+        return JsonResponse({"detail": "Message not found."}, status=404)
+
+    script = message.content.strip()
+    if not script:
+        return JsonResponse({"detail": "Message has no script text."}, status=400)
+
+    metadata = message.metadata or {}
+    if metadata.get("source") != "event-action":
+        return JsonResponse(
+            {"detail": "Only scripted event messages can be recorded."},
+            status=400,
+        )
+
+    tutor_settings = ensure_tutor_settings(session.experience)
+    default_model = str(
+        data.get("model") or tutor_settings.realtime_model
+    ).strip()
+    realtime_model = normalize_realtime_choice(
+        default_model,
+        REALTIME_MODELS,
+        tutor_settings.realtime_model,
+    )
+    if realtime_model is None:
+        return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
+
+    default_voice = str(data.get("voice") or tutor_settings.voice).strip()
+    voice = normalize_realtime_choice(
+        default_voice,
+        REALTIME_VOICES,
+        tutor_settings.voice,
+    )
+    if voice is None:
+        return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
+
+    try:
+        recording = get_or_create_script_audio(
+            api_key=settings.OPENAI_API_KEY,
+            assistant_name=tutor_settings.assistant_name,
+            realtime_model=realtime_model,
+            safety_identifier=hash_safety_identifier(request.user),
+            script=script,
+            tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+            voice=voice,
+            voice_instructions=tutor_settings.voice_instructions,
+        )
+    except AudioGenerationError as error:
+        return JsonResponse({"detail": error.message}, status=error.status_code)
+
+    return JsonResponse(
+        {
+            "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
+            "cached": recording.cached,
+            "messageId": str(message.id),
+            "realtimeModel": realtime_model,
+            "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+            "voice": voice,
+        }
+    )
+
+
+@require_POST
 def create_voice_sample(request, experience_id):
     auth_response = auth_required_response(request)
     if auth_response:
@@ -2179,6 +2275,23 @@ def serve_voice_sample_audio(request, filename):
     return FileResponse(audio_path.open("rb"), content_type="audio/wav")
 
 
+@require_GET
+def serve_script_audio(request, filename):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if not re.fullmatch(r"[a-f0-9]{32}\.wav", filename):
+        raise Http404("Script audio not found.")
+
+    cache_key = filename.removesuffix(".wav")
+    audio_path = script_audio_audio_path(cache_key)
+    if not audio_path.exists():
+        raise Http404("Script audio not found.")
+
+    return FileResponse(audio_path.open("rb"), content_type="audio/wav")
+
+
 @require_POST
 def create_realtime_client_secret(request):
     auth_response = auth_required_response(request)
@@ -2241,6 +2354,7 @@ def create_realtime_client_secret(request):
                 session,
                 exclude_message_id=data.get("excludeMessageId"),
             ),
+            "output_modalities": ["text", "audio"],
             "audio": {
                 "output": {
                     "voice": voice,

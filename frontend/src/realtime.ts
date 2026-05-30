@@ -279,7 +279,7 @@ export class DluRealtimeConnection {
         this.sendEvent({
           type: "response.create",
           response: {
-            output_modalities: ["audio"],
+            output_modalities: ["text", "audio"],
           },
         });
       } catch (error) {

@@ -9,7 +9,8 @@ from django.conf import settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
-VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v1"
+VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v2"
+SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v1"
 
 
 class AudioGenerationError(Exception):
@@ -27,6 +28,13 @@ class CachedVoiceSample:
     script: str
 
 
+@dataclass
+class CachedScriptAudio:
+    audio_path: Path
+    cache_key: str
+    cached: bool
+
+
 def voice_sample_cache_dir():
     cache_dir = Path(settings.MEDIA_ROOT) / "voice_sample_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -39,6 +47,20 @@ def voice_sample_audio_path(cache_key):
 
 def voice_sample_metadata_path(cache_key):
     return voice_sample_cache_dir() / f"{cache_key}.json"
+
+
+def script_audio_cache_dir():
+    cache_dir = Path(settings.MEDIA_ROOT) / "script_audio_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def script_audio_audio_path(cache_key):
+    return script_audio_cache_dir() / f"{cache_key}.wav"
+
+
+def script_audio_metadata_path(cache_key):
+    return script_audio_cache_dir() / f"{cache_key}.json"
 
 
 def build_intro_script_prompt(assistant_name, voice_personality):
@@ -83,6 +105,28 @@ def compute_voice_sample_cache_key(
     return hashlib.sha256(cache_source.encode("utf-8")).hexdigest()[:32]
 
 
+def compute_script_audio_cache_key(
+    *,
+    assistant_name,
+    realtime_model,
+    script,
+    tts_model,
+    voice,
+    voice_instructions,
+):
+    cache_payload = {
+        "assistantName": assistant_name.strip(),
+        "realtimeModel": realtime_model,
+        "script": script.strip(),
+        "ttsModel": tts_model,
+        "version": SCRIPT_AUDIO_CACHE_VERSION,
+        "voice": voice,
+        "voiceInstructions": voice_instructions.strip(),
+    }
+    cache_source = json.dumps(cache_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(cache_source.encode("utf-8")).hexdigest()[:32]
+
+
 def openai_error_message(response, fallback):
     try:
         payload = response.json()
@@ -106,6 +150,18 @@ def openai_headers(api_key, safety_identifier):
     if safety_identifier:
         headers["OpenAI-Safety-Identifier"] = safety_identifier
     return headers
+
+
+def build_exact_speech_instructions(voice_instructions):
+    base = (
+        "Read the provided script exactly as written. Do not add greetings, "
+        "commentary, labels, or extra words. Treat text in curly braces as "
+        "private performance direction, not spoken text."
+    )
+    voice_instructions = voice_instructions.strip()
+    if not voice_instructions:
+        return base
+    return f"{base}\n\nVoice and performance guidance: {voice_instructions}"
 
 
 def generate_intro_script(
@@ -163,8 +219,7 @@ def generate_speech_audio(
         "voice": voice,
         "response_format": "wav",
     }
-    if voice_instructions.strip():
-        payload["instructions"] = voice_instructions.strip()
+    payload["instructions"] = build_exact_speech_instructions(voice_instructions)
 
     try:
         response = requests.post(
@@ -174,16 +229,16 @@ def generate_speech_audio(
             timeout=60,
         )
     except requests.RequestException as error:
-        raise AudioGenerationError("Could not reach OpenAI to render the voice sample.") from error
+        raise AudioGenerationError("Could not reach OpenAI to render audio.") from error
 
     if response.status_code >= 400:
         raise AudioGenerationError(
-            openai_error_message(response, "OpenAI could not render the voice sample."),
+            openai_error_message(response, "OpenAI could not render audio."),
             502 if response.status_code in {401, 403} or response.status_code >= 500 else response.status_code,
         )
 
     if not response.content:
-        raise AudioGenerationError("OpenAI returned an empty voice sample audio file.")
+        raise AudioGenerationError("OpenAI returned an empty audio file.")
     return response.content
 
 
@@ -261,4 +316,69 @@ def get_or_create_voice_sample(
         cache_key=cache_key,
         cached=False,
         script=script,
+    )
+
+
+def get_or_create_script_audio(
+    *,
+    api_key,
+    assistant_name,
+    realtime_model,
+    safety_identifier,
+    script,
+    tts_model,
+    voice,
+    voice_instructions,
+):
+    script = script.strip()
+    if not script:
+        raise AudioGenerationError("Script audio requires text.", status_code=400)
+
+    cache_key = compute_script_audio_cache_key(
+        assistant_name=assistant_name,
+        realtime_model=realtime_model,
+        script=script,
+        tts_model=tts_model,
+        voice=voice,
+        voice_instructions=voice_instructions,
+    )
+    audio_path = script_audio_audio_path(cache_key)
+    metadata_path = script_audio_metadata_path(cache_key)
+
+    if audio_path.exists() and metadata_path.exists():
+        return CachedScriptAudio(
+            audio_path=audio_path,
+            cache_key=cache_key,
+            cached=True,
+        )
+
+    audio_content = generate_speech_audio(
+        api_key=api_key,
+        safety_identifier=safety_identifier,
+        script=script,
+        tts_model=tts_model,
+        voice=voice,
+        voice_instructions=voice_instructions,
+    )
+    audio_path.write_bytes(audio_content)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "assistantName": assistant_name,
+                "realtimeModel": realtime_model,
+                "script": script,
+                "ttsModel": tts_model,
+                "version": SCRIPT_AUDIO_CACHE_VERSION,
+                "voice": voice,
+                "voiceInstructions": voice_instructions,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return CachedScriptAudio(
+        audio_path=audio_path,
+        cache_key=cache_key,
+        cached=False,
     )

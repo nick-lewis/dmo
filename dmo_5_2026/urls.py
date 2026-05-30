@@ -10,6 +10,7 @@ from django.urls import include, path, re_path
 from core.views import (
     create_event_chat_tool,
     create_message,
+    create_message_audio,
     create_event_action_step,
     create_realtime_client_secret,
     create_session,
@@ -27,6 +28,7 @@ from core.views import (
     run_session_chat_tool,
     run_session_event,
     run_start_event,
+    serve_script_audio,
     serve_google_slide_image,
     serve_voice_sample_audio,
     update_event_action_step,
@@ -101,9 +103,19 @@ urlpatterns = [
         name="serve-voice-sample-audio",
     ),
     path(
+        "api/script-audio/<str:filename>/",
+        serve_script_audio,
+        name="serve-script-audio",
+    ),
+    path(
         "api/sessions/<uuid:session_id>/messages/",
         create_message,
         name="create-message",
+    ),
+    path(
+        "api/sessions/<uuid:session_id>/messages/<uuid:message_id>/audio/",
+        create_message_audio,
+        name="create-message-audio",
     ),
     path(
         "api/sessions/<uuid:session_id>/start-event/",
