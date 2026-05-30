@@ -8,6 +8,7 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 
 from core.views import (
+    create_event_chat_tool,
     create_message,
     create_event_action_step,
     create_realtime_client_secret,
@@ -23,11 +24,13 @@ from core.views import (
     logout_user,
     resolve_google_slide,
     reorder_event_action_steps,
+    run_session_chat_tool,
     run_session_event,
     run_start_event,
     serve_google_slide_image,
     serve_voice_sample_audio,
     update_event_action_step,
+    update_event_chat_tool,
     update_experience,
     update_experience_event,
 )
@@ -70,6 +73,16 @@ urlpatterns = [
         reorder_event_action_steps,
         name="reorder-event-action-steps",
     ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/chat-tools/",
+        create_event_chat_tool,
+        name="create-event-chat-tool",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/chat-tools/<uuid:tool_id>/",
+        update_event_chat_tool,
+        name="update-event-chat-tool",
+    ),
     path("api/sessions/current/", current_session, name="current-session"),
     path("api/sessions/", create_session, name="create-session"),
     path(
@@ -101,6 +114,11 @@ urlpatterns = [
         "api/sessions/<uuid:session_id>/events/run/",
         run_session_event,
         name="run-session-event",
+    ),
+    path(
+        "api/sessions/<uuid:session_id>/chat-tool/",
+        run_session_chat_tool,
+        name="run-session-chat-tool",
     ),
     path("api/slides/resolve/", resolve_google_slide, name="resolve-google-slide"),
     path(

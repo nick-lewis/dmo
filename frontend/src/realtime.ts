@@ -58,17 +58,32 @@ type ActiveResponse = {
   done: boolean;
   onDelta: (delta: string) => void;
   reject: (error: Error) => void;
-  resolve: (content: string) => void;
+  resolve: (content: RealtimeTurnResult) => void;
   text: string;
   timeoutId: number;
+  toolCall: RealtimeToolCall | null;
+};
+
+export type RealtimeToolCall = {
+  arguments: Record<string, unknown>;
+  callId: string;
+  name: string;
+};
+
+export type RealtimeTurnResult = {
+  text: string;
+  toolCall: RealtimeToolCall | null;
 };
 
 type ServerEvent = {
+  arguments?: string;
+  call_id?: string;
   delta?: string;
   error?: {
     message?: string;
   };
   item?: unknown;
+  name?: string;
   response?: unknown;
   text?: string;
   transcript?: string;
@@ -143,6 +158,56 @@ function parseServerEvent(event: MessageEvent) {
   }
 }
 
+function parseToolArguments(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return {};
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return objectValue(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function toolCallFromRecord(value: Record<string, unknown> | null) {
+  if (!value || stringValue(value.type) !== "function_call") return null;
+
+  const name = stringValue(value.name);
+  if (!name) return null;
+
+  return {
+    arguments: parseToolArguments(value.arguments),
+    callId: stringValue(value.call_id),
+    name,
+  };
+}
+
+function toolCallFromResponse(response: unknown) {
+  const responseObject = objectValue(response);
+  const output = responseObject?.output;
+  if (!Array.isArray(output)) return null;
+
+  for (const item of output) {
+    const toolCall = toolCallFromRecord(objectValue(item));
+    if (toolCall) return toolCall;
+  }
+  return null;
+}
+
+function toolCallFromServerEvent(event: ServerEvent) {
+  if (event.type === "response.function_call_arguments.done") {
+    const name = stringValue(event.name);
+    if (!name) return null;
+    return {
+      arguments: parseToolArguments(event.arguments),
+      callId: stringValue(event.call_id),
+      name,
+    };
+  }
+
+  return toolCallFromResponse(event.response);
+}
+
 export class DluRealtimeConnection {
   private activeResponse: ActiveResponse | null = null;
   private audioElement: HTMLAudioElement | null = null;
@@ -182,7 +247,7 @@ export class DluRealtimeConnection {
 
     this.setStatus("streaming");
 
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<RealtimeTurnResult>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.rejectActiveResponse("dLU response timed out.");
       }, 120000);
@@ -194,6 +259,7 @@ export class DluRealtimeConnection {
         resolve,
         text: "",
         timeoutId,
+        toolCall: null,
       };
 
       try {
@@ -390,8 +456,14 @@ export class DluRealtimeConnection {
       return;
     }
 
+    const toolCall = toolCallFromServerEvent(event);
+    if (toolCall && this.activeResponse) {
+      this.activeResponse.toolCall = toolCall;
+      if (eventType === "response.function_call_arguments.done") return;
+    }
+
     if (eventType === "response.done") {
-      this.finishActiveResponse(textFromServerEvent(event));
+      this.finishActiveResponse(textFromServerEvent(event), toolCall);
     }
   };
 
@@ -409,14 +481,20 @@ export class DluRealtimeConnection {
     this.activeResponse.onDelta(text);
   }
 
-  private finishActiveResponse(finalText: string) {
+  private finishActiveResponse(
+    finalText: string,
+    toolCall: RealtimeToolCall | null = null,
+  ) {
     const activeResponse = this.activeResponse;
     if (!activeResponse || activeResponse.done) return;
 
     activeResponse.done = true;
     window.clearTimeout(activeResponse.timeoutId);
     this.activeResponse = null;
-    activeResponse.resolve(finalText || activeResponse.text);
+    activeResponse.resolve({
+      text: finalText || activeResponse.text,
+      toolCall: toolCall ?? activeResponse.toolCall,
+    });
     this.setStatus("connected");
   }
 

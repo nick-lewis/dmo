@@ -24,6 +24,7 @@ from .audio_cache import (
 )
 from .models import (
     EventActionStep,
+    EventChatTool,
     Experience,
     ExperienceEvent,
     SessionMessage,
@@ -127,6 +128,23 @@ def serialize_event_action_step(step):
     }
 
 
+def serialize_event_chat_tool(tool):
+    return {
+        "id": str(tool.id),
+        "eventId": str(tool.event_id),
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": tool.parameters,
+        "triggersEvent": tool.triggers_event,
+        "saveArgument": tool.save_argument,
+        "saveContextKey": tool.save_context_key,
+        "enabled": tool.enabled,
+        "sortOrder": tool.sort_order,
+        "createdAt": tool.created_at.isoformat(),
+        "updatedAt": tool.updated_at.isoformat(),
+    }
+
+
 def serialize_experience_event(event):
     ensure_default_event_step(event)
     return {
@@ -140,6 +158,10 @@ def serialize_experience_event(event):
         "steps": [
             serialize_event_action_step(step)
             for step in event.steps.order_by("sort_order", "created_at")
+        ],
+        "chatTools": [
+            serialize_event_chat_tool(tool)
+            for tool in event.chat_tools.order_by("sort_order", "created_at")
         ],
         "createdAt": event.created_at.isoformat(),
         "updatedAt": event.updated_at.isoformat(),
@@ -326,8 +348,50 @@ def session_payload(session):
     }
 
 
+def get_session_current_event(session):
+    if not session.experience:
+        return None
+
+    state = dict(session.runtime_state or {})
+    event_id = str(state.get("currentEventId", "")).strip()
+    event_slug = str(state.get("currentEventSlug", "")).strip()
+    event_query = session.experience.events.all()
+    if event_id:
+        event = event_query.filter(id=event_id).first()
+        if event:
+            return event
+    if event_slug:
+        event = event_query.filter(slug=event_slug).first()
+        if event:
+            return event
+    return ensure_start_event(session.experience)
+
+
+def realtime_tools_for_event(event):
+    if not event:
+        return []
+
+    tools = []
+    for tool in event.chat_tools.filter(enabled=True).order_by(
+        "sort_order",
+        "created_at",
+    ):
+        tools.append(
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters
+                or {"type": "object", "properties": {}, "required": []},
+            }
+        )
+    return tools
+
+
 def build_realtime_instructions(session, exclude_message_id=None):
     tutor_settings = ensure_tutor_settings(session.experience) if session.experience else None
+    current_event = get_session_current_event(session)
+    current_tools = realtime_tools_for_event(current_event)
     system_prompt = (
         tutor_settings.system_prompt.strip()
         if tutor_settings and tutor_settings.system_prompt.strip()
@@ -344,6 +408,22 @@ def build_realtime_instructions(session, exclude_message_id=None):
             f"{tutor_settings.voice_instructions.strip()}"
         )
     instruction_parts.append(system_prompt)
+    if current_event:
+        event_context = [f"Current experience event: {current_event.title.strip()}."]
+        if current_event.description.strip():
+            event_context.append(
+                f"Event notes or goal: {current_event.description.strip()}"
+            )
+        if session.runtime_context:
+            context_json = json.dumps(session.runtime_context, ensure_ascii=True)
+            event_context.append(f"Runtime context: {context_json[:2000]}")
+        instruction_parts.append("\n".join(event_context))
+    if current_tools:
+        instruction_parts.append(
+            "This event has chat exits available as tools. When the learner's "
+            "message satisfies one of those exit conditions, call the matching "
+            "tool instead of announcing that you are changing events."
+        )
     instructions = "\n\n".join(part for part in instruction_parts if part)
     messages_query = session.messages.filter(
         role__in=[SessionMessage.Role.USER, SessionMessage.Role.ASSISTANT]
@@ -429,6 +509,122 @@ def validate_event_slug(value, label="Target event", required=True):
     if len(event_slug) > 180:
         return None, f"{label} is too long."
     return event_slug, ""
+
+
+def validate_chat_tool_name(value):
+    name = str(value or "").strip()
+    if not name:
+        return None, "Tool name is required."
+    if len(name) > 64:
+        return None, "Tool name is too long."
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+        return None, "Tool name must use letters, numbers, and underscores."
+    return name, ""
+
+
+def normalize_tool_parameters(value):
+    if value in (None, ""):
+        value = {}
+    if not isinstance(value, dict):
+        return None, "Tool parameters must be an object."
+
+    parameters = dict(value)
+    if not parameters:
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+    if parameters.get("type") != "object":
+        return None, "Tool parameters must use an object schema."
+
+    properties = parameters.get("properties", {})
+    if not isinstance(properties, dict):
+        return None, "Tool parameter properties must be an object."
+
+    required = parameters.get("required", [])
+    if not isinstance(required, list):
+        return None, "Tool required parameters must be an array."
+
+    for key in properties.keys():
+        if not isinstance(key, str) or len(key) > 120:
+            return None, "Tool parameter names are invalid."
+
+    parameters["properties"] = properties
+    parameters["required"] = [str(item) for item in required]
+    parameters.setdefault("additionalProperties", False)
+    return parameters, ""
+
+
+def validate_chat_tool_payload(data, existing_tool=None):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return None, "Chat tool must be an object."
+
+    name, name_error = validate_chat_tool_name(
+        data.get("name", existing_tool.name if existing_tool else "")
+    )
+    if name_error:
+        return None, name_error
+
+    description = str(
+        data.get(
+            "description",
+            existing_tool.description if existing_tool else "",
+        )
+    ).strip()
+    if len(description) > 4000:
+        return None, "Tool description is too long."
+
+    parameters, parameters_error = normalize_tool_parameters(
+        data.get("parameters", existing_tool.parameters if existing_tool else {})
+    )
+    if parameters_error:
+        return None, parameters_error
+
+    triggers_event, event_error = validate_event_slug(
+        data.get(
+            "triggersEvent",
+            existing_tool.triggers_event if existing_tool else "",
+        ),
+        label="Triggered event",
+        required=False,
+    )
+    if event_error:
+        return None, event_error
+
+    save_argument = str(
+        data.get(
+            "saveArgument",
+            existing_tool.save_argument if existing_tool else "",
+        )
+    ).strip()
+    save_context_key = str(
+        data.get(
+            "saveContextKey",
+            existing_tool.save_context_key if existing_tool else "",
+        )
+    ).strip()
+    if len(save_argument) > 120 or len(save_context_key) > 120:
+        return None, "Saved argument settings are too long."
+
+    payload = {
+        "description": description,
+        "enabled": bool(data.get("enabled", existing_tool.enabled if existing_tool else True)),
+        "name": name,
+        "parameters": parameters,
+        "save_argument": save_argument,
+        "save_context_key": save_context_key,
+        "triggers_event": triggers_event,
+    }
+    if "sortOrder" in data:
+        try:
+            sort_order = int(data.get("sortOrder"))
+        except (TypeError, ValueError):
+            return None, "Sort order must be a number."
+        if sort_order < 0:
+            return None, "Sort order must be positive."
+        payload["sort_order"] = sort_order
+
+    return payload, ""
 
 
 def validate_action_config(action_type, value):
@@ -819,8 +1015,10 @@ def run_event_chain(session, first_event, client_ui_state=None, state=None):
     state = dict(state or {})
     event_runs = dict(state.get("eventRuns") or {})
     event = first_event
+    current_event = first_event
 
     for _ in range(MAX_EVENT_CHAIN_DEPTH):
+        current_event = event
         run_key = str(event.id)
         if event_runs.get(run_key, {}).get("status") == "complete":
             actions.append(
@@ -870,6 +1068,9 @@ def run_event_chain(session, first_event, client_ui_state=None, state=None):
         )
 
     state["eventRuns"] = event_runs
+    if current_event:
+        state["currentEventId"] = str(current_event.id)
+        state["currentEventSlug"] = current_event.slug
     return actions, messages, ran_events, state
 
 
@@ -1383,6 +1584,88 @@ def update_event_action_step(request, experience_id, event_id, step_id):
     return JsonResponse({"step": serialize_event_action_step(step)})
 
 
+@require_POST
+def create_event_chat_tool(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_chat_tool_payload(data)
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    if event.chat_tools.filter(name=payload["name"]).exists():
+        return JsonResponse({"detail": "Tool name already exists."}, status=400)
+
+    sort_order = (
+        event.chat_tools.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    payload.setdefault("sort_order", sort_order)
+    EventChatTool.objects.create(event=event, **payload)
+
+    return JsonResponse({"event": serialize_experience_event(event)}, status=201)
+
+
+@require_http_methods(["DELETE", "PATCH"])
+def update_event_chat_tool(request, experience_id, event_id, tool_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    tool = event.chat_tools.filter(id=tool_id).first()
+    if not tool:
+        return JsonResponse({"detail": "Chat tool not found."}, status=404)
+
+    if request.method == "DELETE":
+        tool.delete()
+        for index, event_tool in enumerate(
+            event.chat_tools.order_by("sort_order", "created_at")
+        ):
+            if event_tool.sort_order == index:
+                continue
+            event_tool.sort_order = index
+            event_tool.save(update_fields=["sort_order", "updated_at"])
+        return JsonResponse({"event": serialize_experience_event(event)})
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_chat_tool_payload(data, existing_tool=tool)
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    duplicate = event.chat_tools.filter(name=payload["name"]).exclude(id=tool.id)
+    if duplicate.exists():
+        return JsonResponse({"detail": "Tool name already exists."}, status=400)
+
+    for field, value in payload.items():
+        setattr(tool, field, value)
+    tool.save()
+
+    return JsonResponse({"tool": serialize_event_chat_tool(tool)})
+
+
 @require_GET
 def current_session(request):
     auth_response = auth_required_response(request)
@@ -1595,6 +1878,135 @@ def run_session_event(request, session_id):
             "actions": actions,
             "event": serialize_experience_event(event),
             "ran": True,
+            "ranEvents": [
+                serialize_experience_event(ran_event) for ran_event in ran_events
+            ],
+            "ranMessages": [serialize_message(message) for message in messages],
+        }
+    )
+
+
+def parse_tool_arguments(value):
+    if value in (None, ""):
+        return {}, ""
+    if isinstance(value, dict):
+        return value, ""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return None, "Tool arguments must be valid JSON."
+        if isinstance(parsed, dict):
+            return parsed, ""
+    return None, "Tool arguments must be an object."
+
+
+@require_POST
+def run_session_chat_tool(request, session_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    tool_name, name_error = validate_chat_tool_name(data.get("toolName"))
+    if name_error:
+        return JsonResponse({"detail": name_error}, status=400)
+
+    arguments, arguments_error = parse_tool_arguments(data.get("arguments", {}))
+    if arguments_error:
+        return JsonResponse({"detail": arguments_error}, status=400)
+
+    client_ui_state = parse_client_ui_state(data.get("uiState"))
+
+    with transaction.atomic():
+        session = (
+            TutoringSession.objects.select_for_update()
+            .filter(
+                id=session_id,
+                user=request.user,
+                status=TutoringSession.Status.ACTIVE,
+            )
+            .first()
+        )
+        if not session:
+            return JsonResponse({"detail": "Session not found."}, status=404)
+        if not session.experience:
+            return JsonResponse(
+                {"detail": "Session does not have an experience."},
+                status=400,
+            )
+
+        current_event = get_session_current_event(session)
+        if not current_event:
+            return JsonResponse({"detail": "Current event not found."}, status=404)
+
+        tool = current_event.chat_tools.filter(
+            enabled=True,
+            name=tool_name,
+        ).first()
+        if not tool:
+            return JsonResponse({"detail": "Chat tool is not available."}, status=400)
+
+        state = dict(session.runtime_state or {})
+        runtime_context = dict(session.runtime_context or {})
+        saved_value = None
+        if tool.save_context_key:
+            if tool.save_argument:
+                saved_value = arguments.get(tool.save_argument, "")
+            else:
+                saved_value = arguments
+            runtime_context[tool.save_context_key] = saved_value
+            session.runtime_context = runtime_context
+
+        actions = [
+            {
+                "arguments": arguments,
+                "eventId": str(current_event.id),
+                "saveArgument": tool.save_argument,
+                "saveContextKey": tool.save_context_key,
+                "savedValue": saved_value,
+                "toolName": tool.name,
+                "triggersEvent": tool.triggers_event,
+                "type": "chat_tool_call",
+            }
+        ]
+        messages = []
+        ran_events = []
+
+        if tool.triggers_event:
+            next_event = session.experience.events.filter(
+                slug=tool.triggers_event
+            ).first()
+            if not next_event:
+                actions.append(
+                    {
+                        "type": "transition_missing",
+                        "eventId": str(current_event.id),
+                        "triggersEvent": tool.triggers_event,
+                    }
+                )
+            else:
+                step_actions, messages, ran_events, state = run_event_chain(
+                    session,
+                    next_event,
+                    client_ui_state=client_ui_state,
+                    state=state,
+                )
+                actions.extend(step_actions)
+
+        state = apply_runtime_actions_to_state(state, actions, clear_buttons=True)
+        session.runtime_state = state
+        session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
+
+    return JsonResponse(
+        {
+            **session_payload(session),
+            "actions": actions,
+            "event": serialize_experience_event(get_session_current_event(session)),
+            "ran": bool(ran_events),
             "ranEvents": [
                 serialize_experience_event(ran_event) for ran_event in ran_events
             ],
@@ -1820,6 +2232,7 @@ def create_realtime_client_secret(request):
     if voice is None:
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
 
+    realtime_tools = realtime_tools_for_event(get_session_current_event(session))
     payload = {
         "session": {
             "type": "realtime",
@@ -1835,6 +2248,10 @@ def create_realtime_client_secret(request):
             },
         },
     }
+    if realtime_tools:
+        payload["session"]["tools"] = realtime_tools
+        payload["session"]["tool_choice"] = "auto"
+
     headers = {
         "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
         "Content-Type": "application/json",

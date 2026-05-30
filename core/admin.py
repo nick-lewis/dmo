@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import Experience, SessionMessage, TutoringSession, TutorSettings
+from .models import (
+    EventActionStep,
+    EventChatTool,
+    Experience,
+    ExperienceEvent,
+    SessionMessage,
+    TutoringSession,
+    TutorSettings,
+)
 
 
 class TutorSettingsInline(admin.StackedInline):
@@ -25,6 +33,28 @@ class SessionMessageInline(admin.TabularInline):
     fields = ("sequence", "role", "content", "created_at")
     readonly_fields = ("created_at",)
     ordering = ("sequence",)
+
+
+class EventActionStepInline(admin.TabularInline):
+    model = EventActionStep
+    extra = 0
+    fields = ("sort_order", "action_type", "label", "enabled", "condition", "config")
+    ordering = ("sort_order", "created_at")
+
+
+class EventChatToolInline(admin.TabularInline):
+    model = EventChatTool
+    extra = 0
+    fields = (
+        "sort_order",
+        "name",
+        "description",
+        "triggers_event",
+        "save_argument",
+        "save_context_key",
+        "enabled",
+    )
+    ordering = ("sort_order", "created_at")
 
 
 @admin.register(TutoringSession)
@@ -64,3 +94,28 @@ class ExperienceAdmin(admin.ModelAdmin):
 class TutorSettingsAdmin(admin.ModelAdmin):
     list_display = ("experience", "assistant_name", "realtime_model", "voice")
     search_fields = ("experience__title", "assistant_name")
+
+
+@admin.register(ExperienceEvent)
+class ExperienceEventAdmin(admin.ModelAdmin):
+    list_display = ("title", "experience", "slug", "is_start", "sort_order")
+    list_filter = ("is_start", "created_at", "updated_at")
+    search_fields = ("title", "description", "slug", "experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")
+    inlines = [EventActionStepInline, EventChatToolInline]
+
+
+@admin.register(EventActionStep)
+class EventActionStepAdmin(admin.ModelAdmin):
+    list_display = ("event", "action_type", "label", "enabled", "sort_order")
+    list_filter = ("action_type", "enabled")
+    search_fields = ("label", "event__title", "event__experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(EventChatTool)
+class EventChatToolAdmin(admin.ModelAdmin):
+    list_display = ("event", "name", "triggers_event", "enabled", "sort_order")
+    list_filter = ("enabled",)
+    search_fields = ("name", "description", "event__title", "event__experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")

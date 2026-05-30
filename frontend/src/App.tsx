@@ -15,6 +15,7 @@ import {
   DluRealtimeConnection,
   type RealtimeModelId,
   type RealtimeStatus,
+  type RealtimeToolCall,
   type RealtimeVoiceId,
   realtimeModelOptions,
   realtimeVoiceOptions,
@@ -119,6 +120,21 @@ type EventActionStep = {
   updatedAt: string;
 };
 
+type EventChatTool = {
+  id: string;
+  eventId: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  triggersEvent: string;
+  saveArgument: string;
+  saveContextKey: string;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ExperienceEvent = {
   id: string;
   experienceId: string;
@@ -128,6 +144,7 @@ type ExperienceEvent = {
   isStart: boolean;
   sortOrder: number;
   steps: EventActionStep[];
+  chatTools: EventChatTool[];
   createdAt: string;
   updatedAt: string;
 };
@@ -169,10 +186,24 @@ type EventStepDraft = {
   sortOrder: number;
 };
 
+type EventChatToolDraft = {
+  id: string;
+  name: string;
+  description: string;
+  argumentDescription: string;
+  argumentName: string;
+  enabled: boolean;
+  saveArgument: string;
+  saveContextKey: string;
+  sortOrder: number;
+  triggersEvent: string;
+};
+
 type EventDraft = {
   title: string;
   description: string;
   steps: EventStepDraft[];
+  chatTools: EventChatToolDraft[];
 };
 
 type StartEventPayload = SessionPayload & {
@@ -384,6 +415,14 @@ function sortedEventSteps(steps: EventActionStep[]) {
   );
 }
 
+function sortedEventChatTools(tools: EventChatTool[]) {
+  return [...tools].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
 function stringConfigValue(
   config: Record<string, unknown>,
   key: string,
@@ -422,8 +461,53 @@ function stepDraftFromStep(step: EventActionStep): EventStepDraft {
   };
 }
 
+function firstToolArgument(parameters: Record<string, unknown>) {
+  const properties =
+    parameters.properties &&
+    typeof parameters.properties === "object" &&
+    !Array.isArray(parameters.properties)
+      ? (parameters.properties as Record<string, unknown>)
+      : {};
+  const required = Array.isArray(parameters.required)
+    ? parameters.required.filter((item): item is string => typeof item === "string")
+    : [];
+  const argumentName = required[0] ?? Object.keys(properties)[0] ?? "";
+  const argumentValue = argumentName ? properties[argumentName] : null;
+  const argumentObject =
+    argumentValue && typeof argumentValue === "object" && !Array.isArray(argumentValue)
+      ? (argumentValue as Record<string, unknown>)
+      : {};
+
+  return {
+    description:
+      typeof argumentObject.description === "string"
+        ? argumentObject.description
+        : "",
+    name: argumentName,
+  };
+}
+
+function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
+  const argument = firstToolArgument(tool.parameters);
+  return {
+    argumentDescription: argument.description,
+    argumentName: argument.name,
+    description: tool.description,
+    enabled: tool.enabled,
+    id: tool.id,
+    name: tool.name,
+    saveArgument: tool.saveArgument,
+    saveContextKey: tool.saveContextKey,
+    sortOrder: tool.sortOrder,
+    triggersEvent: tool.triggersEvent,
+  };
+}
+
 function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
   return {
+    chatTools: event
+      ? sortedEventChatTools(event.chatTools).map(chatToolDraftFromTool)
+      : [],
     description: event?.description ?? "",
     steps: event ? sortedEventSteps(event.steps).map(stepDraftFromStep) : [],
     title: event?.title ?? "Start",
@@ -493,6 +577,27 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   return "Say";
 }
 
+function defaultChatToolPayload(events: ExperienceEvent[], currentEventId: string) {
+  const destination = sortedExperienceEvents(events).find(
+    (event) => event.id !== currentEventId,
+  );
+
+  return {
+    description: "Call this when the learner is ready to move on.",
+    enabled: true,
+    name: "student_done",
+    parameters: {
+      additionalProperties: false,
+      properties: {},
+      required: [],
+      type: "object",
+    },
+    saveArgument: "",
+    saveContextKey: "",
+    triggersEvent: destination?.slug ?? "",
+  };
+}
+
 function eventActionLabel(actionType: EventActionStep["actionType"]) {
   return (
     eventActionOptions.find((option) => option.id === actionType)?.label ??
@@ -559,6 +664,10 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
       continue;
     }
     const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
+    if (triggersEvent) slugs.add(triggersEvent);
+  }
+  for (const tool of event.chatTools) {
+    const triggersEvent = tool.triggersEvent.trim();
     if (triggersEvent) slugs.add(triggersEvent);
   }
   return [...slugs];
@@ -664,6 +773,49 @@ function comparableStep(step: EventActionStep) {
   return comparableStepDraft(stepDraftFromStep(step));
 }
 
+function normalizedChatToolParameters(tool: EventChatToolDraft) {
+  const argumentName = tool.argumentName.trim();
+  if (!argumentName) {
+    return {
+      additionalProperties: false,
+      properties: {},
+      required: [],
+      type: "object",
+    };
+  }
+
+  return {
+    additionalProperties: false,
+    properties: {
+      [argumentName]: {
+        description:
+          tool.argumentDescription.trim() ||
+          `Value to save for ${argumentName}.`,
+        type: "string",
+      },
+    },
+    required: [argumentName],
+    type: "object",
+  };
+}
+
+function comparableChatToolDraft(tool: EventChatToolDraft) {
+  return {
+    description: tool.description,
+    enabled: tool.enabled,
+    name: tool.name,
+    parameters: normalizedChatToolParameters(tool),
+    saveArgument: tool.saveArgument,
+    saveContextKey: tool.saveContextKey,
+    sortOrder: tool.sortOrder,
+    triggersEvent: tool.triggersEvent,
+  };
+}
+
+function comparableChatTool(tool: EventChatTool) {
+  return comparableChatToolDraft(chatToolDraftFromTool(tool));
+}
+
 function replaceExperienceEvent(
   experience: Experience,
   nextEvent: ExperienceEvent,
@@ -702,6 +854,26 @@ function replaceExperienceEventStep(
         ...event,
         steps: event.steps
           .map((step) => (step.id === nextStep.id ? nextStep : step))
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
+}
+
+function replaceExperienceEventTool(
+  experience: Experience,
+  eventId: string,
+  nextTool: EventChatTool,
+) {
+  return {
+    ...experience,
+    events: experience.events.map((event) => {
+      if (event.id !== eventId) return event;
+
+      return {
+        ...event,
+        chatTools: event.chatTools
+          .map((tool) => (tool.id === nextTool.id ? nextTool : tool))
           .sort((left, right) => left.sortOrder - right.sortOrder),
       };
     }),
@@ -1308,6 +1480,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const [selectedEventId, setSelectedEventId] = useState("");
   const [eventDraft, setEventDraft] = useState<EventDraft>({
+    chatTools: [],
     description: "",
     steps: [],
     title: "Start",
@@ -1667,13 +1840,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const currentSteps = sortedEventSteps(selectedEvent.steps);
     if (draft.steps.length !== currentSteps.length) return true;
 
-    return draft.steps.some((draftStep) => {
+    const hasStepChanges = draft.steps.some((draftStep) => {
       const currentStep = currentSteps.find((step) => step.id === draftStep.id);
       if (!currentStep) return true;
 
       return (
         JSON.stringify(comparableStepDraft(draftStep)) !==
         JSON.stringify(comparableStep(currentStep))
+      );
+    });
+    if (hasStepChanges) return true;
+
+    const currentTools = sortedEventChatTools(selectedEvent.chatTools);
+    if (draft.chatTools.length !== currentTools.length) return true;
+
+    return draft.chatTools.some((draftTool) => {
+      const currentTool = currentTools.find((tool) => tool.id === draftTool.id);
+      if (!currentTool) return true;
+
+      return (
+        JSON.stringify(comparableChatToolDraft(draftTool)) !==
+        JSON.stringify(comparableChatTool(currentTool))
       );
     });
   }
@@ -1688,6 +1875,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     try {
       const currentSteps = sortedEventSteps(selectedEvent.steps);
+      const currentTools = sortedEventChatTools(selectedEvent.chatTools);
 
       if (
         draft.title !== selectedEvent.title ||
@@ -1746,6 +1934,47 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   current,
                   selectedEvent.id,
                   stepPayload.step,
+                )
+              : current,
+          );
+        }
+      }
+
+      for (const draftTool of draft.chatTools) {
+        const currentTool = currentTools.find((tool) => tool.id === draftTool.id);
+        if (!currentTool) continue;
+
+        if (
+          JSON.stringify(comparableChatToolDraft(draftTool)) ===
+          JSON.stringify(comparableChatTool(currentTool))
+        ) {
+          continue;
+        }
+
+        const toolPayload = await apiFetch<{ tool: EventChatTool }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${draftTool.id}/`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              description: draftTool.description,
+              enabled: draftTool.enabled,
+              name: draftTool.name,
+              parameters: normalizedChatToolParameters(draftTool),
+              saveArgument: draftTool.saveArgument,
+              saveContextKey: draftTool.saveContextKey,
+              sortOrder: draftTool.sortOrder,
+              triggersEvent: draftTool.triggersEvent,
+            }),
+          },
+        );
+
+        if (eventAutosaveVersion.current === version) {
+          setExperience((current) =>
+            current && current.id === experience.id
+              ? replaceExperienceEventTool(
+                  current,
+                  selectedEvent.id,
+                  toolPayload.tool,
                 )
               : current,
           );
@@ -1850,6 +2079,43 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     });
   }
 
+  function updateEventChatToolDraft(
+    toolId: string,
+    updater: (tool: EventChatToolDraft) => EventChatToolDraft,
+  ) {
+    const nextDraft = {
+      ...eventDraft,
+      chatTools: eventDraft.chatTools.map((tool) =>
+        tool.id === toolId ? updater(tool) : tool,
+      ),
+    };
+
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
+  function updateEventChatToolDraftField<K extends keyof EventChatToolDraft>(
+    toolId: string,
+    field: K,
+    value: EventChatToolDraft[K],
+  ) {
+    updateEventChatToolDraft(toolId, (tool) => {
+      const nextTool = {
+        ...tool,
+        [field]: value,
+      };
+
+      if (field === "argumentName" && typeof value === "string") {
+        const nextValue = value.trim();
+        if (tool.saveArgument === tool.argumentName) {
+          nextTool.saveArgument = nextValue;
+        }
+      }
+
+      return nextTool;
+    });
+  }
+
   function applyUpdatedEvent(nextEvent: ExperienceEvent) {
     if (!experience) return;
 
@@ -1949,6 +2215,74 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         createError instanceof Error
           ? createError.message
           : "Could not add action step.",
+      );
+    }
+  }
+
+  async function addEventChatTool() {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const existingNames = new Set(
+        selectedEvent.chatTools.map((tool) => tool.name),
+      );
+      let toolName = "student_done";
+      let suffix = 2;
+      while (existingNames.has(toolName)) {
+        toolName = `student_done_${suffix}`;
+        suffix += 1;
+      }
+
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            {
+              ...defaultChatToolPayload(experience.events, selectedEvent.id),
+              name: toolName,
+            },
+          ),
+        },
+      );
+      applyUpdatedEvent(payload.event);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not add chat exit.",
+      );
+    }
+  }
+
+  async function deleteEventChatTool(toolId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${toolId}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      applyUpdatedEvent(payload.event);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete chat exit.",
       );
     }
   }
@@ -2196,7 +2530,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         label: eventActionLabel(step.actionType),
         target: eventTitleForTrigger(editorEvents, triggersEvent) || "Choose event",
       };
-    });
+    })
+    .concat(
+      eventDraft.chatTools.map((tool) => ({
+        id: tool.id,
+        label: "Chat exit",
+        target: eventTitleForTrigger(editorEvents, tool.triggersEvent) || "Choose event",
+      })),
+    );
 
   return (
     <main
@@ -2888,6 +3229,205 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   </div>
                 ) : null}
               </div>
+
+              <div className="event-sequence-header chat-exits-header">
+                <span>Chat exits</span>
+                <button
+                  className="event-add-button compact"
+                  onClick={() => void addEventChatTool()}
+                  type="button"
+                >
+                  <PlusIcon />
+                  Exit
+                </button>
+              </div>
+
+              <div className="event-step-list chat-exit-list">
+                {eventDraft.chatTools.map((tool) => {
+                  const isExpanded = expandedStepId === tool.id;
+                  const targetEventSlug = tool.triggersEvent;
+                  const hasTriggerEventOption = editorEvents.some(
+                    (event) => event.slug === targetEventSlug,
+                  );
+
+                  return (
+                    <article
+                      className={[
+                        "event-step",
+                        "chat-exit-step",
+                        "tone-flow",
+                        isExpanded ? "is-expanded" : "",
+                        !tool.enabled ? "is-disabled" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={tool.id}
+                    >
+                      <div className="event-step-main">
+                        <span className="event-drag-handle is-static">
+                          <GripIcon />
+                        </span>
+
+                        <button
+                          aria-expanded={isExpanded}
+                          className="event-step-summary"
+                          onClick={() =>
+                            setExpandedStepId(isExpanded ? "" : tool.id)
+                          }
+                          type="button"
+                        >
+                          <span className="event-step-kind">Chat exit</span>
+                          <span className="event-step-copy">
+                            {tool.name || "student_done"} {"->"}{" "}
+                            {eventTitleForTrigger(editorEvents, targetEventSlug) ||
+                              "Choose event"}
+                          </span>
+                        </button>
+
+                        <div className="event-step-tools">
+                          <button
+                            aria-label={tool.enabled ? "Disable exit" : "Enable exit"}
+                            className={`event-enable-button${
+                              tool.enabled ? "" : " is-off"
+                            }`}
+                            onClick={() =>
+                              updateEventChatToolDraft(tool.id, (currentTool) => ({
+                                ...currentTool,
+                                enabled: !currentTool.enabled,
+                              }))
+                            }
+                            title={tool.enabled ? "Enabled" : "Disabled"}
+                            type="button"
+                          >
+                            <span />
+                          </button>
+                          <button
+                            aria-label="Delete chat exit"
+                            className="event-icon-button danger"
+                            onClick={() => void deleteEventChatTool(tool.id)}
+                            type="button"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="event-step-detail chat-exit-detail">
+                          <div className="event-context-line chat-exit-core-line">
+                            <span className="event-detail-label">TOOL</span>
+                            <input
+                              aria-label="Tool name"
+                              onChange={(event) =>
+                                updateEventChatToolDraftField(
+                                  tool.id,
+                                  "name",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="student_done"
+                              type="text"
+                              value={tool.name}
+                            />
+                            <span className="event-detail-label">GO</span>
+                            <select
+                              aria-label="Tool target event"
+                              onChange={(event) =>
+                                updateEventChatToolDraftField(
+                                  tool.id,
+                                  "triggersEvent",
+                                  event.target.value,
+                                )
+                              }
+                              value={targetEventSlug}
+                            >
+                              <option value="">Choose event</option>
+                              {targetEventSlug && !hasTriggerEventOption ? (
+                                <option value={targetEventSlug}>
+                                  {targetEventSlug}
+                                </option>
+                              ) : null}
+                              {editorEvents.map((event) => (
+                                <option key={event.id} value={event.slug}>
+                                  {event.title || event.slug}
+                                  {event.isStart ? " (start)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="event-context-line single-value">
+                            <span className="event-detail-label">WHEN</span>
+                            <input
+                              aria-label="Tool description"
+                              onChange={(event) =>
+                                updateEventChatToolDraftField(
+                                  tool.id,
+                                  "description",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Call this when the learner is ready to move on."
+                              type="text"
+                              value={tool.description}
+                            />
+                          </div>
+                          <div className="event-context-line chat-exit-save-line">
+                            <span className="event-detail-label">ARG</span>
+                            <input
+                              aria-label="Argument name"
+                              onChange={(event) =>
+                                updateEventChatToolDraftField(
+                                  tool.id,
+                                  "argumentName",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="estimate"
+                              type="text"
+                              value={tool.argumentName}
+                            />
+                            <span className="event-inline-operator">{"->"}</span>
+                            <input
+                              aria-label="Save argument as context key"
+                              onChange={(event) =>
+                                updateEventChatToolDraft(tool.id, (currentTool) => ({
+                                  ...currentTool,
+                                  saveArgument: currentTool.argumentName,
+                                  saveContextKey: event.target.value,
+                                }))
+                              }
+                              placeholder="delivery_estimate"
+                              type="text"
+                              value={tool.saveContextKey}
+                            />
+                          </div>
+                          {tool.argumentName ? (
+                            <div className="event-context-line single-value">
+                              <span className="event-detail-label">ARG NOTE</span>
+                              <input
+                                aria-label="Argument description"
+                                onChange={(event) =>
+                                  updateEventChatToolDraftField(
+                                    tool.id,
+                                    "argumentDescription",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="The learner's estimate."
+                                type="text"
+                                value={tool.argumentDescription}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+                {!eventDraft.chatTools.length ? (
+                  <div className="chat-exit-empty">---</div>
+                ) : null}
+              </div>
                 </div>
               </div>
             </section>
@@ -2979,6 +3519,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   } as CSSProperties;
   const selectedExperience =
     experiences.find((experience) => experience.id === selectedExperienceId) ?? null;
+  const currentRuntimeEventId =
+    typeof session?.runtimeState?.currentEventId === "string"
+      ? session.runtimeState.currentEventId
+      : "";
 
   function currentRuntimeUiState(
     overrides: Partial<RuntimeUiState> = {},
@@ -3366,7 +3910,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     realtimeConnectionRef.current?.close();
     realtimeConnectionRef.current = null;
     setRealtimeStatus("idle");
-  }, [selectedModel, selectedVoice, session?.id]);
+  }, [currentRuntimeEventId, selectedModel, selectedVoice, session?.id]);
 
   useEffect(() => {
     if (!session || chatStatus !== "ready") return;
@@ -3854,6 +4398,34 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     return connection;
   }
 
+  async function runChatToolCall(
+    activeSession: TutoringSession,
+    toolCall: RealtimeToolCall,
+  ) {
+    realtimeConnectionRef.current?.close();
+    realtimeConnectionRef.current = null;
+
+    const payload = await apiFetch<StartEventPayload>(
+      `/api/sessions/${activeSession.id}/chat-tool/`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          arguments: toolCall.arguments,
+          toolCallId: toolCall.callId,
+          toolName: toolCall.name,
+          uiState: currentRuntimeUiState(),
+        }),
+      },
+    );
+
+    setSession(payload.session);
+    setMessages(payload.messages);
+    applyRuntimeActions(payload.actions);
+    if (payload.ranMessages?.[0]) {
+      setTurnAnchorMessageId(payload.ranMessages[0].id);
+    }
+  }
+
   async function saveSessionMessage(
     activeSession: TutoringSession,
     content: string,
@@ -3907,7 +4479,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         activeSession,
         payload.message.id,
       );
-      const assistantContent = await connection.sendUserText(content, (delta) => {
+      const turnResult = await connection.sendUserText(content, (delta) => {
         setMessages((current) =>
           current.map((message) =>
             message.id === assistantMessageId
@@ -3920,31 +4492,43 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         );
       });
 
-      const finalContent = assistantContent.trim();
-      if (!finalContent) {
+      const finalContent = turnResult.text.trim();
+      if (!finalContent && !turnResult.toolCall) {
         throw new Error("dLU responded with audio but no text transcript.");
       }
 
-      const assistantPayload = await saveSessionMessage(
-        activeSession,
-        finalContent,
-        "assistant",
-        {
-          model: selectedModel,
-          source: "openai-realtime",
-          voice: selectedVoice,
-        },
-      );
-      setSession(assistantPayload.session);
-      setMessages((current) =>
-        sortMessages(
-          current.map((message) =>
-            message.id === assistantMessageId
-              ? assistantPayload.message
-              : message,
+      let nextActiveSession = activeSession;
+      if (finalContent) {
+        const assistantPayload = await saveSessionMessage(
+          activeSession,
+          finalContent,
+          "assistant",
+          {
+            model: selectedModel,
+            source: "openai-realtime",
+            voice: selectedVoice,
+          },
+        );
+        nextActiveSession = assistantPayload.session;
+        setSession(assistantPayload.session);
+        setMessages((current) =>
+          sortMessages(
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? assistantPayload.message
+                : message,
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        setMessages((current) =>
+          current.filter((message) => message.id !== assistantMessageId),
+        );
+      }
+
+      if (turnResult.toolCall) {
+        await runChatToolCall(nextActiveSession, turnResult.toolCall);
+      }
     } catch (error) {
       realtimeConnectionRef.current?.close("error");
       realtimeConnectionRef.current = null;

@@ -909,6 +909,7 @@ button {
 .event-sequence-header {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   min-height: 20px;
   margin-top: 3px;
   color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
@@ -985,6 +986,10 @@ button {
 
 .event-step.tone-state {
   border-left-color: color-mix(in srgb, var(--accent-4) 70%, var(--panel-soft-border));
+}
+
+.event-step.chat-exit-step {
+  background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
 }
 
 .event-step.is-expanded {
@@ -1092,6 +1097,11 @@ button {
 
 .event-drag-handle:active {
   cursor: grabbing;
+}
+
+.event-drag-handle.is-static {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .event-step-tools {
@@ -1297,6 +1307,36 @@ button {
   font-size: 0.74rem;
 }
 
+.event-add-button.compact {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 0.68rem;
+}
+
+.chat-exits-header {
+  margin-top: 8px;
+}
+
+.chat-exit-detail {
+  padding-bottom: 9px;
+}
+
+.chat-exit-core-line {
+  grid-template-columns: auto minmax(120px, 0.72fr) auto minmax(160px, 1fr);
+}
+
+.chat-exit-save-line {
+  grid-template-columns: auto minmax(100px, 0.6fr) auto minmax(130px, 1fr);
+}
+
+.chat-exit-empty {
+  min-height: 28px;
+  padding: 5px 8px;
+  color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
 .event-add-menu {
   position: absolute;
   z-index: 20;
@@ -1427,6 +1467,8 @@ button {
   .tutor-editor-section .tutor-compact-grid,
   .event-condition-editor,
   .event-context-line,
+  .chat-exit-core-line,
+  .chat-exit-save-line,
   .tutor-editor-section .tutor-prompt-grid {
     grid-template-columns: minmax(0, 1fr);
   }

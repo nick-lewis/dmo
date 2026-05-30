@@ -136,6 +136,43 @@ class EventActionStep(models.Model):
         return f"{self.event}: {self.action_type}"
 
 
+class EventChatTool(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(
+        ExperienceEvent,
+        on_delete=models.CASCADE,
+        related_name="chat_tools",
+    )
+    name = models.CharField(max_length=64)
+    description = models.TextField(blank=True, default="")
+    parameters = models.JSONField(default=dict, blank=True)
+    triggers_event = models.SlugField(max_length=180, blank=True, default="")
+    save_argument = models.CharField(max_length=120, blank=True, default="")
+    save_context_key = models.CharField(max_length=120, blank=True, default="")
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event", "name"],
+                name="unique_event_chat_tool_name",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["event", "sort_order"],
+                name="core_eventc_event_i_4c7224_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event}: {self.name}"
+
+
 class TutoringSession(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
