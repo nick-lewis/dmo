@@ -97,6 +97,8 @@ class EventActionStep(models.Model):
         HIGHLIGHT_ON = "highlight_on", "Highlight on"
         HIGHLIGHT_OFF = "highlight_off", "Highlight off"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
+        GOTO_EVENT = "goto_event", "Go to event"
+        BUTTON_CHOICE = "button_choice", "Button choice"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey(

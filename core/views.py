@@ -62,6 +62,7 @@ REALTIME_CONTEXT_CHAR_LIMIT = 8000
 DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
+MAX_EVENT_CHAIN_DEPTH = 12
 
 
 def serialize_user(user):
@@ -419,6 +420,17 @@ def validate_selector(value, label="Selector"):
     return selector, ""
 
 
+def validate_event_slug(value, label="Target event", required=True):
+    event_slug = str(value or "").strip()
+    if not event_slug and required:
+        return None, f"{label} is required."
+    if not event_slug:
+        return "", ""
+    if len(event_slug) > 180:
+        return None, f"{label} is too long."
+    return event_slug, ""
+
+
 def validate_action_config(action_type, value):
     if value is None:
         value = {}
@@ -469,12 +481,38 @@ def validate_action_config(action_type, value):
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
             return None, selector_error
-        triggers_event = str(value.get("triggersEvent", "")).strip()
-        if not triggers_event:
-            return None, "Triggered event is required."
-        if len(triggers_event) > 180:
-            return None, "Triggered event is too long."
+        triggers_event, event_error = validate_event_slug(
+            value.get("triggersEvent"),
+            label="Triggered event",
+            required=False,
+        )
+        if event_error:
+            return None, event_error
         return {"selector": selector, "triggersEvent": triggers_event}, ""
+
+    if action_type == EventActionStep.ActionType.GOTO_EVENT:
+        triggers_event, event_error = validate_event_slug(
+            value.get("triggersEvent"),
+            required=False,
+        )
+        if event_error:
+            return None, event_error
+        return {"triggersEvent": triggers_event}, ""
+
+    if action_type == EventActionStep.ActionType.BUTTON_CHOICE:
+        label = str(value.get("label", "")).strip()
+        if not label:
+            return None, "Button label is required."
+        if len(label) > 120:
+            return None, "Button label is too long."
+        triggers_event, event_error = validate_event_slug(
+            value.get("triggersEvent"),
+            label="Triggered event",
+            required=False,
+        )
+        if event_error:
+            return None, event_error
+        return {"label": label, "triggersEvent": triggers_event}, ""
 
     return None, "Action type is not supported."
 
@@ -537,10 +575,19 @@ def create_message_for_runtime(session, role, content, metadata=None):
     )
 
 
-def apply_runtime_actions_to_state(state, actions, clear_trigger_selector=""):
+def apply_runtime_actions_to_state(
+    state,
+    actions,
+    clear_buttons=False,
+    clear_trigger_selector="",
+):
     ui_runtime = dict(state.get("uiRuntime") or {})
+    buttons = list(ui_runtime.get("buttons") or [])
     highlights = dict(ui_runtime.get("highlights") or {})
     triggers = list(ui_runtime.get("triggers") or [])
+
+    if clear_buttons:
+        buttons = []
 
     if clear_trigger_selector:
         triggers = [
@@ -550,18 +597,33 @@ def apply_runtime_actions_to_state(state, actions, clear_trigger_selector=""):
         ]
 
     for action in actions:
+        action_type = action.get("type")
         selector = str(action.get("selector", "")).strip()
+
+        if action_type == "button_choice":
+            step_id = str(action.get("stepId", ""))
+            buttons = [button for button in buttons if button.get("stepId") != step_id]
+            buttons.append(
+                {
+                    "eventId": str(action.get("eventId", "")),
+                    "label": str(action.get("label", "")),
+                    "stepId": step_id,
+                    "triggersEvent": str(action.get("triggersEvent", "")),
+                }
+            )
+            continue
+
         if not selector:
             continue
 
-        if action.get("type") == "highlight_on":
+        if action_type == "highlight_on":
             highlights[selector] = {
                 "color": str(action.get("color", "rgba(59, 130, 246, 0.6)")),
                 "selector": selector,
             }
-        elif action.get("type") == "highlight_off":
+        elif action_type == "highlight_off":
             highlights.pop(selector, None)
-        elif action.get("type") == "set_ui_trigger":
+        elif action_type == "set_ui_trigger":
             triggers = [
                 trigger
                 for trigger in triggers
@@ -579,6 +641,7 @@ def apply_runtime_actions_to_state(state, actions, clear_trigger_selector=""):
                 }
             )
 
+    ui_runtime["buttons"] = buttons
     ui_runtime["highlights"] = highlights
     ui_runtime["triggers"] = triggers
     state["uiRuntime"] = ui_runtime
@@ -588,6 +651,7 @@ def apply_runtime_actions_to_state(state, actions, clear_trigger_selector=""):
 def run_event_steps(session, event, client_ui_state=None):
     actions = []
     messages = []
+    next_event_slug = ""
     runtime_context = dict(session.runtime_context or {})
     client_ui_state = parse_client_ui_state(client_ui_state)
 
@@ -712,9 +776,101 @@ def run_event_steps(session, event, client_ui_state=None):
                     "triggersEvent": triggers_event,
                 }
             )
+            continue
+
+        if step.action_type == EventActionStep.ActionType.GOTO_EVENT:
+            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+            if not triggers_event:
+                continue
+            next_event_slug = triggers_event
+            actions.append(
+                {
+                    "type": "goto_event",
+                    "eventId": str(event.id),
+                    "stepId": str(step.id),
+                    "triggersEvent": triggers_event,
+                }
+            )
+            break
+
+        if step.action_type == EventActionStep.ActionType.BUTTON_CHOICE:
+            label = str(step.config.get("label", "")).strip()
+            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+            if not label or not triggers_event:
+                continue
+            actions.append(
+                {
+                    "type": "button_choice",
+                    "eventId": str(event.id),
+                    "label": label,
+                    "stepId": str(step.id),
+                    "triggersEvent": triggers_event,
+                }
+            )
 
     session.runtime_context = runtime_context
-    return actions, messages
+    return actions, messages, next_event_slug
+
+
+def run_event_chain(session, first_event, client_ui_state=None, state=None):
+    actions = []
+    messages = []
+    ran_events = []
+    state = dict(state or {})
+    event_runs = dict(state.get("eventRuns") or {})
+    event = first_event
+
+    for _ in range(MAX_EVENT_CHAIN_DEPTH):
+        run_key = str(event.id)
+        if event_runs.get(run_key, {}).get("status") == "complete":
+            actions.append(
+                {
+                    "type": "event_skipped",
+                    "eventId": str(event.id),
+                    "reason": "already_complete",
+                }
+            )
+            break
+
+        step_actions, step_messages, next_event_slug = run_event_steps(
+            session,
+            event,
+            client_ui_state=client_ui_state,
+        )
+        actions.extend(step_actions)
+        messages.extend(step_messages)
+        ran_events.append(event)
+        event_runs[run_key] = {
+            "completedAt": timezone.now().isoformat(),
+            "status": "complete",
+        }
+
+        if not next_event_slug:
+            break
+
+        next_event = session.experience.events.filter(slug=next_event_slug).first()
+        if not next_event:
+            actions.append(
+                {
+                    "type": "transition_missing",
+                    "eventId": str(event.id),
+                    "triggersEvent": next_event_slug,
+                }
+            )
+            break
+
+        event = next_event
+    else:
+        actions.append(
+            {
+                "type": "transition_depth_exceeded",
+                "eventId": str(event.id),
+                "limit": MAX_EVENT_CHAIN_DEPTH,
+            }
+        )
+
+    state["eventRuns"] = event_runs
+    return actions, messages, ran_events, state
 
 
 def health(request):
@@ -1325,16 +1481,12 @@ def run_start_event(request, session_id):
                 }
             )
 
-        actions, messages = run_event_steps(
+        actions, messages, ran_events, state = run_event_chain(
             session,
             event,
             client_ui_state=client_ui_state,
+            state=state,
         )
-        event_runs[run_key] = {
-            "completedAt": timezone.now().isoformat(),
-            "status": "complete",
-        }
-        state["eventRuns"] = event_runs
         state["startEventId"] = str(event.id)
         state["startEventComplete"] = True
         state = apply_runtime_actions_to_state(state, actions)
@@ -1347,6 +1499,9 @@ def run_start_event(request, session_id):
             "actions": actions,
             "event": serialize_experience_event(event),
             "ran": True,
+            "ranEvents": [
+                serialize_experience_event(ran_event) for ran_event in ran_events
+            ],
             "ranMessages": [serialize_message(message) for message in messages],
         }
     )
@@ -1364,6 +1519,7 @@ def run_session_event(request, session_id):
 
     event_id = str(data.get("eventId", "")).strip()
     event_slug = str(data.get("eventSlug", "")).strip()
+    clear_buttons = bool(data.get("clearButtons", False))
     trigger_selector = str(data.get("triggerSelector", "")).strip()
     client_ui_state = parse_client_ui_state(data.get("uiState"))
 
@@ -1400,6 +1556,15 @@ def run_session_event(request, session_id):
         event_runs = dict(state.get("eventRuns") or {})
         run_key = str(event.id)
         if event_runs.get(run_key, {}).get("status") == "complete":
+            if clear_buttons or trigger_selector:
+                state = apply_runtime_actions_to_state(
+                    state,
+                    [],
+                    clear_buttons=clear_buttons,
+                    clear_trigger_selector=trigger_selector,
+                )
+                session.runtime_state = state
+                session.save(update_fields=["runtime_state", "updated_at"])
             return JsonResponse(
                 {
                     **session_payload(session),
@@ -1409,19 +1574,16 @@ def run_session_event(request, session_id):
                 }
             )
 
-        actions, messages = run_event_steps(
+        actions, messages, ran_events, state = run_event_chain(
             session,
             event,
             client_ui_state=client_ui_state,
+            state=state,
         )
-        event_runs[run_key] = {
-            "completedAt": timezone.now().isoformat(),
-            "status": "complete",
-        }
-        state["eventRuns"] = event_runs
         state = apply_runtime_actions_to_state(
             state,
             actions,
+            clear_buttons=clear_buttons,
             clear_trigger_selector=trigger_selector,
         )
         session.runtime_state = state
@@ -1433,6 +1595,9 @@ def run_session_event(request, session_id):
             "actions": actions,
             "event": serialize_experience_event(event),
             "ran": True,
+            "ranEvents": [
+                serialize_experience_event(ran_event) for ran_event in ran_events
+            ],
             "ranMessages": [serialize_message(message) for message in messages],
         }
     )

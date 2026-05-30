@@ -51,6 +51,8 @@ const eventActionOptions = [
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
   { id: "set_ui_trigger", label: "UI trigger" },
+  { id: "goto_event", label: "Go to event" },
+  { id: "button_choice", label: "Button choice" },
 ] as const;
 
 type ChatMessage = {
@@ -105,7 +107,9 @@ type EventActionStep = {
     | "get_ui_state"
     | "highlight_on"
     | "highlight_off"
-    | "set_ui_trigger";
+    | "set_ui_trigger"
+    | "goto_event"
+    | "button_choice";
   label: string;
   config: Record<string, unknown>;
   condition: Record<string, unknown>;
@@ -175,6 +179,7 @@ type StartEventPayload = SessionPayload & {
   actions: Array<Record<string, unknown>>;
   event: ExperienceEvent;
   ran: boolean;
+  ranEvents?: ExperienceEvent[];
   ranMessages?: ChatMessage[];
 };
 
@@ -190,6 +195,13 @@ type RuntimeHighlight = {
 type RuntimeUiTrigger = {
   eventId: string;
   selector: string;
+  stepId: string;
+  triggersEvent: string;
+};
+
+type RuntimeButton = {
+  eventId: string;
+  label: string;
   stepId: string;
   triggersEvent: string;
 };
@@ -440,6 +452,12 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
       triggersEvent: "",
     };
   }
+  if (actionType === "goto_event") {
+    return { triggersEvent: "" };
+  }
+  if (actionType === "button_choice") {
+    return { label: "Continue", triggersEvent: "" };
+  }
 
   return { text: "" };
 }
@@ -450,7 +468,13 @@ function defaultStepConfigForEvent(
   currentEventId: string,
 ) {
   const config = defaultStepConfig(actionType);
-  if (actionType !== "set_ui_trigger") return config;
+  if (
+    actionType !== "set_ui_trigger" &&
+    actionType !== "goto_event" &&
+    actionType !== "button_choice"
+  ) {
+    return config;
+  }
 
   const destination = sortedExperienceEvents(events).find(
     (event) => event.id !== currentEventId,
@@ -464,6 +488,8 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
   if (actionType === "set_ui_trigger") return "Wait for UI";
+  if (actionType === "goto_event") return "Go to event";
+  if (actionType === "button_choice") return "Show choice";
   return "Say";
 }
 
@@ -490,6 +516,12 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
+  if (actionType === "goto_event") {
+    return "Immediately continue to another event";
+  }
+  if (actionType === "button_choice") {
+    return "Show a runtime button that starts another event";
+  }
 
   return "Have the agent speak in the chat";
 }
@@ -498,7 +530,13 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context" || actionType === "get_ui_state") {
     return "state";
   }
-  if (actionType === "set_ui_trigger") return "flow";
+  if (
+    actionType === "set_ui_trigger" ||
+    actionType === "goto_event" ||
+    actionType === "button_choice"
+  ) {
+    return "flow";
+  }
   if (actionType === "highlight_on" || actionType === "highlight_off") return "ui";
   return "speech";
 }
@@ -513,7 +551,13 @@ function eventTitleForTrigger(events: ExperienceEvent[], eventSlug: string) {
 function eventOutgoingSlugs(event: ExperienceEvent) {
   const slugs = new Set<string>();
   for (const step of event.steps) {
-    if (step.actionType !== "set_ui_trigger") continue;
+    if (
+      step.actionType !== "set_ui_trigger" &&
+      step.actionType !== "goto_event" &&
+      step.actionType !== "button_choice"
+    ) {
+      continue;
+    }
     const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
     if (triggersEvent) slugs.add(triggersEvent);
   }
@@ -569,6 +613,16 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     const triggersEvent = stringConfigValue(step.config, "triggersEvent", "event");
     const targetEvent = eventTitleForTrigger(events, triggersEvent);
     return `${selector || "target"} -> ${targetEvent || "event"}`;
+  }
+  if (step.actionType === "goto_event") {
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent", "event");
+    return eventTitleForTrigger(events, triggersEvent) || "Choose event";
+  }
+  if (step.actionType === "button_choice") {
+    const label = stringConfigValue(step.config, "label", "Button");
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent", "event");
+    const targetEvent = eventTitleForTrigger(events, triggersEvent);
+    return `${label || "Button"} -> ${targetEvent || "event"}`;
   }
 
   return compactPreview(
@@ -2131,6 +2185,18 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         ].some((value) => value.toLowerCase().includes(normalizedEventSearch)),
       )
     : editorEvents;
+  const selectedEventRoutes = eventDraft.steps
+    .filter((step) =>
+      ["set_ui_trigger", "goto_event", "button_choice"].includes(step.actionType),
+    )
+    .map((step) => {
+      const triggersEvent = stringConfigValue(step.config, "triggersEvent");
+      return {
+        id: step.id,
+        label: eventActionLabel(step.actionType),
+        target: eventTitleForTrigger(editorEvents, triggersEvent) || "Choose event",
+      };
+    });
 
   return (
     <main
@@ -2352,6 +2418,23 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   </div>
                 </div>
               </div>
+
+              {selectedEventRoutes.length ? (
+                <div className="event-route-strip" aria-label="Event routes">
+                  <span>Routes</span>
+                  {selectedEventRoutes.map((route) => (
+                    <button
+                      className="event-route-chip"
+                      key={route.id}
+                      onClick={() => setExpandedStepId(route.id)}
+                      type="button"
+                    >
+                      <strong>{route.label}</strong>
+                      <span>{route.target}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
 
               <div className="event-sequence-header">
                 <span>On entry</span>
@@ -2696,6 +2779,80 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               </select>
                             </div>
                           ) : null}
+
+                          {step.actionType === "goto_event" ? (
+                            <div className="event-context-line single-value">
+                              <span className="event-detail-label">GO</span>
+                              <select
+                                aria-label="Target event"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "triggersEvent",
+                                    event.target.value,
+                                  )
+                                }
+                                value={triggerEventSlug}
+                              >
+                                <option value="">Choose event</option>
+                                {triggerEventSlug && !hasTriggerEventOption ? (
+                                  <option value={triggerEventSlug}>
+                                    {triggerEventSlug}
+                                  </option>
+                                ) : null}
+                                {editorEvents.map((event) => (
+                                  <option key={event.id} value={event.slug}>
+                                    {event.title || event.slug}
+                                    {event.isStart ? " (start)" : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "button_choice" ? (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">BUTTON</span>
+                              <input
+                                aria-label="Button label"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "label",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="Continue"
+                                type="text"
+                                value={stringConfigValue(step.config, "label")}
+                              />
+                              <span className="event-inline-operator">{"->"}</span>
+                              <select
+                                aria-label="Button target event"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "triggersEvent",
+                                    event.target.value,
+                                  )
+                                }
+                                value={triggerEventSlug}
+                              >
+                                <option value="">Choose event</option>
+                                {triggerEventSlug && !hasTriggerEventOption ? (
+                                  <option value={triggerEventSlug}>
+                                    {triggerEventSlug}
+                                  </option>
+                                ) : null}
+                                {editorEvents.map((event) => (
+                                  <option key={event.id} value={event.slug}>
+                                    {event.title || event.slug}
+                                    {event.isStart ? " (start)" : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </article>
@@ -2814,6 +2971,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
   >({});
+  const [runtimeButtons, setRuntimeButtons] = useState<RuntimeButton[]>([]);
   const [runtimeTriggers, setRuntimeTriggers] = useState<RuntimeUiTrigger[]>([]);
   const shellStyle = {
     "--left-width": `${leftWidth}px`,
@@ -2833,6 +2991,30 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
     if (!actions.length) return;
+
+    setRuntimeButtons((current) => {
+      let next = [...current];
+      for (const action of actions) {
+        if (action.type !== "button_choice") continue;
+        const label =
+          typeof action.label === "string" ? action.label.trim() : "";
+        const triggersEvent =
+          typeof action.triggersEvent === "string"
+            ? action.triggersEvent.trim()
+            : "";
+        if (!label || !triggersEvent) continue;
+
+        const stepId = typeof action.stepId === "string" ? action.stepId : "";
+        next = next.filter((button) => button.stepId !== stepId);
+        next.push({
+          eventId: typeof action.eventId === "string" ? action.eventId : "",
+          label,
+          stepId,
+          triggersEvent,
+        });
+      }
+      return next;
+    });
 
     setRuntimeHighlights((current) => {
       const next = { ...current };
@@ -2894,8 +3076,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         ? (activeSession.runtimeState.uiRuntime as Record<string, unknown>)
         : {};
     const highlightsValue = uiRuntime.highlights;
+    const buttonsValue = uiRuntime.buttons;
     const triggersValue = uiRuntime.triggers;
     const nextHighlights: Record<string, RuntimeHighlight> = {};
+    const nextButtons: RuntimeButton[] = [];
 
     if (
       highlightsValue &&
@@ -2912,6 +3096,23 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             : "rgba(59, 130, 246, 0.6)";
         nextHighlights[selector] = { color, selector };
       }
+    }
+
+    if (Array.isArray(buttonsValue)) {
+      buttonsValue.forEach((value) => {
+        if (!value || typeof value !== "object") return;
+        const button = value as Record<string, unknown>;
+        const label = typeof button.label === "string" ? button.label : "";
+        const triggersEvent =
+          typeof button.triggersEvent === "string" ? button.triggersEvent : "";
+        if (!label || !triggersEvent) return;
+        nextButtons.push({
+          eventId: typeof button.eventId === "string" ? button.eventId : "",
+          label,
+          stepId: typeof button.stepId === "string" ? button.stepId : "",
+          triggersEvent,
+        });
+      });
     }
 
     const nextTriggers: RuntimeUiTrigger[] = [];
@@ -2935,6 +3136,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       });
     }
 
+    setRuntimeButtons(nextButtons);
     setRuntimeHighlights(nextHighlights);
     setRuntimeTriggers(nextTriggers);
   }
@@ -3230,6 +3432,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     eventSlug: string,
     uiState: RuntimeUiState,
     triggerSelector = "",
+    options: { clearButtons?: boolean } = {},
   ) {
     if (!session) return;
 
@@ -3239,6 +3442,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         {
           method: "POST",
           body: JSON.stringify({
+            clearButtons: Boolean(options.clearButtons),
             eventSlug,
             triggerSelector,
             uiState,
@@ -3271,6 +3475,13 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     );
     matchingTriggers.forEach((trigger) => {
       void runSessionEventBySlug(trigger.triggersEvent, uiState, selector);
+    });
+  }
+
+  function runRuntimeButton(button: RuntimeButton) {
+    setRuntimeButtons([]);
+    void runSessionEventBySlug(button.triggersEvent, currentRuntimeUiState(), "", {
+      clearButtons: true,
     });
   }
 
@@ -3956,17 +4167,19 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             />
             <PanelWindow ariaLabel="Panel six" density="lower">
               <ChatPanelContent
+                assistantName={tutorForm.assistantName}
+                avatarPath={tutorForm.avatarPath}
                 error={chatError}
                 isSending={isSendingMessage}
                 messages={messages}
+                onChooseRuntimeButton={runRuntimeButton}
                 onSendMessage={sendChatMessage}
                 realtimeStatus={realtimeStatus}
+                runtimeButtons={runtimeButtons}
                 session={session}
                 status={chatStatus}
                 turnAnchorMessageId={turnAnchorMessageId}
                 user={user}
-                assistantName={tutorForm.assistantName}
-                avatarPath={tutorForm.avatarPath}
               />
             </PanelWindow>
           </section>
@@ -4625,8 +4838,10 @@ type ChatPanelContentProps = {
   error: string;
   isSending: boolean;
   messages: ChatMessage[];
+  onChooseRuntimeButton: (button: RuntimeButton) => void;
   onSendMessage: (content: string) => Promise<void>;
   realtimeStatus: RealtimeStatus;
+  runtimeButtons: RuntimeButton[];
   session: TutoringSession | null;
   status: "loading" | "ready" | "error";
   turnAnchorMessageId: string | null;
@@ -4639,8 +4854,10 @@ function ChatPanelContent({
   error,
   isSending,
   messages,
+  onChooseRuntimeButton,
   onSendMessage,
   realtimeStatus,
+  runtimeButtons,
   session,
   status,
   turnAnchorMessageId,
@@ -4743,6 +4960,21 @@ function ChatPanelContent({
             );
           })}
         </div>
+
+        {runtimeButtons.length ? (
+          <div className="runtime-choice-row" aria-label="Runtime choices">
+            {runtimeButtons.map((button) => (
+              <button
+                className="runtime-choice-button"
+                key={button.stepId || `${button.label}-${button.triggersEvent}`}
+                onClick={() => onChooseRuntimeButton(button)}
+                type="button"
+              >
+                {button.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <form className="composer-row" onSubmit={sendMessage}>
           <input
