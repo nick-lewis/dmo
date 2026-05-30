@@ -107,6 +107,7 @@ class EventActionStep(models.Model):
     )
     label = models.CharField(max_length=160, blank=True, default="")
     config = models.JSONField(default=dict, blank=True)
+    condition = models.JSONField(default=dict, blank=True)
     enabled = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

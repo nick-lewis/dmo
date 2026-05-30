@@ -9,6 +9,7 @@ from django.urls import include, path, re_path
 
 from core.views import (
     create_message,
+    create_event_action_step,
     create_realtime_client_secret,
     create_session,
     create_voice_sample,
@@ -21,6 +22,7 @@ from core.views import (
     health,
     logout_user,
     resolve_google_slide,
+    reorder_event_action_steps,
     run_start_event,
     serve_google_slide_image,
     serve_voice_sample_audio,
@@ -56,6 +58,16 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/steps/<uuid:step_id>/",
         update_event_action_step,
         name="update-event-action-step",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/steps/",
+        create_event_action_step,
+        name="create-event-action-step",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/steps/reorder/",
+        reorder_event_action_steps,
+        name="reorder-event-action-steps",
     ),
     path("api/sessions/current/", current_session, name="current-session"),
     path("api/sessions/", create_session, name="create-session"),

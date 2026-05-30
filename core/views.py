@@ -118,6 +118,7 @@ def serialize_event_action_step(step):
         "actionType": step.action_type,
         "label": step.label,
         "config": step.config,
+        "condition": step.condition,
         "enabled": step.enabled,
         "sortOrder": step.sort_order,
         "createdAt": step.created_at.isoformat(),
@@ -418,6 +419,48 @@ def validate_action_config(action_type, value):
     return None, "Action type is not supported."
 
 
+def validate_step_condition(value):
+    if value is None:
+        return {}, ""
+    if not isinstance(value, dict):
+        return None, "Step condition must be an object."
+
+    condition_type = str(value.get("type", "always")).strip() or "always"
+    if condition_type == "always":
+        return {}, ""
+
+    if condition_type == "context_equals":
+        key = str(value.get("key", "")).strip()
+        expected_value = str(value.get("value", ""))
+        if not key:
+            return None, "Condition context key is required."
+        if len(key) > 120:
+            return None, "Condition context key is too long."
+        if len(expected_value) > 4000:
+            return None, "Condition value is too long."
+        return {
+            "type": "context_equals",
+            "key": key,
+            "value": expected_value,
+        }, ""
+
+    return None, "Step condition is not supported."
+
+
+def step_condition_matches(step, runtime_context):
+    condition = step.condition or {}
+    condition_type = condition.get("type") or "always"
+    if condition_type == "always":
+        return True
+
+    if condition_type == "context_equals":
+        key = str(condition.get("key", "")).strip()
+        expected_value = str(condition.get("value", ""))
+        return str(runtime_context.get(key, "")) == expected_value
+
+    return False
+
+
 def create_message_for_runtime(session, role, content, metadata=None):
     next_sequence = (
         SessionMessage.objects.filter(session=session).aggregate(Max("sequence"))[
@@ -440,6 +483,18 @@ def run_event_steps(session, event):
     runtime_context = dict(session.runtime_context or {})
 
     for step in event.steps.filter(enabled=True).order_by("sort_order", "created_at"):
+        if not step_condition_matches(step, runtime_context):
+            actions.append(
+                {
+                    "type": "skipped",
+                    "actionType": step.action_type,
+                    "eventId": str(event.id),
+                    "reason": "condition_not_met",
+                    "stepId": str(step.id),
+                }
+            )
+            continue
+
         if step.action_type == EventActionStep.ActionType.SCRIPT:
             text = str(step.config.get("text", "")).strip()
             if not text:
@@ -818,7 +873,104 @@ def update_experience_event(request, experience_id, event_id):
     return JsonResponse({"event": serialize_experience_event(event)})
 
 
-@require_http_methods(["PATCH"])
+@require_POST
+def create_event_action_step(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    action_type = str(
+        data.get("actionType", EventActionStep.ActionType.SCRIPT)
+    ).strip()
+    if action_type not in EventActionStep.ActionType.values:
+        return JsonResponse({"detail": "Action type is not supported."}, status=400)
+
+    config, config_error = validate_action_config(
+        action_type,
+        data.get("config", {}),
+    )
+    if config_error:
+        return JsonResponse({"detail": config_error}, status=400)
+
+    condition, condition_error = validate_step_condition(data.get("condition", {}))
+    if condition_error:
+        return JsonResponse({"detail": condition_error}, status=400)
+
+    label = str(data.get("label", "")).strip()
+    if len(label) > 160:
+        return JsonResponse({"detail": "Action label is too long."}, status=400)
+
+    sort_order = (event.steps.aggregate(Max("sort_order"))["sort_order__max"] or 0) + 1
+    step = EventActionStep.objects.create(
+        event=event,
+        action_type=action_type,
+        label=label,
+        config=config,
+        condition=condition,
+        enabled=bool(data.get("enabled", True)),
+        sort_order=sort_order,
+    )
+
+    return JsonResponse(
+        {
+            "event": serialize_experience_event(event),
+            "step": serialize_event_action_step(step),
+        },
+        status=201,
+    )
+
+
+@require_POST
+def reorder_event_action_steps(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    step_ids = data.get("stepIds")
+    if not isinstance(step_ids, list):
+        return JsonResponse({"detail": "Step IDs must be an array."}, status=400)
+
+    existing_steps = {str(step.id): step for step in event.steps.all()}
+    if set(step_ids) != set(existing_steps.keys()):
+        return JsonResponse(
+            {"detail": "Reorder payload must include every event step."},
+            status=400,
+        )
+
+    with transaction.atomic():
+        for index, step_id in enumerate(step_ids):
+            step = existing_steps[str(step_id)]
+            step.sort_order = index
+            step.save(update_fields=["sort_order", "updated_at"])
+
+    return JsonResponse({"event": serialize_experience_event(event)})
+
+
+@require_http_methods(["DELETE", "PATCH"])
 def update_event_action_step(request, experience_id, event_id, step_id):
     auth_response = auth_required_response(request)
     if auth_response:
@@ -835,6 +987,22 @@ def update_event_action_step(request, experience_id, event_id, step_id):
     step = event.steps.filter(id=step_id).first()
     if not step:
         return JsonResponse({"detail": "Action step not found."}, status=404)
+
+    if request.method == "DELETE":
+        if event.steps.count() <= 1:
+            return JsonResponse(
+                {"detail": "An event needs at least one action step."},
+                status=400,
+            )
+        step.delete()
+        for index, event_step in enumerate(
+            event.steps.order_by("sort_order", "created_at")
+        ):
+            if event_step.sort_order == index:
+                continue
+            event_step.sort_order = index
+            event_step.save(update_fields=["sort_order", "updated_at"])
+        return JsonResponse({"event": serialize_experience_event(event)})
 
     data = parse_json_body(request)
     if data is None:
@@ -853,6 +1021,15 @@ def update_event_action_step(request, experience_id, event_id, step_id):
     if "enabled" in data:
         step.enabled = bool(data.get("enabled"))
 
+    if "sortOrder" in data:
+        try:
+            sort_order = int(data.get("sortOrder"))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Sort order must be a number."}, status=400)
+        if sort_order < 0:
+            return JsonResponse({"detail": "Sort order must be positive."}, status=400)
+        step.sort_order = sort_order
+
     if "config" in data or action_type != step.action_type:
         config, config_error = validate_action_config(
             action_type,
@@ -861,6 +1038,12 @@ def update_event_action_step(request, experience_id, event_id, step_id):
         if config_error:
             return JsonResponse({"detail": config_error}, status=400)
         step.config = config
+
+    if "condition" in data:
+        condition, condition_error = validate_step_condition(data.get("condition"))
+        if condition_error:
+            return JsonResponse({"detail": condition_error}, status=400)
+        step.condition = condition
 
     step.action_type = action_type
     step.save()

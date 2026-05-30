@@ -43,6 +43,10 @@ const tutorAvatarOptions = [
   { label: "dLU right", path: "test-images/dLU-right.png" },
   { label: "dLU left", path: "test-images/dLU-left.png" },
 ] as const;
+const eventActionOptions = [
+  { id: "script", label: "Say" },
+  { id: "set_context", label: "Set context" },
+] as const;
 
 type ChatMessage = {
   id: string;
@@ -93,6 +97,7 @@ type EventActionStep = {
   actionType: "script" | "set_context";
   label: string;
   config: Record<string, unknown>;
+  condition: Record<string, unknown>;
   enabled: boolean;
   sortOrder: number;
   createdAt: string;
@@ -133,10 +138,26 @@ type ExperienceForm = {
   description: string;
 };
 
+type StepConditionDraft = {
+  type: "always" | "context_equals";
+  key: string;
+  value: string;
+};
+
+type EventStepDraft = {
+  id: string;
+  actionType: EventActionStep["actionType"];
+  label: string;
+  config: Record<string, unknown>;
+  condition: StepConditionDraft;
+  enabled: boolean;
+  sortOrder: number;
+};
+
 type StartEventDraft = {
   title: string;
   description: string;
-  scriptText: string;
+  steps: EventStepDraft[];
 };
 
 type StartEventPayload = SessionPayload & {
@@ -280,29 +301,99 @@ function getStartEvent(experience: Experience | null) {
   );
 }
 
-function getPrimaryScriptStep(event: ExperienceEvent | null) {
-  if (!event) return null;
-  return (
-    event.steps.find((step) => step.actionType === "script") ??
-    event.steps[0] ??
-    null
+function sortedEventSteps(steps: EventActionStep[]) {
+  return [...steps].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
   );
 }
 
-function getScriptText(step: EventActionStep | null) {
-  const text = step?.config?.text;
-  return typeof text === "string" ? text : "";
+function stringConfigValue(
+  config: Record<string, unknown>,
+  key: string,
+  fallback = "",
+) {
+  const value = config[key];
+  return typeof value === "string" ? value : fallback;
 }
 
-function startEventDraftFromExperience(experience: Experience | null): StartEventDraft {
+function conditionDraftFromStep(step: EventActionStep): StepConditionDraft {
+  const conditionType = step.condition?.type;
+  if (conditionType === "context_equals") {
+    return {
+      key: stringConfigValue(step.condition, "key"),
+      type: "context_equals",
+      value: stringConfigValue(step.condition, "value"),
+    };
+  }
+
+  return {
+    key: "",
+    type: "always",
+    value: "",
+  };
+}
+
+function stepDraftFromStep(step: EventActionStep): EventStepDraft {
+  return {
+    actionType: step.actionType,
+    condition: conditionDraftFromStep(step),
+    config: step.config,
+    enabled: step.enabled,
+    id: step.id,
+    label: step.label,
+    sortOrder: step.sortOrder,
+  };
+}
+
+function startEventDraftFromExperience(
+  experience: Experience | null,
+): StartEventDraft {
   const startEvent = getStartEvent(experience);
-  const scriptStep = getPrimaryScriptStep(startEvent);
 
   return {
     description: startEvent?.description ?? "",
-    scriptText: getScriptText(scriptStep),
+    steps: startEvent ? sortedEventSteps(startEvent.steps).map(stepDraftFromStep) : [],
     title: startEvent?.title ?? "Start",
   };
+}
+
+function defaultStepConfig(actionType: EventActionStep["actionType"]) {
+  if (actionType === "set_context") {
+    return { key: "entry_ready", value: "yes" };
+  }
+
+  return { text: "" };
+}
+
+function defaultStepLabel(actionType: EventActionStep["actionType"]) {
+  return actionType === "set_context" ? "Set entry_ready" : "Say";
+}
+
+function normalizedStepCondition(condition: StepConditionDraft) {
+  if (condition.type !== "context_equals") return {};
+
+  return {
+    key: condition.key,
+    type: "context_equals",
+    value: condition.value,
+  };
+}
+
+function comparableStepDraft(step: EventStepDraft) {
+  return {
+    actionType: step.actionType,
+    condition: normalizedStepCondition(step.condition),
+    config: step.config,
+    enabled: step.enabled,
+    label: step.label,
+    sortOrder: step.sortOrder,
+  };
+}
+
+function comparableStep(step: EventActionStep) {
+  return comparableStepDraft(stepDraftFromStep(step));
 }
 
 function replaceExperienceEvent(
@@ -693,6 +784,20 @@ function ExperienceHome() {
     const didSave = await flushExperienceAutosave(experience);
     if (!didSave) return;
 
+    try {
+      await apiFetch<SessionPayload>("/api/sessions/", {
+        method: "POST",
+        body: JSON.stringify({ experienceId: experience.id }),
+      });
+    } catch (runError) {
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : "Could not start a fresh run.",
+      );
+      return;
+    }
+
     writeSelectedExperienceId(experience.id);
     window.location.assign(experienceRunPath(experience.id));
   }
@@ -923,7 +1028,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const [startEventDraft, setStartEventDraft] = useState<StartEventDraft>({
     description: "",
-    scriptText: "",
+    steps: [],
     title: "Start",
   });
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -1208,19 +1313,32 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
   function getStartEventParts() {
     const startEvent = getStartEvent(experience);
-    const scriptStep = getPrimaryScriptStep(startEvent);
-    return { scriptStep, startEvent };
+    return { startEvent };
   }
 
   function hasStartEventChanges(draft: StartEventDraft) {
-    const { scriptStep, startEvent } = getStartEventParts();
-    if (!startEvent || !scriptStep) return false;
+    const { startEvent } = getStartEventParts();
+    if (!startEvent) return false;
 
-    return (
+    if (
       draft.title !== startEvent.title ||
-      draft.description !== startEvent.description ||
-      draft.scriptText !== getScriptText(scriptStep)
-    );
+      draft.description !== startEvent.description
+    ) {
+      return true;
+    }
+
+    const currentSteps = sortedEventSteps(startEvent.steps);
+    if (draft.steps.length !== currentSteps.length) return true;
+
+    return draft.steps.some((draftStep) => {
+      const currentStep = currentSteps.find((step) => step.id === draftStep.id);
+      if (!currentStep) return true;
+
+      return (
+        JSON.stringify(comparableStepDraft(draftStep)) !==
+        JSON.stringify(comparableStep(currentStep))
+      );
+    });
   }
 
   function clearEventAutosaveTimer() {
@@ -1235,14 +1353,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   async function persistStartEventDraft(draft: StartEventDraft, version: number) {
-    const { scriptStep, startEvent } = getStartEventParts();
-    if (!experience || !startEvent || !scriptStep || !draft.title.trim()) {
+    const { startEvent } = getStartEventParts();
+    if (!experience || !startEvent || !draft.title.trim()) {
       return true;
     }
 
     setError("");
 
     try {
+      const currentSteps = sortedEventSteps(startEvent.steps);
+
       if (
         draft.title !== startEvent.title ||
         draft.description !== startEvent.description
@@ -1267,14 +1387,28 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         }
       }
 
-      if (draft.scriptText !== getScriptText(scriptStep)) {
+      for (const draftStep of draft.steps) {
+        const currentStep = currentSteps.find((step) => step.id === draftStep.id);
+        if (!currentStep) continue;
+
+        if (
+          JSON.stringify(comparableStepDraft(draftStep)) ===
+          JSON.stringify(comparableStep(currentStep))
+        ) {
+          continue;
+        }
+
         const stepPayload = await apiFetch<{ step: EventActionStep }>(
-          `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${scriptStep.id}/`,
+          `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${draftStep.id}/`,
           {
             method: "PATCH",
             body: JSON.stringify({
-              actionType: "script",
-              config: { text: draft.scriptText },
+              actionType: draftStep.actionType,
+              condition: normalizedStepCondition(draftStep.condition),
+              config: draftStep.config,
+              enabled: draftStep.enabled,
+              label: draftStep.label,
+              sortOrder: draftStep.sortOrder,
             }),
           },
         );
@@ -1326,7 +1460,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     return persistStartEventDraft(startEventDraft, version);
   }
 
-  function updateStartEventDraft(field: keyof StartEventDraft, value: string) {
+  function updateStartEventDraft(
+    field: "description" | "title",
+    value: string,
+  ) {
     const nextDraft = {
       ...startEventDraft,
       [field]: value,
@@ -1334,6 +1471,181 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     setStartEventDraft(nextDraft);
     queueEventAutosave(nextDraft);
+  }
+
+  function updateStartEventStepDraft(
+    stepId: string,
+    updater: (step: EventStepDraft) => EventStepDraft,
+  ) {
+    const nextDraft = {
+      ...startEventDraft,
+      steps: startEventDraft.steps.map((step) =>
+        step.id === stepId ? updater(step) : step,
+      ),
+    };
+
+    setStartEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
+  function updateStartEventStepConfig(
+    stepId: string,
+    key: string,
+    value: string,
+  ) {
+    updateStartEventStepDraft(stepId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        [key]: value,
+      },
+    }));
+  }
+
+  function updateStartEventStepCondition(
+    stepId: string,
+    condition: Partial<StepConditionDraft>,
+  ) {
+    updateStartEventStepDraft(stepId, (step) => {
+      const nextCondition = {
+        ...step.condition,
+        ...condition,
+      };
+
+      if (condition.type === "always") {
+        nextCondition.key = "";
+        nextCondition.value = "";
+      }
+
+      return {
+        ...step,
+        condition: nextCondition,
+      };
+    });
+  }
+
+  function updateStartEventStepAction(
+    stepId: string,
+    actionType: EventActionStep["actionType"],
+  ) {
+    updateStartEventStepDraft(stepId, (step) => ({
+      ...step,
+      actionType,
+      config:
+        step.actionType === actionType ? step.config : defaultStepConfig(actionType),
+      label: step.label || defaultStepLabel(actionType),
+    }));
+  }
+
+  function applyUpdatedStartEvent(nextEvent: ExperienceEvent) {
+    if (!experience) return;
+
+    const nextExperience = replaceExperienceEvent(experience, nextEvent);
+    setExperience(nextExperience);
+    setStartEventDraft(startEventDraftFromExperience(nextExperience));
+  }
+
+  async function addStartEventStep(actionType: EventActionStep["actionType"]) {
+    const { startEvent } = getStartEventParts();
+    if (!experience || !startEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            actionType,
+            config: defaultStepConfig(actionType),
+            label: defaultStepLabel(actionType),
+          }),
+        },
+      );
+      applyUpdatedStartEvent(payload.event);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not add action step.",
+      );
+    }
+  }
+
+  async function deleteStartEventStep(stepId: string) {
+    const { startEvent } = getStartEventParts();
+    if (!experience || !startEvent || startEventDraft.steps.length <= 1) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/${stepId}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      applyUpdatedStartEvent(payload.event);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete action step.",
+      );
+    }
+  }
+
+  async function moveStartEventStep(stepId: string, direction: -1 | 1) {
+    const { startEvent } = getStartEventParts();
+    if (!experience || !startEvent) return;
+
+    const currentIndex = startEventDraft.steps.findIndex((step) => step.id === stepId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= startEventDraft.steps.length) {
+      return;
+    }
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    const reorderedSteps = [...startEventDraft.steps];
+    const [movedStep] = reorderedSteps.splice(currentIndex, 1);
+    reorderedSteps.splice(nextIndex, 0, movedStep);
+    const nextSteps = reorderedSteps.map((step, index) => ({
+      ...step,
+      sortOrder: index,
+    }));
+
+    setStartEventDraft({
+      ...startEventDraft,
+      steps: nextSteps,
+    });
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${startEvent.id}/steps/reorder/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            stepIds: nextSteps.map((step) => step.id),
+          }),
+        },
+      );
+      applyUpdatedStartEvent(payload.event);
+    } catch (moveError) {
+      setError(
+        moveError instanceof Error ? moveError.message : "Could not reorder steps.",
+      );
+      setStartEventDraft(startEventDraftFromExperience(experience));
+    }
   }
 
   async function flushEditorAutosave() {
@@ -1411,6 +1723,20 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     const didSave = await flushEditorAutosave();
     if (!didSave) return;
+
+    try {
+      await apiFetch<SessionPayload>("/api/sessions/", {
+        method: "POST",
+        body: JSON.stringify({ experienceId: experience.id }),
+      });
+    } catch (runError) {
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : "Could not start a fresh run.",
+      );
+      return;
+    }
 
     writeSelectedExperienceId(experience.id);
     window.location.assign(experienceRunPath(experience.id));
@@ -1538,6 +1864,22 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             <section className="editor-section event-editor-section">
               <div className="runtime-control-header">
                 <span>On entry</span>
+                <div className="event-add-actions">
+                  <button
+                    className="header-action secondary"
+                    onClick={() => void addStartEventStep("script")}
+                    type="button"
+                  >
+                    Say
+                  </button>
+                  <button
+                    className="header-action secondary"
+                    onClick={() => void addStartEventStep("set_context")}
+                    type="button"
+                  >
+                    Set context
+                  </button>
+                </div>
               </div>
 
               <div className="event-inline-grid">
@@ -1565,17 +1907,176 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 </label>
               </div>
 
-              <label className="control-field event-script-field">
-                <span>Script</span>
-                <textarea
-                  className="event-script-textarea"
-                  onChange={(event) =>
-                    updateStartEventDraft("scriptText", event.target.value)
-                  }
-                  placeholder="What dee-lou says when a new run starts..."
-                  value={startEventDraft.scriptText}
-                />
-              </label>
+              <div className="event-step-list">
+                {startEventDraft.steps.map((step, index) => (
+                  <article className="event-step" key={step.id}>
+                    <div className="event-step-header">
+                      <span className="event-step-number">{index + 1}</span>
+                      <label className="control-field event-action-field">
+                        <span>Action</span>
+                        <select
+                          onChange={(event) =>
+                            updateStartEventStepAction(
+                              step.id,
+                              event.target.value as EventActionStep["actionType"],
+                            )
+                          }
+                          value={step.actionType}
+                        >
+                          {eventActionOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="event-enabled-toggle">
+                        <input
+                          checked={step.enabled}
+                          onChange={(event) =>
+                            updateStartEventStepDraft(step.id, (currentStep) => ({
+                              ...currentStep,
+                              enabled: event.target.checked,
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <span>Enabled</span>
+                      </label>
+                      <div className="event-step-actions">
+                        <button
+                          aria-label="Move step up"
+                          className="event-icon-button"
+                          disabled={index === 0}
+                          onClick={() => void moveStartEventStep(step.id, -1)}
+                          type="button"
+                        >
+                          <ArrowUpIcon />
+                        </button>
+                        <button
+                          aria-label="Move step down"
+                          className="event-icon-button"
+                          disabled={index === startEventDraft.steps.length - 1}
+                          onClick={() => void moveStartEventStep(step.id, 1)}
+                          type="button"
+                        >
+                          <ArrowDownIcon />
+                        </button>
+                        <button
+                          aria-label="Delete step"
+                          className="event-icon-button danger"
+                          disabled={startEventDraft.steps.length <= 1}
+                          onClick={() => void deleteStartEventStep(step.id)}
+                          type="button"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="event-step-body">
+                      {step.actionType === "script" ? (
+                        <label className="control-field event-script-field">
+                          <span>Script</span>
+                          <textarea
+                            className="event-script-textarea"
+                            onChange={(event) =>
+                              updateStartEventStepConfig(
+                                step.id,
+                                "text",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="What dee-lou says at this point..."
+                            value={stringConfigValue(step.config, "text")}
+                          />
+                        </label>
+                      ) : (
+                        <div className="event-context-grid">
+                          <label className="control-field">
+                            <span>Key</span>
+                            <input
+                              onChange={(event) =>
+                                updateStartEventStepConfig(
+                                  step.id,
+                                  "key",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="entry_ready"
+                              type="text"
+                              value={stringConfigValue(step.config, "key")}
+                            />
+                          </label>
+                          <label className="control-field">
+                            <span>Value</span>
+                            <input
+                              onChange={(event) =>
+                                updateStartEventStepConfig(
+                                  step.id,
+                                  "value",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="yes"
+                              type="text"
+                              value={stringConfigValue(step.config, "value")}
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      <div className="event-condition-grid">
+                        <label className="control-field">
+                          <span>Run if</span>
+                          <select
+                            onChange={(event) =>
+                              updateStartEventStepCondition(step.id, {
+                                type: event.target.value as StepConditionDraft["type"],
+                              })
+                            }
+                            value={step.condition.type}
+                          >
+                            <option value="always">Always</option>
+                            <option value="context_equals">Context equals</option>
+                          </select>
+                        </label>
+
+                        {step.condition.type === "context_equals" ? (
+                          <>
+                            <label className="control-field">
+                              <span>Context key</span>
+                              <input
+                                onChange={(event) =>
+                                  updateStartEventStepCondition(step.id, {
+                                    key: event.target.value,
+                                  })
+                                }
+                                placeholder="entry_ready"
+                                type="text"
+                                value={step.condition.key}
+                              />
+                            </label>
+                            <label className="control-field">
+                              <span>Equals</span>
+                              <input
+                                onChange={(event) =>
+                                  updateStartEventStepCondition(step.id, {
+                                    value: event.target.value,
+                                  })
+                                }
+                                placeholder="yes"
+                                type="text"
+                                value={step.condition.value}
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
             </section>
           </>
         ) : null}
@@ -2418,6 +2919,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         <div className="study-actions">
           <button
             className="header-action secondary"
+            disabled={!selectedExperience}
+            onClick={() => {
+              if (selectedExperience) {
+                window.location.assign(experienceEditPath(selectedExperience.id));
+              }
+            }}
+            type="button"
+          >
+            Edit
+          </button>
+          <button
+            className="header-action secondary"
             onClick={() => window.location.assign("/")}
             type="button"
           >
@@ -2666,33 +3179,75 @@ function LeftPanelContent({
   tutor: TutorControlsProps;
 }) {
   if (kind === "experience") {
-    return <ExperienceControls {...experience} />;
+    return (
+      <RuntimePlaceholderPanel
+        kicker={experience.chatStatus === "ready" ? "Running" : "Workspace"}
+        title="Experience context"
+        tags={["Session", "Learner", "State"]}
+      >
+        <p>
+          This panel will hold run-specific context: current event, learner
+          state, and lightweight controls that belong to the live experience.
+        </p>
+        <p className="muted-copy">
+          Authoring settings now live in the experience editor.
+        </p>
+      </RuntimePlaceholderPanel>
+    );
   }
 
   if (kind === "tutor") {
-    return <TutorControls {...tutor} />;
+    return (
+      <RuntimePlaceholderPanel
+        kicker={tutor.tutor.assistantName || "dee-lou"}
+        title="Tutor runtime"
+        tags={[tutor.tutor.realtimeModel, tutor.tutor.voice, tutor.realtimeStatus]}
+      >
+        <p>
+          Runtime-only tutor signals can live here later: speaking state,
+          current instructions, tool calls, or transcript diagnostics.
+        </p>
+      </RuntimePlaceholderPanel>
+    );
   }
 
   if (kind === "slides") {
-    return <SlideControls {...slides} />;
+    return (
+      <RuntimePlaceholderPanel
+        kicker={slides.status === "ready" ? "Slide ready" : "Materials"}
+        title="Learning surface"
+        tags={["Slides", "Notebook", "Artifacts"]}
+      >
+        <p>
+          This will become a compact readout for whatever the experience is
+          controlling in the main panel.
+        </p>
+      </RuntimePlaceholderPanel>
+    );
   }
 
   if (kind === "checks") {
     return (
-      <ul className="check-list">
-        <li>
-          <span>Reasoning visible</span>
-          <strong>needed</strong>
-        </li>
-        <li>
-          <span>Hint depth</span>
-          <strong>low</strong>
-        </li>
-        <li>
-          <span>Next action</span>
-          <strong>ask</strong>
-        </li>
-      </ul>
+      <RuntimePlaceholderPanel
+        kicker={experience.user?.displayName || "Learner"}
+        title="Signals"
+        tags={["Progress", "Checks", "Notes"]}
+      >
+        <ul className="check-list">
+          <li>
+            <span>Current event</span>
+            <strong>entry</strong>
+          </li>
+          <li>
+            <span>Runtime context</span>
+            <strong>pending</strong>
+          </li>
+          <li>
+            <span>Next action</span>
+            <strong>observe</strong>
+          </li>
+        </ul>
+      </RuntimePlaceholderPanel>
     );
   }
 
@@ -2709,6 +3264,33 @@ function LeftPanelContent({
       <p className="muted-copy">
         Preferred response shape: short question, one target, no full solution yet.
       </p>
+    </div>
+  );
+}
+
+function RuntimePlaceholderPanel({
+  children,
+  kicker,
+  tags,
+  title,
+}: {
+  children: ReactNode;
+  kicker: string;
+  tags: string[];
+  title: string;
+}) {
+  return (
+    <div className="text-stack runtime-placeholder">
+      <div className="runtime-placeholder-header">
+        <span>{kicker}</span>
+        <strong>{title}</strong>
+      </div>
+      <div className="tag-row">
+        {tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        ))}
+      </div>
+      {children}
     </div>
   );
 }
@@ -3338,6 +3920,46 @@ function PlayIcon() {
       width="13"
     >
       <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M12 19V5M6 11l6-6 6 6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function ArrowDownIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M12 5v14M6 13l6 6 6-6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
     </svg>
   );
 }
