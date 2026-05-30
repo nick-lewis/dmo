@@ -56,12 +56,14 @@ type RealtimeConnectionCallbacks = {
 
 type ActiveResponse = {
   done: boolean;
+  eventSummaries: string[];
   onDelta: (delta: string) => void;
   reject: (error: Error) => void;
   resolve: (content: RealtimeTurnResult) => void;
   text: string;
   timeoutId: number;
   toolCall: RealtimeToolCall | null;
+  toolCallDraft: RealtimeToolCallDraft;
 };
 
 export type RealtimeToolCall = {
@@ -71,8 +73,17 @@ export type RealtimeToolCall = {
 };
 
 export type RealtimeTurnResult = {
+  eventSummaries: string[];
   text: string;
   toolCall: RealtimeToolCall | null;
+};
+
+type RealtimeToolCallDraft = {
+  argumentsText: string;
+  callId: string;
+  itemId: string;
+  name: string;
+  outputIndex: string;
 };
 
 type ServerEvent = {
@@ -83,7 +94,9 @@ type ServerEvent = {
     message?: string;
   };
   item?: unknown;
+  item_id?: string;
   name?: string;
+  output_index?: number | string;
   part?: unknown;
   response?: unknown;
   text?: string;
@@ -99,6 +112,12 @@ function objectValue(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function indexValue(value: unknown) {
+  return typeof value === "number" || typeof value === "string"
+    ? String(value)
+    : "";
 }
 
 function clientSecretValue(payload: unknown) {
@@ -120,7 +139,13 @@ function contentText(content: unknown) {
     .map((part) => {
       const partObject = objectValue(part);
       if (!partObject) return "";
-      return stringValue(partObject.text) || stringValue(partObject.transcript);
+      const audio =
+        objectValue(partObject.audio) ?? objectValue(partObject.output_audio);
+      return (
+        stringValue(partObject.text) ||
+        stringValue(partObject.transcript) ||
+        stringValue(audio?.transcript)
+      );
     })
     .join("");
 }
@@ -128,7 +153,11 @@ function contentText(content: unknown) {
 function itemText(item: unknown) {
   const itemObject = objectValue(item);
   if (!itemObject) return "";
-  return contentText(itemObject.content);
+  return (
+    stringValue(itemObject.text) ||
+    stringValue(itemObject.transcript) ||
+    contentText(itemObject.content)
+  );
 }
 
 function partText(part: unknown) {
@@ -139,6 +168,12 @@ function partText(part: unknown) {
 
 function responseText(response: unknown) {
   const responseObject = objectValue(response);
+  const directText =
+    stringValue(responseObject?.output_text) ||
+    stringValue(responseObject?.text) ||
+    stringValue(responseObject?.transcript);
+  if (directText) return directText;
+
   const output = responseObject?.output;
   if (!Array.isArray(output)) return "";
 
@@ -167,6 +202,9 @@ function parseServerEvent(event: MessageEvent) {
 }
 
 function parseToolArguments(value: unknown) {
+  const objectArgument = objectValue(value);
+  if (objectArgument) return objectArgument;
+
   if (typeof value !== "string" || !value.trim()) return {};
 
   try {
@@ -177,46 +215,131 @@ function parseToolArguments(value: unknown) {
   }
 }
 
-function toolCallFromRecord(value: Record<string, unknown> | null) {
-  if (!value || stringValue(value.type) !== "function_call") return null;
+function functionCallLike(value: Record<string, unknown> | null) {
+  if (!value) return false;
+  const type = stringValue(value.type);
+  return type === "function_call" || type === "tool_call" || type === "function";
+}
 
-  const name = stringValue(value.name);
-  if (!name) return null;
+function toolCallDraftFromRecord(value: Record<string, unknown> | null) {
+  if (!functionCallLike(value)) return null;
 
+  const functionObject = objectValue(value?.function);
+  const argumentsValue = value?.arguments ?? functionObject?.arguments;
   return {
-    arguments: parseToolArguments(value.arguments),
-    callId: stringValue(value.call_id),
-    name,
+    argumentsText:
+      typeof argumentsValue === "string" ? argumentsValue : JSON.stringify(argumentsValue ?? {}),
+    callId:
+      stringValue(value?.call_id) ||
+      stringValue(value?.callId) ||
+      stringValue(functionObject?.call_id),
+    itemId: stringValue(value?.id) || stringValue(value?.item_id),
+    name: stringValue(value?.name) || stringValue(functionObject?.name),
+    outputIndex: indexValue(value?.output_index),
   };
 }
 
-function toolCallFromResponse(response: unknown) {
+function toolCallDraftsFromResponse(response: unknown) {
   const responseObject = objectValue(response);
   const output = responseObject?.output;
-  if (!Array.isArray(output)) return null;
+  if (!Array.isArray(output)) return [];
 
+  const drafts: RealtimeToolCallDraft[] = [];
   for (const item of output) {
-    const toolCall = toolCallFromRecord(objectValue(item));
-    if (toolCall) return toolCall;
+    const draft = toolCallDraftFromRecord(objectValue(item));
+    if (draft) drafts.push(draft);
   }
-  return null;
+  return drafts;
 }
 
-function toolCallFromServerEvent(event: ServerEvent) {
-  if (event.type === "response.function_call_arguments.done") {
-    const name = stringValue(event.name);
-    if (!name) return null;
-    return {
-      arguments: parseToolArguments(event.arguments),
-      callId: stringValue(event.call_id),
-      name,
-    };
-  }
+function mergeToolCallDraft(
+  current: RealtimeToolCallDraft,
+  next: Partial<RealtimeToolCallDraft>,
+) {
+  return {
+    argumentsText:
+      next.argumentsText !== undefined ? next.argumentsText : current.argumentsText,
+    callId: next.callId || current.callId,
+    itemId: next.itemId || current.itemId,
+    name: next.name || current.name,
+    outputIndex: next.outputIndex || current.outputIndex,
+  };
+}
 
-  const itemToolCall = toolCallFromRecord(objectValue(event.item));
-  if (itemToolCall) return itemToolCall;
+function completedToolCallFromDraft(draft: RealtimeToolCallDraft) {
+  if (!draft.name) return null;
 
-  return toolCallFromResponse(event.response);
+  return {
+    arguments: parseToolArguments(draft.argumentsText),
+    callId: draft.callId,
+    name: draft.name,
+  };
+}
+
+function contentSummary(content: unknown) {
+  if (!Array.isArray(content)) return "";
+
+  return content
+    .map((part) => {
+      const partObject = objectValue(part);
+      if (!partObject) return "part";
+      const type = stringValue(partObject.type) || "part";
+      const flags = [
+        stringValue(partObject.text) ? "text" : "",
+        stringValue(partObject.transcript) ? "transcript" : "",
+      ].filter(Boolean);
+      return flags.length ? `${type}:${flags.join("+")}` : type;
+    })
+    .join(",");
+}
+
+function itemSummary(item: unknown) {
+  const itemObject = objectValue(item);
+  if (!itemObject) return "";
+
+  const parts = [stringValue(itemObject.type) || "item"];
+  const name = stringValue(itemObject.name);
+  const status = stringValue(itemObject.status);
+  const content = contentSummary(itemObject.content);
+  if (name) parts.push(`name=${name}`);
+  if (status) parts.push(`status=${status}`);
+  if (stringValue(itemObject.call_id)) parts.push("call_id");
+  if (stringValue(itemObject.arguments)) parts.push("arguments");
+  if (content) parts.push(`content=${content}`);
+  return parts.join(":");
+}
+
+function responseSummary(response: unknown) {
+  const responseObject = objectValue(response);
+  if (!responseObject) return "";
+
+  const status = stringValue(responseObject.status);
+  const output = responseObject.output;
+  const outputSummary = Array.isArray(output)
+    ? output.map(itemSummary).filter(Boolean).join(",")
+    : "";
+  const parts = [
+    status ? `status=${status}` : "",
+    outputSummary ? `output=[${outputSummary}]` : "",
+  ].filter(Boolean);
+  return parts.join(":");
+}
+
+function summarizeServerEvent(event: ServerEvent) {
+  const parts = [event.type || "event"];
+  const item = itemSummary(event.item);
+  const response = responseSummary(event.response);
+  if (item) parts.push(`item(${item})`);
+  if (response) parts.push(`response(${response})`);
+  if (stringValue(event.name)) parts.push(`name=${event.name}`);
+  if (stringValue(event.call_id)) parts.push("call_id");
+  if (stringValue(event.item_id)) parts.push("item_id");
+  if (indexValue(event.output_index)) parts.push(`output_index=${event.output_index}`);
+  if (stringValue(event.text)) parts.push("text");
+  if (stringValue(event.transcript)) parts.push("transcript");
+  if (stringValue(event.delta)) parts.push("delta");
+  if (stringValue(event.arguments)) parts.push("arguments");
+  return parts.join(" ");
 }
 
 export class DluRealtimeConnection {
@@ -265,12 +388,20 @@ export class DluRealtimeConnection {
 
       this.activeResponse = {
         done: false,
+        eventSummaries: [],
         onDelta,
         reject,
         resolve,
         text: "",
         timeoutId,
         toolCall: null,
+        toolCallDraft: {
+          argumentsText: "",
+          callId: "",
+          itemId: "",
+          name: "",
+          outputIndex: "",
+        },
       };
 
       try {
@@ -438,6 +569,8 @@ export class DluRealtimeConnection {
     const event = parseServerEvent(messageEvent);
     if (!event) return;
 
+    this.captureEventSummary(event);
+
     const eventType = event.type ?? "";
     if (eventType === "error") {
       const message = event.error?.message || "Realtime API error.";
@@ -467,16 +600,65 @@ export class DluRealtimeConnection {
       return;
     }
 
-    const toolCall = toolCallFromServerEvent(event);
-    if (toolCall && this.activeResponse) {
-      this.activeResponse.toolCall = toolCall;
-      if (eventType === "response.function_call_arguments.done") return;
-    }
+    const toolCall = this.updateToolCallFromEvent(event);
+    if (toolCall && eventType === "response.function_call_arguments.done") return;
 
     if (eventType === "response.done") {
       this.finishActiveResponse(textFromServerEvent(event), toolCall);
     }
   };
+
+  private captureEventSummary(event: ServerEvent) {
+    if (!this.activeResponse) return;
+
+    this.activeResponse.eventSummaries.push(summarizeServerEvent(event));
+    if (this.activeResponse.eventSummaries.length > 40) {
+      this.activeResponse.eventSummaries.shift();
+    }
+  }
+
+  private updateToolCallFromEvent(event: ServerEvent) {
+    const activeResponse = this.activeResponse;
+    if (!activeResponse) return null;
+
+    let draft = activeResponse.toolCallDraft;
+    const itemDraft = toolCallDraftFromRecord(objectValue(event.item));
+    if (itemDraft) {
+      draft = mergeToolCallDraft(draft, {
+        ...itemDraft,
+        outputIndex: itemDraft.outputIndex || indexValue(event.output_index),
+      });
+    }
+
+    if (event.type === "response.function_call_arguments.delta") {
+      draft = mergeToolCallDraft(draft, {
+        argumentsText: `${draft.argumentsText}${event.delta ?? ""}`,
+        callId: stringValue(event.call_id),
+        itemId: stringValue(event.item_id),
+        name: stringValue(event.name),
+        outputIndex: indexValue(event.output_index),
+      });
+    }
+
+    if (event.type === "response.function_call_arguments.done") {
+      draft = mergeToolCallDraft(draft, {
+        argumentsText: stringValue(event.arguments) || draft.argumentsText,
+        callId: stringValue(event.call_id),
+        itemId: stringValue(event.item_id),
+        name: stringValue(event.name),
+        outputIndex: indexValue(event.output_index),
+      });
+    }
+
+    for (const responseDraft of toolCallDraftsFromResponse(event.response)) {
+      draft = mergeToolCallDraft(draft, responseDraft);
+    }
+
+    activeResponse.toolCallDraft = draft;
+    const toolCall = completedToolCallFromDraft(draft);
+    if (toolCall) activeResponse.toolCall = toolCall;
+    return activeResponse.toolCall;
+  }
 
   private appendDelta(delta: string) {
     if (!this.activeResponse || !delta) return;
@@ -503,6 +685,7 @@ export class DluRealtimeConnection {
     window.clearTimeout(activeResponse.timeoutId);
     this.activeResponse = null;
     activeResponse.resolve({
+      eventSummaries: [...activeResponse.eventSummaries],
       text: finalText || activeResponse.text,
       toolCall: toolCall ?? activeResponse.toolCall,
     });

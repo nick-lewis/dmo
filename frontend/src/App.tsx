@@ -4610,7 +4610,16 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
       const finalContent = turnResult.text.trim();
       if (!finalContent && !turnResult.toolCall) {
-        throw new Error("dLU responded with audio but no text transcript.");
+        const recentEvents = turnResult.eventSummaries.slice(-10).join(" | ");
+        console.warn(
+          "Realtime turn ended without transcript or tool call.",
+          turnResult.eventSummaries,
+        );
+        throw new Error(
+          recentEvents
+            ? `dLU responded with audio but no text transcript. Recent Realtime events: ${recentEvents}`
+            : "dLU responded with audio but no text transcript.",
+        );
       }
 
       let nextActiveSession = activeSession;
