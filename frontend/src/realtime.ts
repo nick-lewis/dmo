@@ -1,15 +1,15 @@
 export const realtimeModelOptions = [
   {
     id: "gpt-realtime-mini",
-    label: "Realtime mini",
+    label: "Mini",
   },
   {
     id: "gpt-realtime-1.5",
-    label: "Realtime 1.5",
+    label: "1.5",
   },
   {
     id: "gpt-realtime-2",
-    label: "Realtime 2",
+    label: "2",
   },
 ] as const;
 

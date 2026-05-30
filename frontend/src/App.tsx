@@ -1,8 +1,11 @@
 import {
   type CSSProperties,
+  type Dispatch,
+  type FocusEvent,
   type FormEvent,
   type PointerEvent,
   type ReactNode,
+  type SetStateAction,
   useEffect,
   useRef,
   useState,
@@ -17,9 +20,9 @@ import {
 } from "./realtime";
 
 const leftPanels = [
-  { density: "tall", kind: "controls", label: "Runtime controls" },
+  { density: "tall", kind: "experience", label: "Experience" },
+  { density: "tutor", kind: "tutor", label: "Tutor settings" },
   { density: "compact", kind: "slides", label: "Slide controls" },
-  { density: "compact", kind: "reference", label: "Left panel three" },
   { density: "compact", kind: "checks", label: "Left panel four" },
 ] as const;
 
@@ -32,8 +35,14 @@ const minWorkspaceWidth = 860;
 const maxWorkspaceWidth = 1800;
 const panelLayoutStorageKey = "dlu.panel-layout.v1";
 const slideSettingsStorageKey = "dlu.slide-settings.v1";
+const experienceSelectionStorageKey = "dlu.selected-experience.v1";
+const experienceAutosaveDelayMs = 700;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
+const tutorAvatarOptions = [
+  { label: "dLU right", path: "test-images/dLU-right.png" },
+  { label: "dLU left", path: "test-images/dLU-left.png" },
+] as const;
 
 type ChatMessage = {
   id: string;
@@ -55,6 +64,7 @@ type ApiUser = {
 
 type TutoringSession = {
   id: string;
+  experienceId: string;
   title: string;
   status: "active" | "archived";
   createdAt: string;
@@ -64,6 +74,47 @@ type TutoringSession = {
 type SessionPayload = {
   session: TutoringSession;
   messages: ChatMessage[];
+};
+
+type TutorSettings = {
+  assistantName: string;
+  avatarPath: string;
+  realtimeModel: RealtimeModelId;
+  systemPrompt: string;
+  voice: RealtimeVoiceId;
+  voiceInstructions: string;
+};
+
+type Experience = {
+  id: string;
+  title: string;
+  slug: string;
+  description: string;
+  tutor: TutorSettings;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ExperiencesPayload = {
+  currentExperienceId: string;
+  experiences: Experience[];
+};
+
+type ExperienceForm = {
+  title: string;
+  description: string;
+};
+
+type VoiceSampleStatus = "idle" | "loading" | "playing";
+
+type VoiceSamplePayload = {
+  audioUrl: string;
+  cached: boolean;
+  realtimeModel: RealtimeModelId;
+  script: string;
+  scriptModel: string;
+  ttsModel: string;
+  voice: RealtimeVoiceId;
 };
 
 type StoredPanelLayout = {
@@ -179,6 +230,24 @@ function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => left.sequence - right.sequence);
 }
 
+function experienceRunPath(experienceId: string) {
+  return `/experiences/${encodeURIComponent(experienceId)}/run`;
+}
+
+function experienceEditPath(experienceId: string) {
+  return `/experiences/${encodeURIComponent(experienceId)}/edit`;
+}
+
+function routeExperience(pathname: string) {
+  const match = pathname.match(/^\/experiences\/([^/]+)(?:\/(run|edit))?\/?$/);
+  if (!match) return { experienceId: "", mode: "" };
+
+  return {
+    experienceId: decodeURIComponent(match[1]),
+    mode: match[2] || "edit",
+  };
+}
+
 function storedNumber(value: unknown, min: number, max: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return clamp(value, min, max);
@@ -246,6 +315,30 @@ function writeSlideSettings(settings: SlideSettings) {
   }
 }
 
+function readSelectedExperienceId() {
+  if (typeof window === "undefined") return "";
+
+  try {
+    return window.localStorage.getItem(experienceSelectionStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeSelectedExperienceId(experienceId: string) {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (experienceId) {
+      window.localStorage.setItem(experienceSelectionStorageKey, experienceId);
+    } else {
+      window.localStorage.removeItem(experienceSelectionStorageKey);
+    }
+  } catch {
+    // Ignore storage failures; the backend still chooses a current experience.
+  }
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}) {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
@@ -287,15 +380,917 @@ async function apiFetch<T>(url: string, options: RequestInit = {}) {
 
 function App() {
   const pathname = window.location.pathname;
+  const normalizedPath = pathname.replace(/\/+$/, "") || "/";
+  const experienceRoute = routeExperience(pathname);
 
-  if (pathname === "/" || pathname === "/surfaces/tutoring/panels") {
+  if (normalizedPath === "/" || normalizedPath === "/experiences") {
+    return <ExperienceHome />;
+  }
+
+  if (experienceRoute.experienceId && experienceRoute.mode === "run") {
+    return <PanelStudy initialExperienceId={experienceRoute.experienceId} />;
+  }
+
+  if (experienceRoute.experienceId) {
+    return <ExperienceEditor experienceId={experienceRoute.experienceId} />;
+  }
+
+  if (normalizedPath === "/surfaces/tutoring/panels") {
     return <PanelStudy />;
   }
 
-  return null;
+  return <ExperienceHome />;
 }
 
-function PanelStudy() {
+function ExperienceHome() {
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [experiences, setExperiences] = useState<Experience[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, ExperienceForm>>({});
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const autosaveTimers = useRef<Record<string, number>>({});
+  const autosaveVersions = useRef<Record<string, number>>({});
+
+  function draftFromExperience(experience: Experience): ExperienceForm {
+    return {
+      description: experience.description,
+      title: experience.title,
+    };
+  }
+
+  function draftsFromExperiences(nextExperiences: Experience[]) {
+    return Object.fromEntries(
+      nextExperiences.map((experience) => [
+        experience.id,
+        draftFromExperience(experience),
+      ]),
+    );
+  }
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadExperiences() {
+      setStatus("loading");
+      setError("");
+
+      try {
+        const me = await apiFetch<{ user: ApiUser }>("/api/auth/me/");
+        const payload = await apiFetch<ExperiencesPayload>("/api/experiences/");
+        const savedExperienceId = readSelectedExperienceId();
+        const chosenExperience =
+          payload.experiences.find(
+            (experience) => experience.id === savedExperienceId,
+          ) ??
+          payload.experiences.find(
+            (experience) => experience.id === payload.currentExperienceId,
+          ) ??
+          payload.experiences[0];
+
+        if (!chosenExperience) {
+          throw new Error("Could not load an experience.");
+        }
+
+        if (isCancelled) return;
+
+        setUser(me.user);
+        setExperiences(payload.experiences);
+        setDrafts(draftsFromExperiences(payload.experiences));
+        writeSelectedExperienceId(chosenExperience.id);
+        setStatus("ready");
+      } catch (loadError) {
+        if (isCancelled) return;
+
+        setStatus("error");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load experiences.",
+        );
+      }
+    }
+
+    loadExperiences();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(autosaveTimers.current).forEach((timer) => {
+        window.clearTimeout(timer);
+      });
+    };
+  }, []);
+
+  function hasDraftChanges(experience: Experience, draft: ExperienceForm) {
+    return (
+      draft.title !== experience.title ||
+      draft.description !== experience.description
+    );
+  }
+
+  function clearAutosaveTimer(experienceId: string) {
+    const timer = autosaveTimers.current[experienceId];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete autosaveTimers.current[experienceId];
+    }
+  }
+
+  function nextAutosaveVersion(experienceId: string) {
+    const version = (autosaveVersions.current[experienceId] ?? 0) + 1;
+    autosaveVersions.current[experienceId] = version;
+    return version;
+  }
+
+  async function persistExperienceDraft(
+    experienceId: string,
+    draft: ExperienceForm,
+    version: number,
+  ) {
+    if (!draft.title.trim()) return true;
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${experienceId}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(draft),
+        },
+      );
+
+      if (autosaveVersions.current[experienceId] !== version) return true;
+
+      setExperiences((current) =>
+        current.map((experience) =>
+          experience.id === payload.experience.id ? payload.experience : experience,
+        ),
+      );
+      setDrafts((current) => {
+        const currentDraft = current[payload.experience.id];
+        if (
+          currentDraft &&
+          (currentDraft.title !== draft.title ||
+            currentDraft.description !== draft.description)
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [payload.experience.id]: draftFromExperience(payload.experience),
+        };
+      });
+      return true;
+    } catch (saveError) {
+      if (autosaveVersions.current[experienceId] === version) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "Could not save experience.",
+        );
+      }
+      return false;
+    }
+  }
+
+  function queueExperienceAutosave(experience: Experience, draft: ExperienceForm) {
+    clearAutosaveTimer(experience.id);
+
+    if (!draft.title.trim() || !hasDraftChanges(experience, draft)) return;
+
+    const version = nextAutosaveVersion(experience.id);
+    autosaveTimers.current[experience.id] = window.setTimeout(() => {
+      delete autosaveTimers.current[experience.id];
+      void persistExperienceDraft(experience.id, draft, version);
+    }, experienceAutosaveDelayMs);
+  }
+
+  async function flushExperienceAutosave(experience: Experience) {
+    const draft = drafts[experience.id] ?? draftFromExperience(experience);
+    clearAutosaveTimer(experience.id);
+
+    if (!hasDraftChanges(experience, draft)) return true;
+
+    const version = nextAutosaveVersion(experience.id);
+    return persistExperienceDraft(experience.id, draft, version);
+  }
+
+  async function runExperience(experience: Experience) {
+    const didSave = await flushExperienceAutosave(experience);
+    if (!didSave) return;
+
+    writeSelectedExperienceId(experience.id);
+    window.location.assign(experienceRunPath(experience.id));
+  }
+
+  async function editExperience(experience: Experience) {
+    const didSave = await flushExperienceAutosave(experience);
+    if (!didSave) return;
+
+    writeSelectedExperienceId(experience.id);
+    window.location.assign(experienceEditPath(experience.id));
+  }
+
+  async function deleteExperience(experience: Experience) {
+    const didConfirm = window.confirm(`Delete "${experience.title}"?`);
+    if (!didConfirm) return;
+
+    clearAutosaveTimer(experience.id);
+    setError("");
+
+    try {
+      const payload = await apiFetch<ExperiencesPayload>(
+        `/api/experiences/${experience.id}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      setExperiences(payload.experiences);
+      setDrafts(draftsFromExperiences(payload.experiences));
+      writeSelectedExperienceId(payload.currentExperienceId);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete experience.",
+      );
+    }
+  }
+
+  function updateDraft(
+    experience: Experience,
+    draft: ExperienceForm,
+    field: keyof ExperienceForm,
+    value: string,
+  ) {
+    const nextDraft = {
+      ...draft,
+      [field]: value,
+    };
+
+    setDrafts((current) => ({
+      ...current,
+      [experience.id]: nextDraft,
+    }));
+    queueExperienceAutosave(experience, nextDraft);
+  }
+
+  async function createExperience() {
+    setIsCreating(true);
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>("/api/experiences/", {
+        method: "POST",
+        body: JSON.stringify({
+          description: "",
+          title: "Untitled experience",
+        }),
+      });
+      setExperiences((current) => [payload.experience, ...current]);
+      setDrafts((current) => ({
+        ...current,
+        [payload.experience.id]: draftFromExperience(payload.experience),
+      }));
+      writeSelectedExperienceId(payload.experience.id);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not create experience.",
+      );
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function signOut() {
+    setIsSigningOut(true);
+
+    try {
+      await apiFetch<{ ok: boolean }>("/api/auth/logout/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } finally {
+      window.location.assign("/accounts/login/");
+    }
+  }
+
+  return (
+    <main
+      className="panel-study experience-home-page"
+      data-color-theme="glass-dl"
+      data-font-theme="manrope"
+    >
+      <header className="study-header">
+        <p className="study-kicker">dLU</p>
+        <div className="study-actions">
+          {user ? <span className="study-user">{user.displayName}</span> : null}
+          <button
+            className="header-action secondary"
+            disabled={isSigningOut}
+            onClick={signOut}
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <section className="experience-home">
+        <div className="experience-home-title">
+          <h1>Experiences</h1>
+          <button
+            className="header-action"
+            disabled={isCreating}
+            onClick={createExperience}
+            type="button"
+          >
+            {isCreating ? "Creating..." : "New"}
+          </button>
+        </div>
+
+        {status === "loading" ? (
+          <div className="experience-state">Loading experiences...</div>
+        ) : null}
+        {status === "error" ? (
+          <div className="experience-state error">{error}</div>
+        ) : null}
+
+        <div className="experience-list">
+          {experiences.map((experience) => {
+            const draft = drafts[experience.id] ?? draftFromExperience(experience);
+
+            return (
+              <div
+                className="experience-row"
+                key={experience.id}
+              >
+                <button
+                  aria-label={`Delete ${draft.title || "experience"}`}
+                  className="experience-delete-button"
+                  onClick={() => void deleteExperience(experience)}
+                  title="Delete experience"
+                  type="button"
+                >
+                  <TrashIcon />
+                </button>
+                <div className="experience-row-main">
+                  <input
+                    aria-label="Experience title"
+                    className="experience-title-input"
+                    onChange={(event) =>
+                      updateDraft(
+                        experience,
+                        draft,
+                        "title",
+                        event.target.value,
+                      )
+                    }
+                    type="text"
+                    value={draft.title}
+                  />
+                  <input
+                    aria-label="Experience description"
+                    className="experience-description-input"
+                    onChange={(event) =>
+                      updateDraft(
+                        experience,
+                        draft,
+                        "description",
+                        event.target.value,
+                      )
+                    }
+                    placeholder="---"
+                    type="text"
+                    value={draft.description}
+                  />
+                </div>
+                <div className="experience-row-actions">
+                  <button
+                    className="header-action secondary"
+                    onClick={() => void editExperience(experience)}
+                    type="button"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="header-action"
+                    onClick={() => void runExperience(experience)}
+                    type="button"
+                  >
+                    Run
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ExperienceEditor({ experienceId }: { experienceId: string }) {
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [experience, setExperience] = useState<Experience | null>(null);
+  const [experienceForm, setExperienceForm] = useState<ExperienceForm>({
+    description: "",
+    title: "",
+  });
+  const [tutorForm, setTutorForm] = useState<TutorSettings>({
+    assistantName: "dee-lou",
+    avatarPath: "test-images/dLU-right.png",
+    realtimeModel: "gpt-realtime-mini",
+    systemPrompt: "",
+    voice: "ash",
+    voiceInstructions: "",
+  });
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [isSavingTutor, setIsSavingTutor] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [voiceSampleStatus, setVoiceSampleStatus] =
+    useState<VoiceSampleStatus>("idle");
+  const overviewAutosaveTimer = useRef<number | null>(null);
+  const overviewAutosaveVersion = useRef(0);
+  const tutorAutosaveTimer = useRef<number | null>(null);
+  const tutorAutosaveVersion = useRef(0);
+  const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  function applyExperience(nextExperience: Experience) {
+    setExperience(nextExperience);
+    setExperienceForm({
+      description: nextExperience.description,
+      title: nextExperience.title,
+    });
+    setTutorForm(nextExperience.tutor);
+  }
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadEditor() {
+      setStatus("loading");
+      setError("");
+
+      try {
+        const me = await apiFetch<{ user: ApiUser }>("/api/auth/me/");
+        const payload = await apiFetch<ExperiencesPayload>("/api/experiences/");
+        const nextExperience =
+          payload.experiences.find((candidate) => candidate.id === experienceId) ??
+          null;
+
+        if (!nextExperience) {
+          throw new Error("Experience not found.");
+        }
+
+        if (isCancelled) return;
+
+        setUser(me.user);
+        applyExperience(nextExperience);
+        writeSelectedExperienceId(nextExperience.id);
+        setStatus("ready");
+      } catch (loadError) {
+        if (isCancelled) return;
+
+        setStatus("error");
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load experience.",
+        );
+      }
+    }
+
+    loadEditor();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [experienceId]);
+
+  useEffect(() => {
+    return () => {
+      if (overviewAutosaveTimer.current) {
+        window.clearTimeout(overviewAutosaveTimer.current);
+      }
+      if (tutorAutosaveTimer.current) {
+        window.clearTimeout(tutorAutosaveTimer.current);
+      }
+      voiceSampleAudioRef.current?.pause();
+      voiceSampleAudioRef.current = null;
+    };
+  }, []);
+
+  function hasOverviewChanges(draft: ExperienceForm) {
+    if (!experience) return false;
+
+    return (
+      draft.title !== experience.title ||
+      draft.description !== experience.description
+    );
+  }
+
+  function clearOverviewAutosaveTimer() {
+    if (!overviewAutosaveTimer.current) return;
+    window.clearTimeout(overviewAutosaveTimer.current);
+    overviewAutosaveTimer.current = null;
+  }
+
+  function nextOverviewAutosaveVersion() {
+    overviewAutosaveVersion.current += 1;
+    return overviewAutosaveVersion.current;
+  }
+
+  async function persistOverviewDraft(draft: ExperienceForm, version: number) {
+    if (!experience || !draft.title.trim()) return true;
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${experience.id}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(draft),
+        },
+      );
+
+      if (overviewAutosaveVersion.current !== version) return true;
+
+      setExperience(payload.experience);
+      setExperienceForm((current) => {
+        if (
+          current.title !== draft.title ||
+          current.description !== draft.description
+        ) {
+          return current;
+        }
+
+        return {
+          description: payload.experience.description,
+          title: payload.experience.title,
+        };
+      });
+      return true;
+    } catch (saveError) {
+      if (overviewAutosaveVersion.current === version) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "Could not save experience.",
+        );
+      }
+      return false;
+    }
+  }
+
+  function queueOverviewAutosave(draft: ExperienceForm) {
+    clearOverviewAutosaveTimer();
+
+    if (!draft.title.trim() || !hasOverviewChanges(draft)) return;
+
+    const version = nextOverviewAutosaveVersion();
+    overviewAutosaveTimer.current = window.setTimeout(() => {
+      overviewAutosaveTimer.current = null;
+      void persistOverviewDraft(draft, version);
+    }, experienceAutosaveDelayMs);
+  }
+
+  async function flushOverviewAutosave() {
+    clearOverviewAutosaveTimer();
+
+    if (!hasOverviewChanges(experienceForm)) return true;
+
+    const version = nextOverviewAutosaveVersion();
+    return persistOverviewDraft(experienceForm, version);
+  }
+
+  function updateOverviewDraft(field: keyof ExperienceForm, value: string) {
+    const nextDraft = {
+      ...experienceForm,
+      [field]: value,
+    };
+
+    setExperienceForm(nextDraft);
+    queueOverviewAutosave(nextDraft);
+  }
+
+  function hasTutorChanges(draft: TutorSettings) {
+    if (!experience) return false;
+
+    return (
+      draft.assistantName !== experience.tutor.assistantName ||
+      draft.avatarPath !== experience.tutor.avatarPath ||
+      draft.realtimeModel !== experience.tutor.realtimeModel ||
+      draft.systemPrompt !== experience.tutor.systemPrompt ||
+      draft.voice !== experience.tutor.voice ||
+      draft.voiceInstructions !== experience.tutor.voiceInstructions
+    );
+  }
+
+  function clearTutorAutosaveTimer() {
+    if (!tutorAutosaveTimer.current) return;
+    window.clearTimeout(tutorAutosaveTimer.current);
+    tutorAutosaveTimer.current = null;
+  }
+
+  function nextTutorAutosaveVersion() {
+    tutorAutosaveVersion.current += 1;
+    return tutorAutosaveVersion.current;
+  }
+
+  async function persistTutorDraft(draft: TutorSettings, version: number) {
+    if (!experience || !draft.assistantName.trim()) return true;
+    setIsSavingTutor(true);
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${experience.id}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ tutor: draft }),
+        },
+      );
+
+      if (tutorAutosaveVersion.current !== version) return true;
+
+      setExperience(payload.experience);
+      setTutorForm((current) => {
+        if (
+          current.assistantName !== draft.assistantName ||
+          current.avatarPath !== draft.avatarPath ||
+          current.realtimeModel !== draft.realtimeModel ||
+          current.systemPrompt !== draft.systemPrompt ||
+          current.voice !== draft.voice ||
+          current.voiceInstructions !== draft.voiceInstructions
+        ) {
+          return current;
+        }
+
+        return payload.experience.tutor;
+      });
+      return true;
+    } catch (saveError) {
+      if (tutorAutosaveVersion.current === version) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "Could not save tutor settings.",
+        );
+      }
+      return false;
+    } finally {
+      setIsSavingTutor(false);
+    }
+  }
+
+  function queueTutorAutosave(draft: TutorSettings) {
+    clearTutorAutosaveTimer();
+
+    if (!draft.assistantName.trim() || !hasTutorChanges(draft)) return;
+
+    const version = nextTutorAutosaveVersion();
+    tutorAutosaveTimer.current = window.setTimeout(() => {
+      tutorAutosaveTimer.current = null;
+      void persistTutorDraft(draft, version);
+    }, experienceAutosaveDelayMs);
+  }
+
+  async function flushTutorAutosave() {
+    clearTutorAutosaveTimer();
+
+    if (!hasTutorChanges(tutorForm)) return true;
+
+    const version = nextTutorAutosaveVersion();
+    return persistTutorDraft(tutorForm, version);
+  }
+
+  function updateTutorDraft<K extends keyof TutorSettings>(
+    field: K,
+    value: TutorSettings[K],
+  ) {
+    const nextDraft = {
+      ...tutorForm,
+      [field]: value,
+    };
+
+    setTutorForm(nextDraft);
+    queueTutorAutosave(nextDraft);
+  }
+
+  async function flushEditorAutosave() {
+    const didSaveOverview = await flushOverviewAutosave();
+    if (!didSaveOverview) return false;
+
+    return flushTutorAutosave();
+  }
+
+  async function saveTutorSettings() {
+    await flushTutorAutosave();
+  }
+
+  async function playVoiceSample() {
+    if (!experience) return;
+
+    if (voiceSampleStatus !== "idle") {
+      voiceSampleAudioRef.current?.pause();
+      voiceSampleAudioRef.current = null;
+      setVoiceSampleStatus("idle");
+      return;
+    }
+
+    const sampleTutor = tutorForm;
+    setVoiceSampleStatus("loading");
+    setError("");
+
+    try {
+      voiceSampleAudioRef.current?.pause();
+      voiceSampleAudioRef.current = null;
+
+      const payload = await apiFetch<VoiceSamplePayload>(
+        `/api/experiences/${experience.id}/voice-sample/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            model: sampleTutor.realtimeModel,
+            tutor: sampleTutor,
+            voice: sampleTutor.voice,
+          }),
+        },
+      );
+
+      const audio = new Audio(payload.audioUrl);
+      voiceSampleAudioRef.current = audio;
+      setVoiceSampleStatus("playing");
+      audio.onended = () => {
+        if (voiceSampleAudioRef.current === audio) {
+          voiceSampleAudioRef.current = null;
+          setVoiceSampleStatus("idle");
+        }
+      };
+      audio.onerror = () => {
+        if (voiceSampleAudioRef.current === audio) {
+          voiceSampleAudioRef.current = null;
+          setVoiceSampleStatus("idle");
+          setError("Could not play the cached voice sample.");
+        }
+      };
+      await audio.play();
+    } catch (sampleError) {
+      const message =
+        sampleError instanceof Error ? sampleError.message : "Could not play voice sample.";
+      setError(message);
+      voiceSampleAudioRef.current = null;
+      setVoiceSampleStatus("idle");
+    }
+  }
+
+  async function runExperience() {
+    if (!experience) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    writeSelectedExperienceId(experience.id);
+    window.location.assign(experienceRunPath(experience.id));
+  }
+
+  async function returnToExperiences() {
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    window.location.assign("/");
+  }
+
+  async function signOut() {
+    await flushEditorAutosave();
+    setIsSigningOut(true);
+
+    try {
+      await apiFetch<{ ok: boolean }>("/api/auth/logout/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } finally {
+      window.location.assign("/accounts/login/");
+    }
+  }
+
+  return (
+    <main
+      className="panel-study experience-editor-page"
+      data-color-theme="glass-dl"
+      data-font-theme="manrope"
+    >
+      <header className="study-header">
+        <div className="study-actions">
+          <button
+            className="header-action secondary"
+            onClick={() => void returnToExperiences()}
+            type="button"
+          >
+            Experiences
+          </button>
+          {experience ? <p className="study-kicker">{experienceForm.title}</p> : null}
+        </div>
+        <div className="study-actions">
+          {user ? <span className="study-user">{user.displayName}</span> : null}
+          <button
+            className="header-action"
+            disabled={!experience}
+            onClick={runExperience}
+            type="button"
+          >
+            Run
+          </button>
+          <button
+            className="header-action secondary"
+            disabled={isSigningOut}
+            onClick={signOut}
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <section className="experience-editor">
+        {status === "loading" ? (
+          <div className="experience-state">Loading experience...</div>
+        ) : null}
+        {status === "error" ? (
+          <div className="experience-state error">{error}</div>
+        ) : null}
+
+        {experience ? (
+          <>
+            <section className="editor-section">
+              <div className="overview-editor">
+                <input
+                  aria-label="Experience title"
+                  className="overview-title-text"
+                  onChange={(event) =>
+                    updateOverviewDraft("title", event.target.value)
+                  }
+                  type="text"
+                  value={experienceForm.title}
+                />
+                <textarea
+                  aria-label="Experience description"
+                  className="overview-description-text"
+                  onChange={(event) =>
+                    updateOverviewDraft("description", event.target.value)
+                  }
+                  placeholder="---"
+                  value={experienceForm.description}
+                />
+              </div>
+            </section>
+
+            <section className="editor-section tutor-editor-section">
+              <TutorControls
+                avatarUrl={publicAsset(tutorForm.avatarPath)}
+                error={error}
+                isSaving={isSavingTutor}
+                onAvatarPathChange={(avatarPath) =>
+                  updateTutorDraft("avatarPath", avatarPath)
+                }
+                onModelChange={(realtimeModel) =>
+                  updateTutorDraft("realtimeModel", realtimeModel)
+                }
+                onNameChange={(assistantName) =>
+                  updateTutorDraft("assistantName", assistantName)
+                }
+                onPlaySample={playVoiceSample}
+                onSave={saveTutorSettings}
+                onVoiceChange={(voice) => updateTutorDraft("voice", voice)}
+                onVoiceInstructionsChange={(voiceInstructions) =>
+                  updateTutorDraft("voiceInstructions", voiceInstructions)
+                }
+                realtimeStatus="idle"
+                sampleStatus={voiceSampleStatus}
+                showSaveAction={false}
+                tutor={tutorForm}
+              />
+            </section>
+          </>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string }) {
   const drawerResizerWidth = 12;
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
@@ -320,11 +1315,25 @@ function PanelStudy() {
     initialPanelLayout.current.lowerHeight ?? defaultLowerPanelHeight,
   );
   const [user, setUser] = useState<ApiUser | null>(null);
+  const [experiences, setExperiences] = useState<Experience[]>([]);
+  const [selectedExperienceId, setSelectedExperienceId] = useState("");
+  const [experienceForm, setExperienceForm] = useState<ExperienceForm>({
+    description: "",
+    title: "",
+  });
+  const [tutorForm, setTutorForm] = useState<TutorSettings>({
+    assistantName: "dee-lou",
+    avatarPath: "test-images/dLU-right.png",
+    realtimeModel: "gpt-realtime-mini",
+    systemPrompt: "",
+    voice: "ash",
+    voiceInstructions: "",
+  });
   const [session, setSession] = useState<TutoringSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedModel, setSelectedModel] =
     useState<RealtimeModelId>("gpt-realtime-mini");
-  const [selectedVoice, setSelectedVoice] = useState<RealtimeVoiceId>("marin");
+  const [selectedVoice, setSelectedVoice] = useState<RealtimeVoiceId>("ash");
   const [slideDeckUrl, setSlideDeckUrl] = useState(
     initialSlideSettings.current.deckUrl,
   );
@@ -339,7 +1348,11 @@ function PanelStudy() {
     "loading",
   );
   const [chatError, setChatError] = useState("");
+  const [experienceError, setExperienceError] = useState("");
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [isCreatingExperience, setIsCreatingExperience] = useState(false);
+  const [isSavingExperience, setIsSavingExperience] = useState(false);
+  const [isSavingTutor, setIsSavingTutor] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [turnAnchorMessageId, setTurnAnchorMessageId] = useState<string | null>(
@@ -349,6 +1362,8 @@ function PanelStudy() {
     "--left-width": `${leftWidth}px`,
     "--workspace-width": `${workspaceWidth}px`,
   } as CSSProperties;
+  const selectedExperience =
+    experiences.find((experience) => experience.id === selectedExperienceId) ?? null;
 
   function getWorkspaceWidthRange() {
     const shell = shellRef.current;
@@ -417,6 +1432,27 @@ function PanelStudy() {
     setLeftWidth(nextWidth);
   }
 
+  function applySelectedExperience(experience: Experience) {
+    setSelectedExperienceId(experience.id);
+    setExperienceForm({
+      description: experience.description,
+      title: experience.title,
+    });
+    setTutorForm(experience.tutor);
+    setSelectedModel(experience.tutor.realtimeModel);
+    setSelectedVoice(experience.tutor.voice);
+  }
+
+  async function loadCurrentSessionForExperience(experienceId: string) {
+    const payload = await apiFetch<SessionPayload>(
+      `/api/sessions/current/?experienceId=${encodeURIComponent(experienceId)}`,
+    );
+    setSession(payload.session);
+    setMessages(payload.messages);
+    setTurnAnchorMessageId(null);
+    setChatStatus("ready");
+  }
+
   useEffect(() => {
     setDefaultToolWidth();
     window.addEventListener("resize", setDefaultToolWidth);
@@ -435,6 +1471,10 @@ function PanelStudy() {
   }, [slideDeckUrl, slideRef]);
 
   useEffect(() => {
+    writeSelectedExperienceId(selectedExperienceId);
+  }, [selectedExperienceId]);
+
+  useEffect(() => {
     setResolvedSlide(null);
     setSlideError("");
     setSlideStatus("empty");
@@ -443,17 +1483,46 @@ function PanelStudy() {
   useEffect(() => {
     let isCancelled = false;
 
-    async function loadSession() {
+    async function loadWorkspace() {
       setChatStatus("loading");
       setChatError("");
+      setExperienceError("");
 
       try {
         const me = await apiFetch<{ user: ApiUser }>("/api/auth/me/");
-        const payload = await apiFetch<SessionPayload>("/api/sessions/current/");
+        const experiencePayload = await apiFetch<ExperiencesPayload>(
+          "/api/experiences/",
+        );
+
+        const savedExperienceId = readSelectedExperienceId();
+        const chosenExperience =
+          experiencePayload.experiences.find(
+            (experience) => experience.id === initialExperienceId,
+          ) ??
+          experiencePayload.experiences.find(
+            (experience) => experience.id === savedExperienceId,
+          ) ??
+          experiencePayload.experiences.find(
+            (experience) =>
+              experience.id === experiencePayload.currentExperienceId,
+          ) ??
+          experiencePayload.experiences[0];
+
+        if (!chosenExperience) {
+          throw new Error("Could not load an experience.");
+        }
+
+        const payload = await apiFetch<SessionPayload>(
+          `/api/sessions/current/?experienceId=${encodeURIComponent(
+            chosenExperience.id,
+          )}`,
+        );
 
         if (isCancelled) return;
 
         setUser(me.user);
+        setExperiences(experiencePayload.experiences);
+        applySelectedExperience(chosenExperience);
         setSession(payload.session);
         setMessages(payload.messages);
         setTurnAnchorMessageId(null);
@@ -462,18 +1531,19 @@ function PanelStudy() {
         if (isCancelled) return;
 
         setChatStatus("error");
-        setChatError(
-          error instanceof Error ? error.message : "Could not load session.",
-        );
+        const detail =
+          error instanceof Error ? error.message : "Could not load session.";
+        setChatError(detail);
+        setExperienceError(detail);
       }
     }
 
-    loadSession();
+    loadWorkspace();
 
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [initialExperienceId]);
 
   useEffect(() => {
     return () => {
@@ -674,6 +1744,127 @@ function PanelStudy() {
     setSlideStatus("empty");
   }
 
+  async function selectExperience(experienceId: string) {
+    const nextExperience =
+      experiences.find((experience) => experience.id === experienceId) ?? null;
+    if (!nextExperience || experienceId === selectedExperienceId) return;
+
+    setChatStatus("loading");
+    setChatError("");
+    setExperienceError("");
+    realtimeConnectionRef.current?.close();
+    realtimeConnectionRef.current = null;
+
+    try {
+      applySelectedExperience(nextExperience);
+      if (routeExperience(window.location.pathname).mode === "run") {
+        window.history.replaceState(
+          null,
+          "",
+          experienceRunPath(nextExperience.id),
+        );
+      }
+      await loadCurrentSessionForExperience(nextExperience.id);
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "Could not switch experience.";
+      setChatStatus("error");
+      setChatError(detail);
+      setExperienceError(detail);
+    }
+  }
+
+  async function createExperience() {
+    setIsCreatingExperience(true);
+    setExperienceError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>("/api/experiences/", {
+        method: "POST",
+        body: JSON.stringify({
+          description: "",
+          title: "Untitled experience",
+        }),
+      });
+      setExperiences((current) => [payload.experience, ...current]);
+      applySelectedExperience(payload.experience);
+      if (routeExperience(window.location.pathname).mode === "run") {
+        window.history.replaceState(
+          null,
+          "",
+          experienceRunPath(payload.experience.id),
+        );
+      }
+      await loadCurrentSessionForExperience(payload.experience.id);
+    } catch (error) {
+      setExperienceError(
+        error instanceof Error ? error.message : "Could not create experience.",
+      );
+    } finally {
+      setIsCreatingExperience(false);
+    }
+  }
+
+  async function saveExperienceDetails() {
+    if (!selectedExperience) return;
+
+    setIsSavingExperience(true);
+    setExperienceError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${selectedExperience.id}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(experienceForm),
+        },
+      );
+      setExperiences((current) =>
+        current.map((experience) =>
+          experience.id === payload.experience.id ? payload.experience : experience,
+        ),
+      );
+      applySelectedExperience(payload.experience);
+    } catch (error) {
+      setExperienceError(
+        error instanceof Error ? error.message : "Could not save experience.",
+      );
+    } finally {
+      setIsSavingExperience(false);
+    }
+  }
+
+  async function saveTutorSettings() {
+    if (!selectedExperience) return;
+
+    setIsSavingTutor(true);
+    setExperienceError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${selectedExperience.id}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ tutor: tutorForm }),
+        },
+      );
+      setExperiences((current) =>
+        current.map((experience) =>
+          experience.id === payload.experience.id ? payload.experience : experience,
+        ),
+      );
+      applySelectedExperience(payload.experience);
+      realtimeConnectionRef.current?.close();
+      realtimeConnectionRef.current = null;
+    } catch (error) {
+      setExperienceError(
+        error instanceof Error ? error.message : "Could not save tutor settings.",
+      );
+    } finally {
+      setIsSavingTutor(false);
+    }
+  }
+
   async function createNewSession() {
     setIsCreatingSession(true);
     setChatError("");
@@ -681,7 +1872,7 @@ function PanelStudy() {
     try {
       const payload = await apiFetch<SessionPayload>("/api/sessions/", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ experienceId: selectedExperienceId }),
       });
       setSession(payload.session);
       setMessages(payload.messages);
@@ -881,7 +2072,18 @@ function PanelStudy() {
       data-font-theme="manrope"
     >
       <header className="study-header">
-        <p className="study-kicker">Tutoring workspace</p>
+        <p className="study-kicker">
+          {selectedExperience?.title || "Tutoring workspace"}
+        </p>
+        <div className="study-actions">
+          <button
+            className="header-action secondary"
+            onClick={() => window.location.assign("/")}
+            type="button"
+          >
+            Experiences
+          </button>
+        </div>
       </header>
 
       <section
@@ -915,18 +2117,22 @@ function PanelStudy() {
                 key={panel.label}
               >
                 <LeftPanelContent
-                  controls={{
+                  experience={{
                     chatStatus,
+                    error: experienceError,
+                    experienceForm,
+                    experiences,
                     isCreatingSession,
-                    isSendingMessage,
+                    isCreatingExperience,
+                    isSavingExperience,
                     isSigningOut,
+                    onCreateExperience: createExperience,
                     onCreateNewSession: createNewSession,
-                    onModelChange: setSelectedModel,
+                    onExperienceFormChange: setExperienceForm,
+                    onSaveExperience: saveExperienceDetails,
+                    onSelectExperience: selectExperience,
                     onSignOut: signOut,
-                    onVoiceChange: setSelectedVoice,
-                    realtimeStatus,
-                    selectedModel,
-                    selectedVoice,
+                    selectedExperienceId,
                     user,
                   }}
                   kind={panel.kind}
@@ -942,6 +2148,43 @@ function PanelStudy() {
                     resolvedSlide,
                     slideRef,
                     status: slideStatus,
+                  }}
+                  tutor={{
+                    avatarUrl: publicAsset(tutorForm.avatarPath),
+                    error: experienceError,
+                    isSaving: isSavingTutor,
+                    onAvatarPathChange: (avatarPath) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        avatarPath,
+                      })),
+                    onModelChange: (model) => {
+                      setTutorForm((current) => ({
+                        ...current,
+                        realtimeModel: model,
+                      }));
+                      setSelectedModel(model);
+                    },
+                    onNameChange: (assistantName) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        assistantName,
+                      })),
+                    onSave: saveTutorSettings,
+                    onVoiceChange: (voice) => {
+                      setTutorForm((current) => ({
+                        ...current,
+                        voice,
+                      }));
+                      setSelectedVoice(voice);
+                    },
+                    onVoiceInstructionsChange: (voiceInstructions) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        voiceInstructions,
+                      })),
+                    realtimeStatus,
+                    tutor: tutorForm,
                   }}
                 />
               </PanelWindow>
@@ -993,6 +2236,8 @@ function PanelStudy() {
                 status={chatStatus}
                 turnAnchorMessageId={turnAnchorMessageId}
                 user={user}
+                assistantName={tutorForm.assistantName}
+                avatarPath={tutorForm.avatarPath}
               />
             </PanelWindow>
           </section>
@@ -1003,7 +2248,7 @@ function PanelStudy() {
 }
 
 type PanelWindowProps = {
-  density: "compact" | "tall" | "main" | "lower";
+  density: "compact" | "tall" | "tutor" | "main" | "lower";
   ariaLabel: string;
   children: ReactNode;
   style?: CSSProperties;
@@ -1019,19 +2264,40 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
 
 type LeftPanelKind = (typeof leftPanels)[number]["kind"];
 
-type RuntimeControlsProps = {
+type ExperienceControlsProps = {
   chatStatus: "loading" | "ready" | "error";
+  error: string;
+  experienceForm: ExperienceForm;
+  experiences: Experience[];
+  isCreatingExperience: boolean;
   isCreatingSession: boolean;
-  isSendingMessage: boolean;
+  isSavingExperience: boolean;
   isSigningOut: boolean;
+  onCreateExperience: () => Promise<void>;
   onCreateNewSession: () => Promise<void>;
-  onModelChange: (model: RealtimeModelId) => void;
+  onExperienceFormChange: Dispatch<SetStateAction<ExperienceForm>>;
+  onSaveExperience: () => Promise<void>;
+  onSelectExperience: (experienceId: string) => Promise<void>;
   onSignOut: () => Promise<void>;
-  onVoiceChange: (voice: RealtimeVoiceId) => void;
-  realtimeStatus: RealtimeStatus;
-  selectedModel: RealtimeModelId;
-  selectedVoice: RealtimeVoiceId;
+  selectedExperienceId: string;
   user: ApiUser | null;
+};
+
+type TutorControlsProps = {
+  avatarUrl: string;
+  error: string;
+  isSaving: boolean;
+  onAvatarPathChange: (avatarPath: string) => void;
+  onModelChange: (model: RealtimeModelId) => void;
+  onNameChange: (assistantName: string) => void;
+  onPlaySample?: () => Promise<void> | void;
+  onSave: () => Promise<void>;
+  onVoiceChange: (voice: RealtimeVoiceId) => void;
+  onVoiceInstructionsChange: (voiceInstructions: string) => void;
+  realtimeStatus: RealtimeStatus;
+  sampleStatus?: VoiceSampleStatus;
+  showSaveAction?: boolean;
+  tutor: TutorSettings;
 };
 
 type SlideControlsProps = {
@@ -1049,34 +2315,26 @@ type SlideControlsProps = {
 };
 
 function LeftPanelContent({
-  controls,
+  experience,
   kind,
   slides,
+  tutor,
 }: {
-  controls: RuntimeControlsProps;
+  experience: ExperienceControlsProps;
   kind: LeftPanelKind;
   slides: SlideControlsProps;
+  tutor: TutorControlsProps;
 }) {
-  if (kind === "controls") {
-    return <RuntimeControls {...controls} />;
+  if (kind === "experience") {
+    return <ExperienceControls {...experience} />;
+  }
+
+  if (kind === "tutor") {
+    return <TutorControls {...tutor} />;
   }
 
   if (kind === "slides") {
     return <SlideControls {...slides} />;
-  }
-
-  if (kind === "reference") {
-    return (
-      <div className="text-stack">
-        <p>
-          Ask for one observable step before adding explanation. Keep the move short
-          enough that the student can answer without scrolling.
-        </p>
-        <p className="muted-copy">
-          Use examples only after the student commits to a first operation.
-        </p>
-      </div>
-    );
   }
 
   if (kind === "checks") {
@@ -1115,73 +2373,120 @@ function LeftPanelContent({
   );
 }
 
-function RuntimeControls({
+function ExperienceControls({
   chatStatus,
+  error,
+  experienceForm,
+  experiences,
+  isCreatingExperience,
   isCreatingSession,
-  isSendingMessage,
+  isSavingExperience,
   isSigningOut,
+  onCreateExperience,
   onCreateNewSession,
-  onModelChange,
+  onExperienceFormChange,
+  onSaveExperience,
+  onSelectExperience,
   onSignOut,
-  onVoiceChange,
-  realtimeStatus,
-  selectedModel,
-  selectedVoice,
+  selectedExperienceId,
   user,
-}: RuntimeControlsProps) {
-  const isControlDisabled = chatStatus === "loading" || isSendingMessage;
+}: ExperienceControlsProps) {
+  const isLoading = chatStatus === "loading";
+  const statusLabel =
+    chatStatus === "loading"
+      ? "Loading"
+      : chatStatus === "error"
+        ? "Error"
+        : "Ready";
 
   return (
-    <div className="runtime-controls">
+    <form
+      className="experience-controls"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!isSavingExperience) onSaveExperience();
+      }}
+    >
       <div className="runtime-control-header">
-        <span>Controls</span>
-        <strong className={`voice-status voice-status-${realtimeStatus}`}>
-          {realtimeStatusLabels[realtimeStatus]}
+        <span>Experience</span>
+        <strong className={`slide-status ${chatStatus}`}>
+          {statusLabel}
         </strong>
       </div>
 
       <label className="control-field">
-        <span>Model</span>
+        <span>Choose</span>
         <select
-          disabled={isControlDisabled}
-          onChange={(event) =>
-            onModelChange(event.target.value as RealtimeModelId)
-          }
-          value={selectedModel}
+          disabled={isLoading || experiences.length === 0}
+          onChange={(event) => onSelectExperience(event.target.value)}
+          value={selectedExperienceId}
         >
-          {realtimeModelOptions.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
+          {experiences.map((experience) => (
+            <option key={experience.id} value={experience.id}>
+              {experience.title}
             </option>
           ))}
         </select>
       </label>
 
       <label className="control-field">
-        <span>Voice</span>
-        <select
-          disabled={isControlDisabled}
+        <span>Name</span>
+        <input
+          disabled={isLoading}
           onChange={(event) =>
-            onVoiceChange(event.target.value as RealtimeVoiceId)
+            onExperienceFormChange((current) => ({
+              ...current,
+              title: event.target.value,
+            }))
           }
-          value={selectedVoice}
-        >
-          {realtimeVoiceOptions.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          placeholder="Experience name"
+          type="text"
+          value={experienceForm.title}
+        />
+      </label>
+
+      <label className="control-field">
+        <span>Description</span>
+        <textarea
+          className="experience-description"
+          disabled={isLoading}
+          onChange={(event) =>
+            onExperienceFormChange((current) => ({
+              ...current,
+              description: event.target.value,
+            }))
+          }
+          placeholder="What this experience is for..."
+          value={experienceForm.description}
+        />
       </label>
 
       <div className="control-actions">
         <button
           className="header-action"
-          disabled={chatStatus === "loading" || isCreatingSession || isSendingMessage}
+          disabled={isLoading || isSavingExperience || !experienceForm.title.trim()}
+          type="submit"
+        >
+          {isSavingExperience ? "Saving..." : "Save"}
+        </button>
+        <button
+          className="header-action secondary"
+          disabled={isCreatingExperience}
+          onClick={onCreateExperience}
+          type="button"
+        >
+          {isCreatingExperience ? "Creating..." : "New"}
+        </button>
+      </div>
+
+      <div className="control-actions">
+        <button
+          className="header-action secondary"
+          disabled={isLoading || isCreatingSession}
           onClick={onCreateNewSession}
           type="button"
         >
-          {isCreatingSession ? "Creating..." : "New session"}
+          {isCreatingSession ? "Creating..." : "New chat"}
         </button>
         <button
           className="header-action secondary"
@@ -1194,7 +2499,186 @@ function RuntimeControls({
       </div>
 
       {user ? <p className="control-user">{user.displayName}</p> : null}
-    </div>
+      {error ? <p className="control-error">{error}</p> : null}
+    </form>
+  );
+}
+
+function TutorControls({
+  avatarUrl,
+  error,
+  isSaving,
+  onAvatarPathChange,
+  onModelChange,
+  onNameChange,
+  onPlaySample,
+  onSave,
+  onVoiceChange,
+  onVoiceInstructionsChange,
+  realtimeStatus,
+  sampleStatus = "idle",
+  showSaveAction = true,
+  tutor,
+}: TutorControlsProps) {
+  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState(false);
+  const avatarChoices = tutorAvatarOptions.some(
+    (option) => option.path === tutor.avatarPath,
+  )
+    ? tutorAvatarOptions
+    : [{ label: "Current image", path: tutor.avatarPath }, ...tutorAvatarOptions];
+  const sampleActionLabel =
+    sampleStatus === "playing"
+      ? "Stop voice sample"
+      : sampleStatus === "loading"
+        ? "Loading voice sample"
+        : "Play voice sample";
+  const closeAvatarPickerOnBlur = (event: FocusEvent<HTMLDivElement>) => {
+    const nextFocus = event.relatedTarget as Node | null;
+    if (!nextFocus || !event.currentTarget.contains(nextFocus)) {
+      setIsAvatarPickerOpen(false);
+    }
+  };
+
+  return (
+    <form
+      className="tutor-controls"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!isSaving) onSave();
+      }}
+    >
+      <div className="runtime-control-header">
+        <span>Tutor</span>
+        <strong className={`voice-status voice-status-${realtimeStatus}`}>
+          {realtimeStatusLabels[realtimeStatus]}
+        </strong>
+      </div>
+
+      <div className="tutor-compact-grid">
+        <div
+          className="tutor-avatar-row"
+          onBlur={closeAvatarPickerOnBlur}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setIsAvatarPickerOpen(false);
+            }
+          }}
+        >
+          <button
+            aria-expanded={isAvatarPickerOpen}
+            aria-label="Change tutor image"
+            className="tutor-avatar-button"
+            onClick={() => setIsAvatarPickerOpen((isOpen) => !isOpen)}
+            title="Change tutor image"
+            type="button"
+          >
+            <img alt="" className="tutor-avatar-preview" src={avatarUrl} />
+          </button>
+
+          {isAvatarPickerOpen ? (
+            <div aria-label="Tutor image choices" className="tutor-avatar-popover">
+              {avatarChoices.map((option) => {
+                const isSelected = option.path === tutor.avatarPath;
+
+                return (
+                  <button
+                    aria-label={`Use ${option.label}`}
+                    aria-pressed={isSelected}
+                    className={`tutor-avatar-option${isSelected ? " selected" : ""}`}
+                    key={option.path}
+                    onClick={() => {
+                      onAvatarPathChange(option.path);
+                      setIsAvatarPickerOpen(false);
+                    }}
+                    title={option.label}
+                    type="button"
+                  >
+                    <img alt="" src={publicAsset(option.path)} />
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {onPlaySample ? (
+            <button
+              aria-label={sampleActionLabel}
+              className="header-action secondary tutor-sample-button"
+              disabled={sampleStatus === "loading"}
+              onClick={() => void onPlaySample()}
+              title={sampleActionLabel}
+              type="button"
+            >
+              <PlayIcon />
+            </button>
+          ) : null}
+        </div>
+
+        <label className="control-field">
+          <span>Name</span>
+          <input
+            onChange={(event) => onNameChange(event.target.value)}
+            placeholder="dee-lou"
+            type="text"
+            value={tutor.assistantName}
+          />
+        </label>
+
+        <label className="control-field">
+          <span>Model</span>
+          <select
+            onChange={(event) =>
+              onModelChange(event.target.value as RealtimeModelId)
+            }
+            value={tutor.realtimeModel}
+          >
+            {realtimeModelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="control-field">
+          <span>Voice</span>
+          <select
+            onChange={(event) =>
+              onVoiceChange(event.target.value as RealtimeVoiceId)
+            }
+            value={tutor.voice}
+          >
+            {realtimeVoiceOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="tutor-prompt-grid">
+          <label className="control-field">
+            <span>Voice and personality</span>
+            <textarea
+              className="prompt-textarea compact"
+              onChange={(event) => onVoiceInstructionsChange(event.target.value)}
+              placeholder="How dee-lou should sound..."
+              value={tutor.voiceInstructions}
+            />
+          </label>
+        </div>
+      </div>
+
+      {showSaveAction ? (
+        <div className="control-actions single-action">
+          <button className="header-action" disabled={isSaving} type="submit">
+            {isSaving ? "Saving..." : "Save tutor"}
+          </button>
+        </div>
+      ) : null}
+
+      {error ? <p className="control-error">{error}</p> : null}
+    </form>
   );
 }
 
@@ -1331,6 +2815,8 @@ function MainPanelContent({
 }
 
 type ChatPanelContentProps = {
+  assistantName: string;
+  avatarPath: string;
   error: string;
   isSending: boolean;
   messages: ChatMessage[];
@@ -1343,6 +2829,8 @@ type ChatPanelContentProps = {
 };
 
 function ChatPanelContent({
+  assistantName,
+  avatarPath,
   error,
   isSending,
   messages,
@@ -1356,6 +2844,8 @@ function ChatPanelContent({
   const [draft, setDraft] = useState("");
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
+  const assistantDisplayName = assistantName.trim() || "dee-lou";
+  const assistantAvatarPath = avatarPath.trim() || "test-images/dLU-right.png";
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -1424,7 +2914,7 @@ function ChatPanelContent({
               message.role === "user"
                 ? user?.displayName || "You"
                 : message.role === "assistant"
-                  ? "dLU"
+                  ? assistantDisplayName
                   : "System";
             const body =
               message.content ||
@@ -1451,10 +2941,10 @@ function ChatPanelContent({
 
         <form className="composer-row" onSubmit={sendMessage}>
           <input
-            aria-label="Message dLU"
+            aria-label={`Message ${assistantDisplayName}`}
             disabled={isInputDisabled}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Message dLU..."
+            placeholder={`Message ${assistantDisplayName}...`}
             type="text"
             value={draft}
           />
@@ -1470,9 +2960,9 @@ function ChatPanelContent({
       </div>
 
       <img
-        alt="dLU"
+        alt={assistantDisplayName}
         className="chat-dlu-figure"
-        src={publicAsset("test-images/dLU-right.png")}
+        src={publicAsset(assistantAvatarPath)}
       />
     </div>
   );
@@ -1489,6 +2979,40 @@ function SendIcon() {
     >
       <path
         d="M21 3 10.6 13.4M21 3l-6.7 18-3.7-7.6L3 9.7 21 3Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="currentColor"
+      height="13"
+      viewBox="0 0 24 24"
+      width="13"
+    >
+      <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="15"
+      viewBox="0 0 24 24"
+      width="15"
+    >
+      <path
+        d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"

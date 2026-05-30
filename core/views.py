@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -9,11 +10,17 @@ from django.db import transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import redirect
+from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 import requests
 
-from .models import SessionMessage, TutoringSession
+from .audio_cache import (
+    AudioGenerationError,
+    get_or_create_voice_sample,
+    voice_sample_audio_path,
+)
+from .models import Experience, SessionMessage, TutoringSession, TutorSettings
 from .slides import (
     SlideFetchError,
     SlideResolutionError,
@@ -43,6 +50,7 @@ REALTIME_VOICES = {
 }
 REALTIME_CONTEXT_MESSAGE_LIMIT = 24
 REALTIME_CONTEXT_CHAR_LIMIT = 8000
+DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 
 
 def serialize_user(user):
@@ -60,6 +68,7 @@ def serialize_user(user):
 def serialize_session(session):
     return {
         "id": str(session.id),
+        "experienceId": str(session.experience_id) if session.experience_id else "",
         "title": session.title,
         "status": session.status,
         "createdAt": session.created_at.isoformat(),
@@ -75,6 +84,30 @@ def serialize_message(message):
         "sequence": message.sequence,
         "metadata": message.metadata,
         "createdAt": message.created_at.isoformat(),
+    }
+
+
+def serialize_tutor_settings(tutor_settings):
+    return {
+        "assistantName": tutor_settings.assistant_name,
+        "avatarPath": tutor_settings.avatar_path,
+        "realtimeModel": tutor_settings.realtime_model,
+        "systemPrompt": tutor_settings.system_prompt,
+        "voice": tutor_settings.voice,
+        "voiceInstructions": tutor_settings.voice_instructions,
+    }
+
+
+def serialize_experience(experience):
+    tutor_settings = ensure_tutor_settings(experience)
+    return {
+        "id": str(experience.id),
+        "title": experience.title,
+        "slug": experience.slug,
+        "description": experience.description,
+        "tutor": serialize_tutor_settings(tutor_settings),
+        "createdAt": experience.created_at.isoformat(),
+        "updatedAt": experience.updated_at.isoformat(),
     }
 
 
@@ -100,16 +133,73 @@ def parse_json_body(request):
         return None
 
 
-def get_current_session(user):
+def unique_experience_slug(user, title):
+    base_slug = slugify(title or DEFAULT_EXPERIENCE_TITLE) or "experience"
+    candidate = base_slug
+    suffix = 2
+
+    while Experience.objects.filter(user=user, slug=candidate).exists():
+        candidate = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    return candidate
+
+
+def create_default_experience(user):
+    experience = Experience.objects.create(
+        user=user,
+        title=DEFAULT_EXPERIENCE_TITLE,
+        slug=unique_experience_slug(user, DEFAULT_EXPERIENCE_TITLE),
+        description="",
+    )
+    ensure_tutor_settings(experience)
+    return experience
+
+
+def ensure_tutor_settings(experience):
+    tutor_settings, _ = TutorSettings.objects.get_or_create(
+        experience=experience,
+        defaults={
+            "assistant_name": "dee-lou",
+            "avatar_path": "test-images/dLU-right.png",
+            "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
+            "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
+            "system_prompt": settings.DLU_REALTIME_DEFAULT_INSTRUCTIONS,
+            "voice_instructions": "",
+        },
+    )
+    return tutor_settings
+
+
+def get_current_experience(user, experience_id=None):
+    if experience_id:
+        return Experience.objects.filter(id=experience_id, user=user).first()
+
+    experience = Experience.objects.filter(user=user).order_by("-updated_at").first()
+    if experience:
+        ensure_tutor_settings(experience)
+        return experience
+
+    return create_default_experience(user)
+
+
+def get_current_session(user, experience=None):
+    filters = {
+        "user": user,
+        "status": TutoringSession.Status.ACTIVE,
+    }
+    if experience:
+        filters["experience"] = experience
+
     session = (
-        TutoringSession.objects.filter(user=user, status=TutoringSession.Status.ACTIVE)
+        TutoringSession.objects.filter(**filters)
         .order_by("-updated_at", "-created_at")
         .first()
     )
     if session:
         return session
 
-    return TutoringSession.objects.create(user=user)
+    return TutoringSession.objects.create(user=user, experience=experience)
 
 
 def session_payload(session):
@@ -120,7 +210,24 @@ def session_payload(session):
 
 
 def build_realtime_instructions(session, exclude_message_id=None):
-    instructions = settings.DLU_REALTIME_INSTRUCTIONS.strip()
+    tutor_settings = ensure_tutor_settings(session.experience) if session.experience else None
+    system_prompt = (
+        tutor_settings.system_prompt.strip()
+        if tutor_settings and tutor_settings.system_prompt.strip()
+        else settings.DLU_REALTIME_INSTRUCTIONS.strip()
+    )
+    instruction_parts = []
+    if tutor_settings and tutor_settings.assistant_name.strip():
+        instruction_parts.append(
+            f"Your name is {tutor_settings.assistant_name.strip()}."
+        )
+    if tutor_settings and tutor_settings.voice_instructions.strip():
+        instruction_parts.append(
+            "Voice and personality guidance: "
+            f"{tutor_settings.voice_instructions.strip()}"
+        )
+    instruction_parts.append(system_prompt)
+    instructions = "\n\n".join(part for part in instruction_parts if part)
     messages_query = session.messages.filter(
         role__in=[SessionMessage.Role.USER, SessionMessage.Role.ASSISTANT]
     )
@@ -197,13 +304,166 @@ def logout_user(request):
     return JsonResponse({"ok": True})
 
 
+@require_http_methods(["GET", "POST"])
+def experiences(request):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if request.method == "GET":
+        current_experience = get_current_experience(request.user)
+        user_experiences = Experience.objects.filter(user=request.user).order_by(
+            "-updated_at", "-created_at"
+        )
+        return JsonResponse(
+            {
+                "currentExperienceId": str(current_experience.id),
+                "experiences": [
+                    serialize_experience(experience)
+                    for experience in user_experiences
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    title = str(data.get("title", "")).strip() or DEFAULT_EXPERIENCE_TITLE
+    description = str(data.get("description", "")).strip()
+    if len(title) > 160:
+        return JsonResponse({"detail": "Title is too long."}, status=400)
+    if len(description) > 4000:
+        return JsonResponse({"detail": "Description is too long."}, status=400)
+
+    experience = Experience.objects.create(
+        user=request.user,
+        title=title,
+        slug=unique_experience_slug(request.user, title),
+        description=description,
+    )
+    ensure_tutor_settings(experience)
+    return JsonResponse({"experience": serialize_experience(experience)}, status=201)
+
+
+@require_http_methods(["DELETE", "PATCH", "POST"])
+def update_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    if request.method == "DELETE":
+        experience.delete()
+        current_experience = get_current_experience(request.user)
+        user_experiences = Experience.objects.filter(user=request.user).order_by(
+            "-updated_at", "-created_at"
+        )
+        return JsonResponse(
+            {
+                "currentExperienceId": str(current_experience.id),
+                "experiences": [
+                    serialize_experience(experience)
+                    for experience in user_experiences
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    if "title" in data:
+        title = str(data.get("title", "")).strip()
+        if not title:
+            return JsonResponse({"detail": "Title is required."}, status=400)
+        if len(title) > 160:
+            return JsonResponse({"detail": "Title is too long."}, status=400)
+        experience.title = title
+
+    if "description" in data:
+        description = str(data.get("description", "")).strip()
+        if len(description) > 4000:
+            return JsonResponse({"detail": "Description is too long."}, status=400)
+        experience.description = description
+
+    tutor_data = data.get("tutor")
+    tutor_settings = ensure_tutor_settings(experience)
+    if tutor_data is not None:
+        if not isinstance(tutor_data, dict):
+            return JsonResponse({"detail": "Tutor settings must be an object."}, status=400)
+
+        if "assistantName" in tutor_data:
+            assistant_name = str(tutor_data.get("assistantName", "")).strip()
+            if not assistant_name:
+                return JsonResponse({"detail": "Tutor name is required."}, status=400)
+            if len(assistant_name) > 100:
+                return JsonResponse({"detail": "Tutor name is too long."}, status=400)
+            tutor_settings.assistant_name = assistant_name
+
+        if "avatarPath" in tutor_data:
+            avatar_path = str(tutor_data.get("avatarPath", "")).strip()
+            if not avatar_path:
+                return JsonResponse({"detail": "Avatar path is required."}, status=400)
+            if ".." in avatar_path or avatar_path.startswith(("/", "\\")):
+                return JsonResponse({"detail": "Avatar path is not supported."}, status=400)
+            if len(avatar_path) > 220:
+                return JsonResponse({"detail": "Avatar path is too long."}, status=400)
+            tutor_settings.avatar_path = avatar_path
+
+        if "realtimeModel" in tutor_data:
+            model = normalize_realtime_choice(
+                tutor_data.get("realtimeModel"),
+                REALTIME_MODELS,
+                settings.DLU_REALTIME_DEFAULT_MODEL,
+            )
+            if model is None:
+                return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
+            tutor_settings.realtime_model = model
+
+        if "voice" in tutor_data:
+            voice = normalize_realtime_choice(
+                tutor_data.get("voice"),
+                REALTIME_VOICES,
+                settings.DLU_REALTIME_DEFAULT_VOICE,
+            )
+            if voice is None:
+                return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
+            tutor_settings.voice = voice
+
+        if "systemPrompt" in tutor_data:
+            system_prompt = str(tutor_data.get("systemPrompt", "")).strip()
+            if len(system_prompt) > 12000:
+                return JsonResponse({"detail": "System prompt is too long."}, status=400)
+            tutor_settings.system_prompt = system_prompt
+
+        if "voiceInstructions" in tutor_data:
+            voice_instructions = str(tutor_data.get("voiceInstructions", "")).strip()
+            if len(voice_instructions) > 4000:
+                return JsonResponse({"detail": "Voice instructions are too long."}, status=400)
+            tutor_settings.voice_instructions = voice_instructions
+
+        tutor_settings.save()
+
+    experience.save()
+    return JsonResponse({"experience": serialize_experience(experience)})
+
+
 @require_GET
 def current_session(request):
     auth_response = auth_required_response(request)
     if auth_response:
         return auth_response
 
-    session = get_current_session(request.user)
+    experience_id = request.GET.get("experienceId")
+    experience = get_current_experience(request.user, experience_id)
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    session = get_current_session(request.user, experience)
     return JsonResponse(session_payload(session))
 
 
@@ -213,7 +473,16 @@ def create_session(request):
     if auth_response:
         return auth_response
 
-    session = TutoringSession.objects.create(user=request.user)
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    experience_id = data.get("experienceId")
+    experience = get_current_experience(request.user, experience_id)
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    session = TutoringSession.objects.create(user=request.user, experience=experience)
     return JsonResponse(session_payload(session), status=201)
 
 
@@ -280,6 +549,108 @@ def create_message(request, session_id):
 
 
 @require_POST
+def create_voice_sample(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if not settings.OPENAI_API_KEY:
+        return JsonResponse(
+            {"detail": "OPENAI_API_KEY is not configured."},
+            status=500,
+        )
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    tutor_settings = ensure_tutor_settings(experience)
+    sample_tutor = data.get("tutor")
+    if sample_tutor is None:
+        sample_tutor = {}
+    if not isinstance(sample_tutor, dict):
+        return JsonResponse({"detail": "Tutor settings must be an object."}, status=400)
+
+    assistant_name = str(
+        sample_tutor.get("assistantName") or tutor_settings.assistant_name
+    ).strip()
+    voice_instructions = str(
+        sample_tutor.get("voiceInstructions") or tutor_settings.voice_instructions
+    ).strip()
+    if not assistant_name:
+        return JsonResponse({"detail": "Tutor name is required."}, status=400)
+    if len(assistant_name) > 100:
+        return JsonResponse({"detail": "Tutor name is too long."}, status=400)
+    if len(voice_instructions) > 4000:
+        return JsonResponse({"detail": "Voice instructions are too long."}, status=400)
+
+    default_model = sample_tutor.get("realtimeModel") or tutor_settings.realtime_model
+    realtime_model = normalize_realtime_choice(
+        data.get("model"),
+        REALTIME_MODELS,
+        default_model,
+    )
+    if realtime_model is None:
+        return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
+
+    default_voice = sample_tutor.get("voice") or tutor_settings.voice
+    voice = normalize_realtime_choice(
+        data.get("voice"),
+        REALTIME_VOICES,
+        default_voice,
+    )
+    if voice is None:
+        return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
+
+    try:
+        sample = get_or_create_voice_sample(
+            api_key=settings.OPENAI_API_KEY,
+            assistant_name=assistant_name,
+            realtime_model=realtime_model,
+            safety_identifier=hash_safety_identifier(request.user),
+            script_model=settings.DLU_VOICE_SAMPLE_SCRIPT_MODEL,
+            tts_model=settings.DLU_VOICE_SAMPLE_TTS_MODEL,
+            voice=voice,
+            voice_instructions=voice_instructions,
+        )
+    except AudioGenerationError as error:
+        return JsonResponse({"detail": error.message}, status=error.status_code)
+
+    return JsonResponse(
+        {
+            "audioUrl": f"/api/voice-samples/{sample.cache_key}.wav/",
+            "cached": sample.cached,
+            "realtimeModel": realtime_model,
+            "script": sample.script,
+            "scriptModel": settings.DLU_VOICE_SAMPLE_SCRIPT_MODEL,
+            "ttsModel": settings.DLU_VOICE_SAMPLE_TTS_MODEL,
+            "voice": voice,
+        }
+    )
+
+
+@require_GET
+def serve_voice_sample_audio(request, filename):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if not re.fullmatch(r"[a-f0-9]{32}\.wav", filename):
+        raise Http404("Voice sample not found.")
+
+    cache_key = filename.removesuffix(".wav")
+    audio_path = voice_sample_audio_path(cache_key)
+    if not audio_path.exists():
+        raise Http404("Voice sample not found.")
+
+    return FileResponse(audio_path.open("rb"), content_type="audio/wav")
+
+
+@require_POST
 def create_realtime_client_secret(request):
     auth_response = auth_required_response(request)
     if auth_response:
@@ -304,10 +675,22 @@ def create_realtime_client_secret(request):
     if not session:
         return JsonResponse({"detail": "Session not found."}, status=404)
 
+    tutor_settings = ensure_tutor_settings(session.experience) if session.experience else None
+    default_model = (
+        tutor_settings.realtime_model
+        if tutor_settings
+        else settings.DLU_REALTIME_DEFAULT_MODEL
+    )
+    default_voice = (
+        tutor_settings.voice
+        if tutor_settings
+        else settings.DLU_REALTIME_DEFAULT_VOICE
+    )
+
     model = normalize_realtime_choice(
         data.get("model"),
         REALTIME_MODELS,
-        settings.DLU_REALTIME_DEFAULT_MODEL,
+        default_model,
     )
     if model is None:
         return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
@@ -315,7 +698,7 @@ def create_realtime_client_secret(request):
     voice = normalize_realtime_choice(
         data.get("voice"),
         REALTIME_VOICES,
-        settings.DLU_REALTIME_DEFAULT_VOICE,
+        default_voice,
     )
     if voice is None:
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)

@@ -11,13 +11,17 @@ from core.views import (
     create_message,
     create_realtime_client_secret,
     create_session,
+    create_voice_sample,
     current_session,
     current_user,
+    experiences,
     frontend_index,
     health,
     logout_user,
     resolve_google_slide,
     serve_google_slide_image,
+    serve_voice_sample_audio,
+    update_experience,
 )
 
 urlpatterns = [
@@ -26,12 +30,28 @@ urlpatterns = [
     path("api/health/", health, name="health"),
     path("api/auth/me/", current_user, name="current-user"),
     path("api/auth/logout/", logout_user, name="logout-user"),
+    path("api/experiences/", experiences, name="experiences"),
+    path(
+        "api/experiences/<uuid:experience_id>/",
+        update_experience,
+        name="update-experience",
+    ),
     path("api/sessions/current/", current_session, name="current-session"),
     path("api/sessions/", create_session, name="create-session"),
     path(
         "api/realtime/client-secret/",
         create_realtime_client_secret,
         name="realtime-client-secret",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/voice-sample/",
+        create_voice_sample,
+        name="voice-sample",
+    ),
+    path(
+        "api/voice-samples/<str:filename>/",
+        serve_voice_sample_audio,
+        name="serve-voice-sample-audio",
     ),
     path(
         "api/sessions/<uuid:session_id>/messages/",

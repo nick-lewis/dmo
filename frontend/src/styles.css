@@ -23,7 +23,8 @@ body {
 }
 
 button,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -415,6 +416,289 @@ button {
   min-width: 0;
 }
 
+.experience-home-page {
+  overflow: auto;
+}
+
+.experience-home {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  width: min(1180px, 100%);
+  min-height: 0;
+  justify-self: center;
+}
+
+.experience-home-title {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.experience-home-title h1 {
+  margin: 0;
+  color: var(--page-ink);
+  font-size: 1.55rem;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.experience-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 1px 2px 8px 1px;
+}
+
+.experience-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 42px 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  box-shadow: 0 10px 24px rgba(22, 74, 92, 0.07);
+}
+
+.experience-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.experience-title-input,
+.experience-description-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: 0;
+  color: var(--page-ink);
+  background: transparent;
+  letter-spacing: 0;
+}
+
+.experience-title-input:focus,
+.experience-description-input:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 24%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--panel-bg-strong) 64%, transparent);
+}
+
+.experience-title-input {
+  font-size: 0.95rem;
+  font-weight: 820;
+}
+
+.experience-description-input {
+  color: var(--muted-ink);
+  font-size: 0.76rem;
+  font-weight: 680;
+  line-height: 1.38;
+}
+
+.experience-description-input::placeholder {
+  color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
+}
+
+.experience-row-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.experience-row-actions .header-action {
+  min-height: 26px;
+  padding: 4px 9px;
+  font-size: 0.7rem;
+}
+
+.experience-delete-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--muted-ink) 76%, var(--panel-border));
+  background: transparent;
+}
+
+.experience-delete-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
+}
+
+.experience-delete-button svg {
+  display: block;
+}
+
+.experience-editor-page {
+  overflow: auto;
+}
+
+.experience-editor {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  width: min(1280px, 100%);
+  min-width: 0;
+  justify-self: center;
+}
+
+.editor-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.tutor-editor-section .tutor-controls,
+.overview-editor {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.overview-title-text,
+.overview-description-text {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: 0;
+  background: transparent;
+  letter-spacing: 0;
+}
+
+.overview-title-text {
+  min-height: 38px;
+  padding: 1px 4px 2px;
+  color: var(--page-ink);
+  font-size: 1.42rem;
+  font-weight: 780;
+}
+
+.overview-description-text {
+  min-height: 44px;
+  padding: 0 4px 4px;
+  color: var(--muted-ink);
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.overview-title-text:focus,
+.overview-description-text:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
+}
+
+.overview-description-text::placeholder {
+  color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
+}
+
+.tutor-compact-grid,
+.tutor-prompt-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tutor-editor-section .tutor-controls {
+  gap: 10px;
+}
+
+.tutor-editor-section .runtime-control-header .voice-status {
+  display: none;
+}
+
+.tutor-editor-section .tutor-compact-grid {
+  grid-template-columns:
+    minmax(86px, auto)
+    minmax(118px, 0.8fr)
+    minmax(88px, 0.54fr)
+    minmax(96px, 0.58fr)
+    minmax(250px, 1.65fr);
+  align-items: end;
+}
+
+.tutor-editor-section .tutor-prompt-grid {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+
+.tutor-editor-section .control-field textarea.prompt-textarea {
+  min-height: 74px;
+}
+
+.tutor-editor-section .control-field textarea.prompt-textarea.compact {
+  min-height: 46px;
+}
+
+.tutor-sample-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.tutor-sample-button svg {
+  flex: 0 0 auto;
+}
+
+.experience-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 8px;
+  color: var(--muted-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+  font-size: 0.78rem;
+  font-weight: 740;
+}
+
+.experience-state.error {
+  color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 46%, var(--panel-bg-strong));
+}
+
 .study-user {
   max-width: 260px;
   overflow: hidden;
@@ -423,6 +707,31 @@ button {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .experience-home-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  .experience-list {
+    overflow: visible;
+  }
+
+  .experience-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .experience-row-actions {
+    flex-wrap: wrap;
+  }
+
+  .tutor-editor-section .tutor-compact-grid,
+  .tutor-editor-section .tutor-prompt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .header-select {
@@ -515,7 +824,9 @@ button {
   opacity: 0.55;
 }
 
+.experience-controls,
 .runtime-controls,
+.tutor-controls,
 .slide-controls {
   display: grid;
   gap: 8px;
@@ -555,6 +866,7 @@ button {
 }
 
 .control-field input,
+.control-field textarea,
 .control-field select {
   width: 100%;
   min-height: 30px;
@@ -567,15 +879,36 @@ button {
   font-weight: 720;
 }
 
-.control-field input {
+.control-field input,
+.control-field textarea {
   padding-right: 8px;
 }
 
-.control-field input::placeholder {
+.control-field textarea {
+  min-height: 58px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.control-field textarea.experience-description {
+  min-height: 46px;
+}
+
+.control-field textarea.prompt-textarea {
+  min-height: 96px;
+}
+
+.control-field textarea.prompt-textarea.compact {
+  min-height: 72px;
+}
+
+.control-field input::placeholder,
+.control-field textarea::placeholder {
   color: var(--muted-ink);
 }
 
 .control-field input:disabled,
+.control-field textarea:disabled,
 .control-field select:disabled {
   cursor: default;
   opacity: 0.58;
@@ -588,7 +921,9 @@ button {
   min-width: 0;
 }
 
+.experience-controls .header-action,
 .runtime-controls .header-action,
+.tutor-controls .header-action,
 .slide-controls .header-action {
   width: 100%;
   min-width: 0;
@@ -596,6 +931,104 @@ button {
   padding: 5px 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.single-action {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tutor-avatar-row {
+  position: relative;
+  display: inline-flex;
+  align-items: end;
+  gap: 6px;
+  width: max-content;
+  min-width: 0;
+}
+
+.tutor-controls .tutor-sample-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.tutor-avatar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.tutor-avatar-button:hover,
+.tutor-avatar-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 28%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
+}
+
+.tutor-avatar-preview {
+  display: block;
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+}
+
+.tutor-avatar-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  gap: 6px;
+  min-width: max-content;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, var(--panel-soft-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 96%, #ffffff);
+  box-shadow: 0 12px 28px rgba(22, 74, 92, 0.14);
+}
+
+.tutor-avatar-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.tutor-avatar-option:hover,
+.tutor-avatar-option:focus-visible,
+.tutor-avatar-option.selected {
+  border-color: color-mix(in srgb, var(--accent-2) 38%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
+}
+
+.tutor-avatar-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.tutor-editor-section .tutor-avatar-button,
+.tutor-editor-section .tutor-avatar-preview {
+  width: 42px;
+  height: 42px;
+}
+
+.tutor-editor-section .tutor-sample-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
 }
 
 .slide-actions {
@@ -858,6 +1291,11 @@ button {
 
 .panel-tall {
   height: 208px;
+  resize: vertical;
+}
+
+.panel-tutor {
+  height: 430px;
   resize: vertical;
 }
 
