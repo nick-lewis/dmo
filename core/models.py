@@ -65,6 +65,7 @@ class ExperienceEvent(models.Model):
     title = models.CharField(max_length=160, default="Start")
     slug = models.SlugField(max_length=180)
     description = models.TextField(blank=True, default="")
+    chat_instructions = models.TextField(blank=True, default="")
     is_start = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -93,6 +94,7 @@ class EventActionStep(models.Model):
     class ActionType(models.TextChoices):
         SCRIPT = "script", "Script"
         SET_CONTEXT = "set_context", "Set context"
+        APPEND_CONTEXT_LIST = "append_context_list", "Append context list"
         GET_UI_STATE = "get_ui_state", "Get UI state"
         HIGHLIGHT_ON = "highlight_on", "Highlight on"
         HIGHLIGHT_OFF = "highlight_off", "Highlight off"
@@ -202,6 +204,77 @@ class EventConversationCheck(models.Model):
 
     def __str__(self):
         return f"{self.event}: {self.title or 'Check'}"
+
+
+class EventClassifierGroup(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(
+        ExperienceEvent,
+        on_delete=models.CASCADE,
+        related_name="classifier_groups",
+    )
+    title = models.CharField(max_length=160, blank=True, default="Classifier group")
+    instructions = models.TextField(blank=True, default="")
+    result_context_key = models.CharField(
+        max_length=120,
+        blank=True,
+        default="_classifier_results",
+    )
+    handler_actions = models.JSONField(default=list, blank=True)
+    triggers_event = models.SlugField(max_length=180, blank=True, default="")
+    condition = models.JSONField(default=dict, blank=True)
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        indexes = [
+            models.Index(
+                fields=["event", "sort_order"],
+                name="core_eventcl_group_73c8_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event}: {self.title or 'Classifier group'}"
+
+
+class EventClassifier(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(
+        EventClassifierGroup,
+        on_delete=models.CASCADE,
+        related_name="classifiers",
+    )
+    name = models.CharField(max_length=64)
+    prompt = models.TextField(blank=True, default="")
+    schema = models.JSONField(default=dict, blank=True)
+    model = models.CharField(max_length=100, blank=True, default="")
+    condition = models.JSONField(default=dict, blank=True)
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["group", "name"],
+                name="unique_event_classifier_name",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["group", "sort_order"],
+                name="core_eventcl_class_2576_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.group}: {self.name}"
 
 
 class TutoringSession(models.Model):

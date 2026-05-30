@@ -9,6 +9,8 @@ from django.urls import include, path, re_path
 
 from core.views import (
     create_event_chat_tool,
+    create_event_classifier,
+    create_event_classifier_group,
     create_event_conversation_check,
     create_message,
     create_message_audio,
@@ -35,6 +37,8 @@ from core.views import (
     serve_voice_sample_audio,
     update_event_action_step,
     update_event_chat_tool,
+    update_event_classifier,
+    update_event_classifier_group,
     update_event_conversation_check,
     update_experience,
     update_experience_event,
@@ -97,6 +101,26 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/conversation-checks/<uuid:check_id>/",
         update_event_conversation_check,
         name="update-event-conversation-check",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/classifier-groups/",
+        create_event_classifier_group,
+        name="create-event-classifier-group",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/classifier-groups/<uuid:group_id>/",
+        update_event_classifier_group,
+        name="update-event-classifier-group",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/classifier-groups/<uuid:group_id>/classifiers/",
+        create_event_classifier,
+        name="create-event-classifier",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/classifier-groups/<uuid:group_id>/classifiers/<uuid:classifier_id>/",
+        update_event_classifier,
+        name="update-event-classifier",
     ),
     path("api/sessions/current/", current_session, name="current-session"),
     path("api/sessions/", create_session, name="create-session"),

@@ -3,6 +3,8 @@ from django.contrib import admin
 from .models import (
     EventActionStep,
     EventChatTool,
+    EventClassifier,
+    EventClassifierGroup,
     EventConversationCheck,
     Experience,
     ExperienceEvent,
@@ -72,6 +74,27 @@ class EventConversationCheckInline(admin.TabularInline):
     ordering = ("sort_order", "created_at")
 
 
+class EventClassifierGroupInline(admin.TabularInline):
+    model = EventClassifierGroup
+    extra = 0
+    fields = (
+        "sort_order",
+        "title",
+        "result_context_key",
+        "triggers_event",
+        "condition",
+        "enabled",
+    )
+    ordering = ("sort_order", "created_at")
+
+
+class EventClassifierInline(admin.TabularInline):
+    model = EventClassifier
+    extra = 0
+    fields = ("sort_order", "name", "model", "enabled", "condition")
+    ordering = ("sort_order", "created_at")
+
+
 @admin.register(TutoringSession)
 class TutoringSessionAdmin(admin.ModelAdmin):
     list_display = (
@@ -117,7 +140,12 @@ class ExperienceEventAdmin(admin.ModelAdmin):
     list_filter = ("is_start", "created_at", "updated_at")
     search_fields = ("title", "description", "slug", "experience__title")
     readonly_fields = ("id", "created_at", "updated_at")
-    inlines = [EventActionStepInline, EventChatToolInline, EventConversationCheckInline]
+    inlines = [
+        EventActionStepInline,
+        EventChatToolInline,
+        EventConversationCheckInline,
+        EventClassifierGroupInline,
+    ]
 
 
 @admin.register(EventActionStep)
@@ -148,4 +176,28 @@ class EventConversationCheckAdmin(admin.ModelAdmin):
     )
     list_filter = ("enabled",)
     search_fields = ("title", "instructions", "event__title", "event__experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(EventClassifierGroup)
+class EventClassifierGroupAdmin(admin.ModelAdmin):
+    list_display = (
+        "event",
+        "title",
+        "result_context_key",
+        "triggers_event",
+        "enabled",
+        "sort_order",
+    )
+    list_filter = ("enabled",)
+    search_fields = ("title", "instructions", "event__title", "event__experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")
+    inlines = [EventClassifierInline]
+
+
+@admin.register(EventClassifier)
+class EventClassifierAdmin(admin.ModelAdmin):
+    list_display = ("group", "name", "model", "enabled", "sort_order")
+    list_filter = ("enabled",)
+    search_fields = ("name", "prompt", "group__title", "group__event__title")
     readonly_fields = ("id", "created_at", "updated_at")

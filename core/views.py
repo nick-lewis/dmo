@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -29,6 +30,8 @@ from .audio_cache import (
 from .models import (
     EventActionStep,
     EventChatTool,
+    EventClassifier,
+    EventClassifierGroup,
     EventConversationCheck,
     Experience,
     ExperienceEvent,
@@ -75,6 +78,16 @@ SCRIPT_AUDIO_MESSAGE_SOURCES = {
     "event-action",
     "conversation-tool-action",
     "conversation-check-action",
+    "classifier-group-action",
+}
+DEFAULT_CLASSIFIER_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mentioned": {"type": "boolean"},
+        "context": {"type": ["string", "null"]},
+    },
+    "required": ["mentioned", "context"],
+    "additionalProperties": False,
 }
 
 
@@ -174,6 +187,43 @@ def serialize_event_conversation_check(check):
     }
 
 
+def serialize_event_classifier(classifier):
+    return {
+        "id": str(classifier.id),
+        "groupId": str(classifier.group_id),
+        "name": classifier.name,
+        "prompt": classifier.prompt,
+        "schema": classifier.schema,
+        "model": classifier.model,
+        "condition": classifier.condition,
+        "enabled": classifier.enabled,
+        "sortOrder": classifier.sort_order,
+        "createdAt": classifier.created_at.isoformat(),
+        "updatedAt": classifier.updated_at.isoformat(),
+    }
+
+
+def serialize_event_classifier_group(group):
+    return {
+        "id": str(group.id),
+        "eventId": str(group.event_id),
+        "title": group.title,
+        "instructions": group.instructions,
+        "resultContextKey": group.result_context_key,
+        "handlerActions": group.handler_actions,
+        "triggersEvent": group.triggers_event,
+        "condition": group.condition,
+        "enabled": group.enabled,
+        "sortOrder": group.sort_order,
+        "classifiers": [
+            serialize_event_classifier(classifier)
+            for classifier in group.classifiers.order_by("sort_order", "created_at")
+        ],
+        "createdAt": group.created_at.isoformat(),
+        "updatedAt": group.updated_at.isoformat(),
+    }
+
+
 def openai_tool_parameters(parameters):
     schema = dict(parameters or {"type": "object", "properties": {}, "required": []})
     schema.pop(TOOL_CAPTURE_SAVE_MAP_KEY, None)
@@ -208,6 +258,7 @@ def serialize_experience_event(event):
         "title": event.title,
         "slug": event.slug,
         "description": event.description,
+        "chatInstructions": event.chat_instructions,
         "isStart": event.is_start,
         "sortOrder": event.sort_order,
         "steps": [
@@ -221,6 +272,12 @@ def serialize_experience_event(event):
         "conversationChecks": [
             serialize_event_conversation_check(check)
             for check in event.conversation_checks.order_by(
+                "sort_order", "created_at"
+            )
+        ],
+        "classifierGroups": [
+            serialize_event_classifier_group(group)
+            for group in event.classifier_groups.order_by(
                 "sort_order", "created_at"
             )
         ],
@@ -474,6 +531,12 @@ def build_realtime_instructions(session, exclude_message_id=None):
             event_context.append(
                 f"Event notes or goal: {current_event.description.strip()}"
             )
+        chat_instructions = render_context_template(
+            current_event.chat_instructions,
+            session.runtime_context or {},
+        ).strip()
+        if chat_instructions:
+            event_context.append(f"Event chat instructions:\n{chat_instructions}")
         if session.runtime_context:
             context_json = json.dumps(session.runtime_context, ensure_ascii=True)
             event_context.append(f"Runtime context: {context_json[:2000]}")
@@ -542,7 +605,69 @@ def normalize_runtime_value(value):
         return "true" if value else "false"
     if value is None:
         return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=True, sort_keys=True)
     return str(value)
+
+
+def runtime_context_lookup(runtime_context, key):
+    key = str(key or "").strip()
+    if not key:
+        return False, None
+
+    current = runtime_context
+    for part in key.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        if isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (TypeError, ValueError, IndexError):
+                return False, None
+            continue
+        return False, None
+    return True, current
+
+
+def runtime_context_value(runtime_context, key):
+    _, value = runtime_context_lookup(runtime_context, key)
+    return value
+
+
+def values_match(actual, expected):
+    if actual == expected:
+        return True
+    return normalize_runtime_value(actual) == normalize_runtime_value(expected)
+
+
+def value_contains(container, expected):
+    if isinstance(container, list):
+        return any(values_match(item, expected) for item in container)
+    if isinstance(container, dict):
+        return str(expected) in container
+    if container is None:
+        return False
+    return str(expected) in normalize_runtime_value(container)
+
+
+def render_context_template(text, runtime_context):
+    text = str(text or "")
+    if "{{" not in text:
+        return text
+
+    def replace_match(match):
+        key = match.group(1).strip()
+        exists, value = runtime_context_lookup(runtime_context, key)
+        if not exists:
+            return ""
+        if isinstance(value, list):
+            return ", ".join(normalize_runtime_value(item) for item in value)
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=True, sort_keys=True)
+        return normalize_runtime_value(value)
+
+    return re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", replace_match, text)
 
 
 def parse_client_ui_state(value):
@@ -799,6 +924,184 @@ def validate_conversation_check_payload(data, existing_check=None):
     return payload, ""
 
 
+def validate_classifier_schema(value):
+    if value in (None, ""):
+        return {}, ""
+    if not isinstance(value, dict):
+        return None, "Classifier schema must be an object."
+    try:
+        encoded = json.dumps(value, ensure_ascii=True)
+    except (TypeError, ValueError):
+        return None, "Classifier schema must be JSON serializable."
+    if len(encoded) > 12000:
+        return None, "Classifier schema is too long."
+    return value, ""
+
+
+def validate_classifier_group_payload(data, existing_group=None):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return None, "Classifier group must be an object."
+
+    title = str(
+        data.get(
+            "title",
+            existing_group.title if existing_group else "Classifier group",
+        )
+    ).strip()
+    if not title:
+        title = "Classifier group"
+    if len(title) > 160:
+        return None, "Classifier group title is too long."
+
+    instructions = str(
+        data.get(
+            "instructions",
+            existing_group.instructions if existing_group else "",
+        )
+    ).strip()
+    if len(instructions) > 12000:
+        return None, "Classifier group instructions are too long."
+
+    result_context_key = str(
+        data.get(
+            "resultContextKey",
+            existing_group.result_context_key
+            if existing_group
+            else "_classifier_results",
+        )
+    ).strip()
+    if len(result_context_key) > 120:
+        return None, "Classifier result key is too long."
+
+    handler_actions, handler_actions_error = validate_action_sequence(
+        data.get(
+            "handlerActions",
+            existing_group.handler_actions if existing_group else [],
+        )
+    )
+    if handler_actions_error:
+        return None, handler_actions_error
+
+    triggers_event, event_error = validate_event_slug(
+        data.get(
+            "triggersEvent",
+            existing_group.triggers_event if existing_group else "",
+        ),
+        required=False,
+    )
+    if event_error:
+        return None, event_error
+
+    condition, condition_error = validate_step_condition(
+        data.get(
+            "condition",
+            existing_group.condition if existing_group else {},
+        )
+    )
+    if condition_error:
+        return None, condition_error
+
+    payload = {
+        "condition": condition,
+        "enabled": bool(
+            data.get("enabled", existing_group.enabled if existing_group else True)
+        ),
+        "handler_actions": handler_actions,
+        "instructions": instructions,
+        "result_context_key": result_context_key,
+        "title": title,
+        "triggers_event": triggers_event,
+    }
+    if "sortOrder" in data:
+        try:
+            sort_order = int(data.get("sortOrder"))
+        except (TypeError, ValueError):
+            return None, "Sort order must be a number."
+        if sort_order < 0:
+            return None, "Sort order must be positive."
+        payload["sort_order"] = sort_order
+
+    return payload, ""
+
+
+def validate_classifier_payload(data, existing_classifier=None):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return None, "Classifier must be an object."
+
+    name = str(
+        data.get("name", existing_classifier.name if existing_classifier else "")
+    ).strip()
+    name = re.sub(r"[^a-zA-Z0-9_]+", "_", name).strip("_").lower()
+    if not name:
+        return None, "Classifier name is required."
+    if len(name) > 64:
+        return None, "Classifier name is too long."
+
+    prompt = str(
+        data.get(
+            "prompt",
+            existing_classifier.prompt if existing_classifier else "",
+        )
+    ).strip()
+    if len(prompt) > 12000:
+        return None, "Classifier prompt is too long."
+
+    schema, schema_error = validate_classifier_schema(
+        data.get(
+            "schema",
+            existing_classifier.schema if existing_classifier else {},
+        )
+    )
+    if schema_error:
+        return None, schema_error
+
+    model = str(
+        data.get(
+            "model",
+            existing_classifier.model if existing_classifier else "",
+        )
+    ).strip()
+    if len(model) > 100:
+        return None, "Classifier model is too long."
+
+    condition, condition_error = validate_step_condition(
+        data.get(
+            "condition",
+            existing_classifier.condition if existing_classifier else {},
+        )
+    )
+    if condition_error:
+        return None, condition_error
+
+    payload = {
+        "condition": condition,
+        "enabled": bool(
+            data.get(
+                "enabled",
+                existing_classifier.enabled if existing_classifier else True,
+            )
+        ),
+        "model": model,
+        "name": name,
+        "prompt": prompt,
+        "schema": schema,
+    }
+    if "sortOrder" in data:
+        try:
+            sort_order = int(data.get("sortOrder"))
+        except (TypeError, ValueError):
+            return None, "Sort order must be a number."
+        if sort_order < 0:
+            return None, "Sort order must be positive."
+        payload["sort_order"] = sort_order
+
+    return payload, ""
+
+
 def validate_action_config(action_type, value):
     if value is None:
         value = {}
@@ -812,6 +1115,14 @@ def validate_action_config(action_type, value):
         return {"text": text}, ""
 
     if action_type == EventActionStep.ActionType.SET_CONTEXT:
+        key = str(value.get("key", "")).strip()
+        if not key:
+            return None, "Context key is required."
+        if len(key) > 120:
+            return None, "Context key is too long."
+        return {"key": key, "value": value.get("value")}, ""
+
+    if action_type == EventActionStep.ActionType.APPEND_CONTEXT_LIST:
         key = str(value.get("key", "")).strip()
         if not key:
             return None, "Context key is required."
@@ -895,20 +1206,57 @@ def validate_step_condition(value):
     if condition_type == "always":
         return {}, ""
 
-    if condition_type == "context_equals":
+    if condition_type in {"context_equals", "context_not_equals"}:
         key = str(value.get("key", "")).strip()
-        expected_value = str(value.get("value", ""))
+        expected_value = value.get("value", "")
         if not key:
             return None, "Condition context key is required."
         if len(key) > 120:
             return None, "Condition context key is too long."
-        if len(expected_value) > 4000:
+        if len(normalize_runtime_value(expected_value)) > 4000:
             return None, "Condition value is too long."
         return {
-            "type": "context_equals",
+            "type": condition_type,
             "key": key,
             "value": expected_value,
         }, ""
+
+    if condition_type in {"context_contains", "context_not_contains"}:
+        key = str(value.get("key", "")).strip()
+        expected_value = value.get("value", "")
+        if not key:
+            return None, "Condition context key is required."
+        if len(key) > 120:
+            return None, "Condition context key is too long."
+        if len(normalize_runtime_value(expected_value)) > 4000:
+            return None, "Condition value is too long."
+        return {
+            "type": condition_type,
+            "key": key,
+            "value": expected_value,
+        }, ""
+
+    if condition_type in {"context_exists", "context_missing"}:
+        key = str(value.get("key", "")).strip()
+        if not key:
+            return None, "Condition context key is required."
+        if len(key) > 120:
+            return None, "Condition context key is too long."
+        return {"type": condition_type, "key": key}, ""
+
+    if condition_type in {"all", "any"}:
+        raw_conditions = value.get("conditions", value.get("items", []))
+        if not isinstance(raw_conditions, list):
+            return None, "Nested conditions must be a list."
+        if len(raw_conditions) > 40:
+            return None, "Nested condition list is too long."
+        conditions = []
+        for raw_condition in raw_conditions:
+            condition, condition_error = validate_step_condition(raw_condition)
+            if condition_error:
+                return None, condition_error
+            conditions.append(condition)
+        return {"type": condition_type, "conditions": conditions}, ""
 
     return None, "Step condition is not supported."
 
@@ -981,8 +1329,45 @@ def condition_matches(condition, runtime_context):
 
     if condition_type == "context_equals":
         key = str(condition.get("key", "")).strip()
-        expected_value = str(condition.get("value", ""))
-        return str(runtime_context.get(key, "")) == expected_value
+        exists, actual_value = runtime_context_lookup(runtime_context, key)
+        return exists and values_match(actual_value, condition.get("value", ""))
+
+    if condition_type == "context_not_equals":
+        key = str(condition.get("key", "")).strip()
+        exists, actual_value = runtime_context_lookup(runtime_context, key)
+        return not exists or not values_match(actual_value, condition.get("value", ""))
+
+    if condition_type == "context_contains":
+        key = str(condition.get("key", "")).strip()
+        exists, actual_value = runtime_context_lookup(runtime_context, key)
+        return exists and value_contains(actual_value, condition.get("value", ""))
+
+    if condition_type == "context_not_contains":
+        key = str(condition.get("key", "")).strip()
+        exists, actual_value = runtime_context_lookup(runtime_context, key)
+        return not exists or not value_contains(actual_value, condition.get("value", ""))
+
+    if condition_type == "context_exists":
+        key = str(condition.get("key", "")).strip()
+        exists, _ = runtime_context_lookup(runtime_context, key)
+        return exists
+
+    if condition_type == "context_missing":
+        key = str(condition.get("key", "")).strip()
+        exists, _ = runtime_context_lookup(runtime_context, key)
+        return not exists
+
+    if condition_type == "all":
+        conditions = condition.get("conditions")
+        if not isinstance(conditions, list):
+            return False
+        return all(condition_matches(item, runtime_context) for item in conditions)
+
+    if condition_type == "any":
+        conditions = condition.get("conditions")
+        if not isinstance(conditions, list):
+            return False
+        return any(condition_matches(item, runtime_context) for item in conditions)
 
     return False
 
@@ -1134,7 +1519,10 @@ def run_action_sequence(
             continue
 
         if action_type == EventActionStep.ActionType.SCRIPT:
-            text = str(config.get("text", "")).strip()
+            text = render_context_template(
+                config.get("text", ""),
+                runtime_context,
+            ).strip()
             if not text:
                 continue
 
@@ -1174,6 +1562,38 @@ def run_action_sequence(
                     "stepId": step_id,
                     "key": key,
                     "value": runtime_context[key],
+                    **metadata,
+                }
+            )
+            continue
+
+        if action_type == EventActionStep.ActionType.APPEND_CONTEXT_LIST:
+            key = str(config.get("key", "")).strip()
+            if not key:
+                continue
+            current_value = runtime_context.get(key)
+            if isinstance(current_value, list):
+                next_values = list(current_value)
+            elif current_value in (None, ""):
+                next_values = []
+            else:
+                next_values = [current_value]
+
+            next_value = config.get("value")
+            appended = False
+            if not any(values_match(item, next_value) for item in next_values):
+                next_values.append(next_value)
+                appended = True
+            runtime_context[key] = next_values
+            actions.append(
+                {
+                    "type": "append_context_list",
+                    "appended": appended,
+                    "eventId": str(event.id),
+                    "key": key,
+                    "list": next_values,
+                    "stepId": step_id,
+                    "value": next_value,
                     **metadata,
                 }
             )
@@ -1390,6 +1810,209 @@ def parse_check_result(value):
         if normalized in {"false", "no", "n", "0", "none", "not_matched"}:
             return False
     return False
+
+
+def classifier_schema(classifier):
+    if isinstance(classifier.schema, dict) and classifier.schema.get("type"):
+        return classifier.schema
+    return DEFAULT_CLASSIFIER_RESULT_SCHEMA
+
+
+def classifier_schema_name(name):
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(name or "classifier")).strip("_")
+    if not normalized:
+        normalized = "classifier"
+    if normalized[0].isdigit():
+        normalized = f"classifier_{normalized}"
+    return normalized[:64]
+
+
+def classifier_has_positive_result(payload):
+    if not isinstance(payload, dict):
+        return False
+    for key in ("mentioned", "result", "matched", "triggered"):
+        if parse_check_result(payload.get(key)):
+            return True
+    return False
+
+
+def evaluate_event_classifier(
+    user,
+    current_event,
+    group,
+    classifier,
+    runtime_context,
+    transcript,
+):
+    if not settings.OPENAI_API_KEY:
+        return None, "OPENAI_API_KEY is not configured."
+
+    schema = classifier_schema(classifier)
+    model = classifier.model.strip() or settings.DLU_CONVERSATION_CHECK_MODEL
+    prompt = "\n\n".join(
+        [
+            "Run one independent classifier for the current tutoring chat.",
+            f"Current event: {current_event.title if current_event else ''}",
+            f"Classifier name: {classifier.name}",
+            f"Group instructions:\n{group.instructions.strip()}",
+            f"Classifier instructions:\n{classifier.prompt.strip()}",
+            (
+                "Return JSON only. The JSON must match the provided schema. "
+                "Do not infer from older turns unless the classifier explicitly "
+                "asks for conversation history."
+            ),
+            f"Runtime context:\n{json.dumps(runtime_context or {}, ensure_ascii=True)[:3000]}",
+            f"Recent conversation:\n{transcript}",
+        ]
+    )
+
+    try:
+        response = requests.post(
+            OPENAI_CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+                "OpenAI-Safety-Identifier": hash_safety_identifier(user),
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict JSON classifier. Run only the "
+                            "requested classifier and return no prose."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 320,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": classifier_schema_name(classifier.name),
+                        "schema": schema,
+                        "strict": True,
+                    },
+                },
+            },
+            timeout=45,
+        )
+    except requests.RequestException:
+        return None, "Could not reach OpenAI to run a classifier."
+
+    if response.status_code >= 400:
+        return None, openai_error_message(
+            response,
+            "OpenAI could not run a classifier.",
+        )
+
+    try:
+        response_payload = response.json()
+        content = response_payload["choices"][0]["message"]["content"]
+        result_payload = json.loads(content)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None, "OpenAI returned an unreadable classifier result."
+
+    if not isinstance(result_payload, dict):
+        return None, "OpenAI returned a classifier result that was not an object."
+
+    return result_payload, ""
+
+
+def evaluate_classifier_group(session, current_event, group, runtime_context):
+    group_action = {
+        "classifierGroupId": str(group.id),
+        "classifierGroupTitle": group.title,
+        "eventId": str(current_event.id),
+        "resultContextKey": group.result_context_key,
+        "type": "classifier_group_result",
+    }
+    if not condition_matches(group.condition, runtime_context):
+        return {
+            "actions": [
+                {
+                    **group_action,
+                    "reason": "condition_not_met",
+                    "type": "classifier_group_skipped",
+                }
+            ],
+            "group": group,
+            "results": {},
+            "skipped": True,
+        }, ""
+
+    classifiers = list(
+        group.classifiers.filter(enabled=True).order_by("sort_order", "created_at")
+    )
+    results = {}
+    actions = []
+    classifiers_to_run = []
+    for classifier in classifiers:
+        classifier_action = {
+            "classifierGroupId": str(group.id),
+            "classifierGroupTitle": group.title,
+            "classifierId": str(classifier.id),
+            "classifierName": classifier.name,
+            "eventId": str(current_event.id),
+            "resultContextKey": group.result_context_key,
+        }
+        if not condition_matches(classifier.condition, runtime_context):
+            actions.append(
+                {
+                    **classifier_action,
+                    "reason": "condition_not_met",
+                    "type": "classifier_skipped",
+                }
+            )
+            continue
+        classifiers_to_run.append(classifier)
+
+    if classifiers_to_run:
+        transcript = conversation_check_transcript(session)
+        max_workers = min(6, len(classifiers_to_run))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    evaluate_event_classifier,
+                    session.user,
+                    current_event,
+                    group,
+                    classifier,
+                    runtime_context,
+                    transcript,
+                ): classifier
+                for classifier in classifiers_to_run
+            }
+            for future in as_completed(futures):
+                classifier = futures[future]
+                result_payload, result_error = future.result()
+                if result_error:
+                    return None, result_error
+                results[classifier.name] = result_payload
+
+    for classifier in classifiers_to_run:
+        result_payload = results.get(classifier.name, {})
+        actions.append(
+            {
+                "classifierGroupId": str(group.id),
+                "classifierGroupTitle": group.title,
+                "classifierId": str(classifier.id),
+                "classifierName": classifier.name,
+                "eventId": str(current_event.id),
+                "result": result_payload,
+                "resultContextKey": group.result_context_key,
+                "type": "classifier_result",
+            }
+        )
+
+    actions.append({**group_action, "results": results})
+    return {
+        "actions": actions,
+        "group": group,
+        "results": results,
+        "skipped": False,
+    }, ""
 
 
 def evaluate_conversation_check(session, check):
@@ -1777,6 +2400,15 @@ def update_experience_event(request, experience_id, event_id):
             return JsonResponse({"detail": "Event description is too long."}, status=400)
         event.description = description
 
+    if "chatInstructions" in data:
+        chat_instructions = str(data.get("chatInstructions", "")).strip()
+        if len(chat_instructions) > 12000:
+            return JsonResponse(
+                {"detail": "Event chat instructions are too long."},
+                status=400,
+            )
+        event.chat_instructions = chat_instructions
+
     if "isStart" in data and bool(data.get("isStart")):
         event.is_start = True
         ExperienceEvent.objects.filter(experience=experience).exclude(
@@ -2124,6 +2756,191 @@ def update_event_conversation_check(request, experience_id, event_id, check_id):
     check.save()
 
     return JsonResponse({"check": serialize_event_conversation_check(check)})
+
+
+@require_POST
+def create_event_classifier_group(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_classifier_group_payload(data)
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    sort_order = (
+        event.classifier_groups.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    payload.setdefault("sort_order", sort_order)
+    group = EventClassifierGroup.objects.create(event=event, **payload)
+
+    return JsonResponse(
+        {
+            "event": serialize_experience_event(event),
+            "group": serialize_event_classifier_group(group),
+        },
+        status=201,
+    )
+
+
+@require_http_methods(["DELETE", "PATCH"])
+def update_event_classifier_group(request, experience_id, event_id, group_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    group = event.classifier_groups.filter(id=group_id).first()
+    if not group:
+        return JsonResponse({"detail": "Classifier group not found."}, status=404)
+
+    if request.method == "DELETE":
+        group.delete()
+        for index, event_group in enumerate(
+            event.classifier_groups.order_by("sort_order", "created_at")
+        ):
+            if event_group.sort_order == index:
+                continue
+            event_group.sort_order = index
+            event_group.save(update_fields=["sort_order", "updated_at"])
+        return JsonResponse({"event": serialize_experience_event(event)})
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_classifier_group_payload(
+        data,
+        existing_group=group,
+    )
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    for field, value in payload.items():
+        setattr(group, field, value)
+    group.save()
+
+    return JsonResponse({"group": serialize_event_classifier_group(group)})
+
+
+@require_POST
+def create_event_classifier(request, experience_id, event_id, group_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    group = event.classifier_groups.filter(id=group_id).first()
+    if not group:
+        return JsonResponse({"detail": "Classifier group not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_classifier_payload(data)
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    if group.classifiers.filter(name=payload["name"]).exists():
+        return JsonResponse({"detail": "Classifier name already exists."}, status=400)
+
+    sort_order = (
+        group.classifiers.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    payload.setdefault("sort_order", sort_order)
+    classifier = EventClassifier.objects.create(group=group, **payload)
+
+    return JsonResponse(
+        {
+            "classifier": serialize_event_classifier(classifier),
+            "event": serialize_experience_event(event),
+        },
+        status=201,
+    )
+
+
+@require_http_methods(["DELETE", "PATCH"])
+def update_event_classifier(request, experience_id, event_id, group_id, classifier_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    group = event.classifier_groups.filter(id=group_id).first()
+    if not group:
+        return JsonResponse({"detail": "Classifier group not found."}, status=404)
+
+    classifier = group.classifiers.filter(id=classifier_id).first()
+    if not classifier:
+        return JsonResponse({"detail": "Classifier not found."}, status=404)
+
+    if request.method == "DELETE":
+        classifier.delete()
+        for index, event_classifier in enumerate(
+            group.classifiers.order_by("sort_order", "created_at")
+        ):
+            if event_classifier.sort_order == index:
+                continue
+            event_classifier.sort_order = index
+            event_classifier.save(update_fields=["sort_order", "updated_at"])
+        return JsonResponse({"event": serialize_experience_event(event)})
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_classifier_payload(
+        data,
+        existing_classifier=classifier,
+    )
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    duplicate = group.classifiers.filter(name=payload["name"]).exclude(
+        id=classifier.id,
+    )
+    if duplicate.exists():
+        return JsonResponse({"detail": "Classifier name already exists."}, status=400)
+
+    for field, value in payload.items():
+        setattr(classifier, field, value)
+    classifier.save()
+
+    return JsonResponse({"classifier": serialize_event_classifier(classifier)})
 
 
 @require_GET
@@ -2530,17 +3347,23 @@ def run_session_conversation_checks(request, session_id):
     if not current_event:
         return JsonResponse({"detail": "Current event not found."}, status=404)
 
+    classifier_groups = list(
+        current_event.classifier_groups.filter(enabled=True).order_by(
+            "sort_order", "created_at"
+        )
+    )
     checks = list(
         current_event.conversation_checks.filter(enabled=True).order_by(
             "sort_order", "created_at"
         )
     )
-    if not checks:
+    if not classifier_groups and not checks:
         return JsonResponse(
             {
                 **session_payload(session),
                 "actions": [],
                 "checks": [],
+                "classifierGroups": [],
                 "handled": False,
                 "ran": False,
                 "ranEvents": [],
@@ -2548,6 +3371,177 @@ def run_session_conversation_checks(request, session_id):
             }
         )
 
+    evaluated_classifier_groups = []
+    runtime_context_preview = dict(session.runtime_context or {})
+    for group in classifier_groups:
+        session.runtime_context = runtime_context_preview
+        group_payload, group_error = evaluate_classifier_group(
+            session,
+            current_event,
+            group,
+            runtime_context_preview,
+        )
+        if group_error:
+            return JsonResponse({"detail": group_error}, status=502)
+
+        evaluated_classifier_groups.append(group_payload)
+        if group.result_context_key:
+            runtime_context_preview[group.result_context_key] = group_payload[
+                "results"
+            ]
+        if group.handler_actions or group.triggers_event:
+            break
+
+    actions = []
+    messages = []
+    ran_events = []
+    classifier_results = []
+    handled = False
+
+    if evaluated_classifier_groups:
+        with transaction.atomic():
+            session = (
+                TutoringSession.objects.select_for_update()
+                .filter(
+                    id=session_id,
+                    user=request.user,
+                    status=TutoringSession.Status.ACTIVE,
+                )
+                .first()
+            )
+            if not session:
+                return JsonResponse({"detail": "Session not found."}, status=404)
+            if not session.experience:
+                return JsonResponse(
+                    {"detail": "Session does not have an experience."},
+                    status=400,
+                )
+
+            current_event = get_session_current_event(session)
+            if not current_event:
+                return JsonResponse(
+                    {"detail": "Current event not found."},
+                    status=404,
+                )
+
+            state = dict(session.runtime_state or {})
+            runtime_context = dict(session.runtime_context or {})
+
+            for group_payload in evaluated_classifier_groups:
+                group = group_payload["group"]
+                results = group_payload["results"]
+                group_actions = group_payload["actions"]
+                actions.extend(group_actions)
+                classifier_results.append(
+                    {
+                        "classifierGroupId": str(group.id),
+                        "classifierGroupTitle": group.title,
+                        "resultContextKey": group.result_context_key,
+                        "results": results,
+                        "skipped": bool(group_payload.get("skipped")),
+                    }
+                )
+
+                if group.result_context_key:
+                    runtime_context[group.result_context_key] = results
+                    session.runtime_context = runtime_context
+
+                if group_payload.get("skipped"):
+                    continue
+
+                handler_next_event_slug = ""
+                handler_messages = []
+                if group.handler_actions:
+                    (
+                        handler_actions,
+                        handler_messages,
+                        handler_next_event_slug,
+                    ) = run_action_sequence(
+                        session,
+                        current_event,
+                        group.handler_actions,
+                        client_ui_state=client_ui_state,
+                        source="classifier-group-action",
+                        metadata={
+                            "classifierGroupId": str(group.id),
+                            "classifierGroupTitle": group.title,
+                        },
+                    )
+                    actions.extend(handler_actions)
+                    messages.extend(handler_messages)
+                    runtime_context = dict(session.runtime_context or {})
+
+                next_event_slug = handler_next_event_slug
+                if (
+                    not next_event_slug
+                    and group.triggers_event
+                    and any(
+                        classifier_has_positive_result(result)
+                        for result in results.values()
+                    )
+                ):
+                    next_event_slug = group.triggers_event
+
+                if next_event_slug:
+                    next_event = session.experience.events.filter(
+                        slug=next_event_slug
+                    ).first()
+                    if not next_event:
+                        actions.append(
+                            {
+                                "type": "transition_missing",
+                                "eventId": str(current_event.id),
+                                "triggersEvent": next_event_slug,
+                            }
+                        )
+                    else:
+                        (
+                            step_actions,
+                            event_messages,
+                            ran_events,
+                            state,
+                        ) = run_event_chain(
+                            session,
+                            next_event,
+                            client_ui_state=client_ui_state,
+                            state=state,
+                        )
+                        actions.extend(step_actions)
+                        messages.extend(event_messages)
+
+                handled = bool(next_event_slug or handler_messages)
+                if handled:
+                    break
+
+            state = apply_runtime_actions_to_state(
+                state,
+                actions,
+                clear_buttons=handled,
+            )
+            session.runtime_state = state
+            session.save(
+                update_fields=["runtime_context", "runtime_state", "updated_at"]
+            )
+
+    if handled or not checks:
+        return JsonResponse(
+            {
+                **session_payload(session),
+                "actions": actions,
+                "checks": [],
+                "classifierGroups": classifier_results,
+                "handled": handled,
+                "ran": bool(ran_events),
+                "ranEvents": [
+                    serialize_experience_event(ran_event)
+                    for ran_event in ran_events
+                ],
+                "ranMessages": [serialize_message(message) for message in messages],
+            }
+        )
+
+    session.refresh_from_db()
+    current_event = get_session_current_event(session)
     evaluated_checks = []
     runtime_context_preview = dict(session.runtime_context or {})
     for check in checks:
@@ -2599,11 +3593,7 @@ def run_session_conversation_checks(request, session_id):
 
         state = dict(session.runtime_state or {})
         runtime_context = dict(session.runtime_context or {})
-        actions = []
-        messages = []
-        ran_events = []
         check_results = []
-        handled = False
 
         for check, check_action, result in evaluated_checks:
             if check.result_context_key:
@@ -2672,6 +3662,7 @@ def run_session_conversation_checks(request, session_id):
             **session_payload(session),
             "actions": actions,
             "checks": check_results,
+            "classifierGroups": classifier_results,
             "handled": handled,
             "ran": bool(ran_events),
             "ranEvents": [

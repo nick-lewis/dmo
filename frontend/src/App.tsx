@@ -48,6 +48,7 @@ const tutorAvatarOptions = [
 const eventActionOptions = [
   { id: "script", label: "Say" },
   { id: "set_context", label: "Set context" },
+  { id: "append_context_list", label: "Append context" },
   { id: "get_ui_state", label: "Read UI" },
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
@@ -61,6 +62,7 @@ const scriptAudioSources = new Set([
   "event-action",
   "conversation-tool-action",
   "conversation-check-action",
+  "classifier-group-action",
 ]);
 
 type ChatMessage = {
@@ -112,6 +114,7 @@ type EventActionStep = {
   actionType:
     | "script"
     | "set_context"
+    | "append_context_list"
     | "get_ui_state"
     | "highlight_on"
     | "highlight_off"
@@ -167,17 +170,49 @@ type EventConversationCheck = {
   updatedAt: string;
 };
 
+type EventClassifier = {
+  id: string;
+  groupId: string;
+  name: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  model: string;
+  condition: Record<string, unknown>;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type EventClassifierGroup = {
+  id: string;
+  eventId: string;
+  title: string;
+  instructions: string;
+  resultContextKey: string;
+  handlerActions: ActionSequenceStep[];
+  triggersEvent: string;
+  condition: Record<string, unknown>;
+  enabled: boolean;
+  sortOrder: number;
+  classifiers: EventClassifier[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ExperienceEvent = {
   id: string;
   experienceId: string;
   title: string;
   slug: string;
   description: string;
+  chatInstructions: string;
   isStart: boolean;
   sortOrder: number;
   steps: EventActionStep[];
   chatTools: EventChatTool[];
   conversationChecks: EventConversationCheck[];
+  classifierGroups: EventClassifierGroup[];
   createdAt: string;
   updatedAt: string;
 };
@@ -204,8 +239,9 @@ type ExperienceForm = {
 };
 
 type StepConditionDraft = {
-  type: "always" | "context_equals";
+  type: "always" | "context_equals" | "custom";
   key: string;
+  raw?: Record<string, unknown>;
   value: string;
 };
 
@@ -248,12 +284,38 @@ type EventConversationCheckDraft = {
   triggersEvent: string;
 };
 
+type EventClassifierDraft = {
+  condition: StepConditionDraft;
+  enabled: boolean;
+  id: string;
+  model: string;
+  name: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  sortOrder: number;
+};
+
+type EventClassifierGroupDraft = {
+  classifiers: EventClassifierDraft[];
+  condition: StepConditionDraft;
+  enabled: boolean;
+  handlerActions: EventStepDraft[];
+  id: string;
+  instructions: string;
+  resultContextKey: string;
+  sortOrder: number;
+  title: string;
+  triggersEvent: string;
+};
+
 type EventDraft = {
+  chatInstructions: string;
   title: string;
   description: string;
   steps: EventStepDraft[];
   chatTools: EventChatToolDraft[];
   conversationChecks: EventConversationCheckDraft[];
+  classifierGroups: EventClassifierGroupDraft[];
 };
 
 type StartEventPayload = SessionPayload & {
@@ -267,6 +329,7 @@ type StartEventPayload = SessionPayload & {
 type ConversationCheckPayload = SessionPayload & {
   actions: Array<Record<string, unknown>>;
   checks: Array<Record<string, unknown>>;
+  classifierGroups: Array<Record<string, unknown>>;
   handled: boolean;
   ran: boolean;
   ranEvents?: ExperienceEvent[];
@@ -510,6 +573,22 @@ function sortedEventConversationChecks(checks: EventConversationCheck[]) {
   );
 }
 
+function sortedEventClassifierGroups(groups: EventClassifierGroup[]) {
+  return [...groups].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+function sortedEventClassifiers(classifiers: EventClassifier[]) {
+  return [...classifiers].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
 function stringConfigValue(
   config: Record<string, unknown>,
   key: string,
@@ -529,11 +608,34 @@ function conditionDraftFromStep(step: ActionSequenceStep): StepConditionDraft {
     };
   }
 
+  if (conditionType && conditionType !== "always") {
+    return {
+      key: "",
+      raw: step.condition,
+      type: "custom",
+      value: "",
+    };
+  }
+
   return {
     key: "",
     type: "always",
     value: "",
   };
+}
+
+function conditionDraftFromRecord(
+  condition: Record<string, unknown> = {},
+): StepConditionDraft {
+  return conditionDraftFromStep({
+    actionType: "script",
+    condition,
+    config: {},
+    enabled: true,
+    id: "condition",
+    label: "",
+    sortOrder: 0,
+  });
 }
 
 function stepDraftFromStep(step: ActionSequenceStep): EventStepDraft {
@@ -647,10 +749,52 @@ function conversationCheckDraftFromCheck(
   };
 }
 
+function classifierDraftFromClassifier(
+  classifier: EventClassifier,
+): EventClassifierDraft {
+  return {
+    condition: conditionDraftFromRecord(classifier.condition),
+    enabled: classifier.enabled,
+    id: classifier.id,
+    model: classifier.model,
+    name: classifier.name,
+    prompt: classifier.prompt,
+    schema: classifier.schema,
+    sortOrder: classifier.sortOrder,
+  };
+}
+
+function classifierGroupDraftFromGroup(
+  group: EventClassifierGroup,
+): EventClassifierGroupDraft {
+  return {
+    classifiers: sortedEventClassifiers(group.classifiers ?? []).map(
+      classifierDraftFromClassifier,
+    ),
+    condition: conditionDraftFromRecord(group.condition),
+    enabled: group.enabled,
+    handlerActions: sortedActionSequenceSteps(group.handlerActions ?? []).map(
+      stepDraftFromStep,
+    ),
+    id: group.id,
+    instructions: group.instructions,
+    resultContextKey: group.resultContextKey,
+    sortOrder: group.sortOrder,
+    title: group.title,
+    triggersEvent: group.triggersEvent,
+  };
+}
+
 function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
   return {
+    chatInstructions: event?.chatInstructions ?? "",
     chatTools: event
       ? sortedEventChatTools(event.chatTools).map(chatToolDraftFromTool)
+      : [],
+    classifierGroups: event
+      ? sortedEventClassifierGroups(event.classifierGroups ?? []).map(
+          classifierGroupDraftFromGroup,
+        )
       : [],
     conversationChecks: event
       ? sortedEventConversationChecks(event.conversationChecks ?? []).map(
@@ -666,6 +810,9 @@ function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
 function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context") {
     return { key: "entry_ready", value: "yes" };
+  }
+  if (actionType === "append_context_list") {
+    return { key: "fruits_mentioned", value: "banana" };
   }
   if (actionType === "get_ui_state") {
     return { contextKey: "notes_visible", stateKey: "notesVisible" };
@@ -717,6 +864,7 @@ function defaultStepConfigForEvent(
 
 function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context") return "Set entry_ready";
+  if (actionType === "append_context_list") return "Append context";
   if (actionType === "get_ui_state") return "Read UI state";
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
@@ -767,6 +915,26 @@ function defaultConversationCheckPayload(
   };
 }
 
+function defaultClassifierGroupPayload(
+  events: ExperienceEvent[],
+  currentEventId: string,
+) {
+  const destination = sortedExperienceEvents(events).find(
+    (event) => event.id !== currentEventId,
+  );
+
+  return {
+    condition: {},
+    enabled: true,
+    handlerActions: [],
+    instructions:
+      "Run these classifiers independently before the assistant replies.",
+    resultContextKey: "_classifier_results",
+    title: "Classifier group",
+    triggersEvent: destination?.slug ?? "",
+  };
+}
+
 function eventActionLabel(actionType: EventActionStep["actionType"]) {
   return (
     eventActionOptions.find((option) => option.id === actionType)?.label ??
@@ -777,6 +945,9 @@ function eventActionLabel(actionType: EventActionStep["actionType"]) {
 function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_context") {
     return "Write a value into the run context";
+  }
+  if (actionType === "append_context_list") {
+    return "Add a value to a context list once";
   }
   if (actionType === "get_ui_state") {
     return "Copy current interface state into context";
@@ -801,7 +972,11 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
 }
 
 function eventActionToneClass(actionType: EventActionStep["actionType"]) {
-  if (actionType === "set_context" || actionType === "get_ui_state") {
+  if (
+    actionType === "set_context" ||
+    actionType === "append_context_list" ||
+    actionType === "get_ui_state"
+  ) {
     return "state";
   }
   if (
@@ -865,6 +1040,13 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
       slugs.add(handlerSlug);
     }
   }
+  for (const group of event.classifierGroups ?? []) {
+    const triggersEvent = group.triggersEvent.trim();
+    if (triggersEvent) slugs.add(triggersEvent);
+    for (const handlerSlug of actionSequenceOutgoingSlugs(group.handlerActions)) {
+      slugs.add(handlerSlug);
+    }
+  }
   return [...slugs];
 }
 
@@ -917,11 +1099,35 @@ function runtimeActionText(action: Record<string, unknown>) {
     const reason = compactRuntimeValue(action.reason, "");
     return reason ? `${result}: ${reason}` : result;
   }
+  if (type === "classifier_result") {
+    return `${compactRuntimeValue(action.classifierName, "classifier")}: ${compactRuntimeValue(
+      action.result,
+      "result",
+    )}`;
+  }
+  if (type === "classifier_group_result") {
+    return `${compactRuntimeValue(action.classifierGroupTitle, "classifiers")}: ${compactRuntimeValue(
+      action.results,
+      "results",
+    )}`;
+  }
+  if (type === "classifier_skipped" || type === "classifier_group_skipped") {
+    return `${compactRuntimeValue(
+      action.classifierName || action.classifierGroupTitle,
+      "classifier",
+    )} skipped`;
+  }
   if (type === "chat_tool_call") {
     return compactRuntimeValue(action.toolName, "function call");
   }
   if (type === "set_context") {
     return `${compactRuntimeValue(action.key, "key")} = ${compactRuntimeValue(
+      action.value,
+      "value",
+    )}`;
+  }
+  if (type === "append_context_list") {
+    return `${compactRuntimeValue(action.key, "key")} += ${compactRuntimeValue(
       action.value,
       "value",
     )}`;
@@ -963,6 +1169,11 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     const value = stringConfigValue(step.config, "value", "value");
     return `${key || "key"} = ${value || "value"}`;
   }
+  if (step.actionType === "append_context_list") {
+    const key = stringConfigValue(step.config, "key", "key");
+    const value = stringConfigValue(step.config, "value", "value");
+    return `${key || "key"} += ${value || "value"}`;
+  }
   if (step.actionType === "get_ui_state") {
     const stateKey = stringConfigValue(step.config, "stateKey", "ui state");
     const contextKey = stringConfigValue(step.config, "contextKey", "context");
@@ -998,6 +1209,9 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
 }
 
 function eventConditionSummary(condition: StepConditionDraft) {
+  if (condition.type === "custom") {
+    return compactRuntimeValue(condition.raw, "custom");
+  }
   if (condition.type !== "context_equals") return "";
 
   const key = condition.key.trim() || "context";
@@ -1006,6 +1220,7 @@ function eventConditionSummary(condition: StepConditionDraft) {
 }
 
 function normalizedStepCondition(condition: StepConditionDraft) {
+  if (condition.type === "custom") return condition.raw ?? {};
   if (condition.type !== "context_equals") return {};
 
   return {
@@ -1013,6 +1228,28 @@ function normalizedStepCondition(condition: StepConditionDraft) {
     type: "context_equals",
     value: condition.value,
   };
+}
+
+function mergeConditionDraft(
+  current: StepConditionDraft,
+  patch: Partial<StepConditionDraft>,
+) {
+  const nextCondition: StepConditionDraft = {
+    ...current,
+    ...patch,
+  };
+
+  if (patch.type === "always") {
+    nextCondition.key = "";
+    nextCondition.value = "";
+    delete nextCondition.raw;
+  }
+
+  if (patch.type === "context_equals") {
+    delete nextCondition.raw;
+  }
+
+  return nextCondition;
 }
 
 function comparableStepDraft(step: EventStepDraft) {
@@ -1122,6 +1359,39 @@ function comparableConversationCheck(check: EventConversationCheck) {
   return comparableConversationCheckDraft(conversationCheckDraftFromCheck(check));
 }
 
+function comparableClassifierDraft(classifier: EventClassifierDraft) {
+  return {
+    condition: normalizedStepCondition(classifier.condition),
+    enabled: classifier.enabled,
+    model: classifier.model,
+    name: classifier.name,
+    prompt: classifier.prompt,
+    schema: classifier.schema,
+    sortOrder: classifier.sortOrder,
+  };
+}
+
+function comparableClassifier(classifier: EventClassifier) {
+  return comparableClassifierDraft(classifierDraftFromClassifier(classifier));
+}
+
+function comparableClassifierGroupDraft(group: EventClassifierGroupDraft) {
+  return {
+    condition: normalizedStepCondition(group.condition),
+    enabled: group.enabled,
+    handlerActions: normalizedActionSequenceSteps(group.handlerActions),
+    instructions: group.instructions,
+    resultContextKey: group.resultContextKey,
+    sortOrder: group.sortOrder,
+    title: group.title,
+    triggersEvent: group.triggersEvent,
+  };
+}
+
+function comparableClassifierGroup(group: EventClassifierGroup) {
+  return comparableClassifierGroupDraft(classifierGroupDraftFromGroup(group));
+}
+
 function replaceExperienceEvent(
   experience: Experience,
   nextEvent: ExperienceEvent,
@@ -1201,6 +1471,56 @@ function replaceExperienceEventCheck(
         conversationChecks: (event.conversationChecks ?? [])
           .map((check) => (check.id === nextCheck.id ? nextCheck : check))
           .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
+}
+
+function replaceExperienceClassifierGroup(
+  experience: Experience,
+  eventId: string,
+  nextGroup: EventClassifierGroup,
+) {
+  return {
+    ...experience,
+    events: experience.events.map((event) => {
+      if (event.id !== eventId) return event;
+
+      return {
+        ...event,
+        classifierGroups: (event.classifierGroups ?? [])
+          .map((group) => (group.id === nextGroup.id ? nextGroup : group))
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
+}
+
+function replaceExperienceClassifier(
+  experience: Experience,
+  eventId: string,
+  groupId: string,
+  nextClassifier: EventClassifier,
+) {
+  return {
+    ...experience,
+    events: experience.events.map((event) => {
+      if (event.id !== eventId) return event;
+
+      return {
+        ...event,
+        classifierGroups: (event.classifierGroups ?? []).map((group) => {
+          if (group.id !== groupId) return group;
+
+          return {
+            ...group,
+            classifiers: (group.classifiers ?? [])
+              .map((classifier) =>
+                classifier.id === nextClassifier.id ? nextClassifier : classifier,
+              )
+              .sort((left, right) => left.sortOrder - right.sortOrder),
+          };
+        }),
       };
     }),
   };
@@ -1806,7 +2126,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const [selectedEventId, setSelectedEventId] = useState("");
   const [eventDraft, setEventDraft] = useState<EventDraft>({
+    chatInstructions: "",
     chatTools: [],
+    classifierGroups: [],
     conversationChecks: [],
     description: "",
     steps: [],
@@ -2281,7 +2603,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     if (
       draft.title !== selectedEvent.title ||
-      draft.description !== selectedEvent.description
+      draft.description !== selectedEvent.description ||
+      draft.chatInstructions !== (selectedEvent.chatInstructions ?? "")
     ) {
       return true;
     }
@@ -2319,7 +2642,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     );
     if (draft.conversationChecks.length !== currentChecks.length) return true;
 
-    return draft.conversationChecks.some((draftCheck) => {
+    const hasCheckChanges = draft.conversationChecks.some((draftCheck) => {
       const currentCheck = currentChecks.find(
         (check) => check.id === draftCheck.id,
       );
@@ -2329,6 +2652,45 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         JSON.stringify(comparableConversationCheckDraft(draftCheck)) !==
         JSON.stringify(comparableConversationCheck(currentCheck))
       );
+    });
+    if (hasCheckChanges) return true;
+
+    const currentGroups = sortedEventClassifierGroups(
+      selectedEvent.classifierGroups ?? [],
+    );
+    if (draft.classifierGroups.length !== currentGroups.length) return true;
+
+    return draft.classifierGroups.some((draftGroup) => {
+      const currentGroup = currentGroups.find(
+        (group) => group.id === draftGroup.id,
+      );
+      if (!currentGroup) return true;
+
+      if (
+        JSON.stringify(comparableClassifierGroupDraft(draftGroup)) !==
+        JSON.stringify(comparableClassifierGroup(currentGroup))
+      ) {
+        return true;
+      }
+
+      const currentClassifiers = sortedEventClassifiers(
+        currentGroup.classifiers ?? [],
+      );
+      if (draftGroup.classifiers.length !== currentClassifiers.length) {
+        return true;
+      }
+
+      return draftGroup.classifiers.some((draftClassifier) => {
+        const currentClassifier = currentClassifiers.find(
+          (classifier) => classifier.id === draftClassifier.id,
+        );
+        if (!currentClassifier) return true;
+
+        return (
+          JSON.stringify(comparableClassifierDraft(draftClassifier)) !==
+          JSON.stringify(comparableClassifier(currentClassifier))
+        );
+      });
     });
   }
 
@@ -2346,16 +2708,21 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       const currentChecks = sortedEventConversationChecks(
         selectedEvent.conversationChecks ?? [],
       );
+      const currentGroups = sortedEventClassifierGroups(
+        selectedEvent.classifierGroups ?? [],
+      );
 
       if (
         draft.title !== selectedEvent.title ||
-        draft.description !== selectedEvent.description
+        draft.description !== selectedEvent.description ||
+        draft.chatInstructions !== (selectedEvent.chatInstructions ?? "")
       ) {
         const eventPayload = await apiFetch<{ event: ExperienceEvent }>(
           `/api/experiences/${experience.id}/events/${selectedEvent.id}/`,
           {
             method: "PATCH",
             body: JSON.stringify({
+              chatInstructions: draft.chatInstructions,
               description: draft.description,
               title: draft.title,
             }),
@@ -2501,6 +2868,97 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         }
       }
 
+      for (const draftGroup of draft.classifierGroups) {
+        const currentGroup = currentGroups.find(
+          (group) => group.id === draftGroup.id,
+        );
+        if (!currentGroup) continue;
+
+        if (
+          JSON.stringify(comparableClassifierGroupDraft(draftGroup)) !==
+          JSON.stringify(comparableClassifierGroup(currentGroup))
+        ) {
+          const groupPayload = await apiFetch<{ group: EventClassifierGroup }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${draftGroup.id}/`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                condition: normalizedStepCondition(draftGroup.condition),
+                enabled: draftGroup.enabled,
+                handlerActions: normalizedActionSequenceSteps(
+                  draftGroup.handlerActions,
+                ),
+                instructions: draftGroup.instructions,
+                resultContextKey: draftGroup.resultContextKey,
+                sortOrder: draftGroup.sortOrder,
+                title: draftGroup.title,
+                triggersEvent: draftGroup.triggersEvent,
+              }),
+            },
+          );
+
+          if (eventAutosaveVersion.current === version) {
+            setExperience((current) =>
+              current && current.id === experience.id
+                ? replaceExperienceClassifierGroup(
+                    current,
+                    selectedEvent.id,
+                    groupPayload.group,
+                  )
+                : current,
+            );
+          }
+        }
+
+        const currentClassifiers = sortedEventClassifiers(
+          currentGroup.classifiers ?? [],
+        );
+        for (const draftClassifier of draftGroup.classifiers) {
+          const currentClassifier = currentClassifiers.find(
+            (classifier) => classifier.id === draftClassifier.id,
+          );
+          if (!currentClassifier) continue;
+
+          if (
+            JSON.stringify(comparableClassifierDraft(draftClassifier)) ===
+            JSON.stringify(comparableClassifier(currentClassifier))
+          ) {
+            continue;
+          }
+
+          const classifierPayload = await apiFetch<{
+            classifier: EventClassifier;
+          }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${draftGroup.id}/classifiers/${draftClassifier.id}/`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                condition: normalizedStepCondition(draftClassifier.condition),
+                enabled: draftClassifier.enabled,
+                model: draftClassifier.model,
+                name: draftClassifier.name,
+                prompt: draftClassifier.prompt,
+                schema: draftClassifier.schema,
+                sortOrder: draftClassifier.sortOrder,
+              }),
+            },
+          );
+
+          if (eventAutosaveVersion.current === version) {
+            setExperience((current) =>
+              current && current.id === experience.id
+                ? replaceExperienceClassifier(
+                    current,
+                    selectedEvent.id,
+                    draftGroup.id,
+                    classifierPayload.classifier,
+                  )
+                : current,
+            );
+          }
+        }
+      }
+
       return true;
     } catch (saveError) {
       if (eventAutosaveVersion.current === version) {
@@ -2536,7 +2994,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   function updateEventDraft(
-    field: "description" | "title",
+    field: "chatInstructions" | "description" | "title",
     value: string,
   ) {
     const nextDraft = {
@@ -2582,19 +3040,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     condition: Partial<StepConditionDraft>,
   ) {
     updateEventStepDraft(stepId, (step) => {
-      const nextCondition = {
-        ...step.condition,
-        ...condition,
-      };
-
-      if (condition.type === "always") {
-        nextCondition.key = "";
-        nextCondition.value = "";
-      }
-
       return {
         ...step,
-        condition: nextCondition,
+        condition: mergeConditionDraft(step.condition, condition),
       };
     });
   }
@@ -2693,19 +3141,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     condition: Partial<StepConditionDraft>,
   ) {
     updateEventChatToolActionDraft(toolId, actionId, (step) => {
-      const nextCondition = {
-        ...step.condition,
-        ...condition,
-      };
-
-      if (condition.type === "always") {
-        nextCondition.key = "";
-        nextCondition.value = "";
-      }
-
       return {
         ...step,
-        condition: nextCondition,
+        condition: mergeConditionDraft(step.condition, condition),
       };
     });
   }
@@ -2813,19 +3251,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     condition: Partial<StepConditionDraft>,
   ) {
     updateEventConversationCheckActionDraft(checkId, actionId, (step) => {
-      const nextCondition = {
-        ...step.condition,
-        ...condition,
-      };
-
-      if (condition.type === "always") {
-        nextCondition.key = "";
-        nextCondition.value = "";
-      }
-
       return {
         ...step,
-        condition: nextCondition,
+        condition: mergeConditionDraft(step.condition, condition),
       };
     });
   }
@@ -2866,6 +3294,150 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     updateEventConversationCheckDraft(checkId, (check) => ({
       ...check,
       handlerActions: check.handlerActions
+        .filter((step) => step.id !== actionId)
+        .map((step, index) => ({ ...step, sortOrder: index })),
+    }));
+  }
+
+  function updateEventClassifierGroupDraft(
+    groupId: string,
+    updater: (group: EventClassifierGroupDraft) => EventClassifierGroupDraft,
+  ) {
+    const nextDraft = {
+      ...eventDraft,
+      classifierGroups: eventDraft.classifierGroups.map((group) =>
+        group.id === groupId ? updater(group) : group,
+      ),
+    };
+
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
+  function updateEventClassifierGroupDraftField<
+    K extends keyof EventClassifierGroupDraft,
+  >(
+    groupId: string,
+    field: K,
+    value: EventClassifierGroupDraft[K],
+  ) {
+    updateEventClassifierGroupDraft(groupId, (group) => ({
+      ...group,
+      [field]: value,
+    }));
+  }
+
+  function updateEventClassifierDraft(
+    groupId: string,
+    classifierId: string,
+    updater: (classifier: EventClassifierDraft) => EventClassifierDraft,
+  ) {
+    updateEventClassifierGroupDraft(groupId, (group) => ({
+      ...group,
+      classifiers: group.classifiers.map((classifier) =>
+        classifier.id === classifierId ? updater(classifier) : classifier,
+      ),
+    }));
+  }
+
+  function updateEventClassifierDraftField<K extends keyof EventClassifierDraft>(
+    groupId: string,
+    classifierId: string,
+    field: K,
+    value: EventClassifierDraft[K],
+  ) {
+    updateEventClassifierDraft(groupId, classifierId, (classifier) => ({
+      ...classifier,
+      [field]: value,
+    }));
+  }
+
+  function updateEventClassifierCondition(
+    groupId: string,
+    classifierId: string,
+    condition: Partial<StepConditionDraft>,
+  ) {
+    updateEventClassifierDraft(groupId, classifierId, (classifier) => ({
+      ...classifier,
+      condition: mergeConditionDraft(classifier.condition, condition),
+    }));
+  }
+
+  function updateEventClassifierGroupActionDraft(
+    groupId: string,
+    actionId: string,
+    updater: (step: EventStepDraft) => EventStepDraft,
+  ) {
+    updateEventClassifierGroupDraft(groupId, (group) => ({
+      ...group,
+      handlerActions: group.handlerActions.map((step) =>
+        step.id === actionId ? updater(step) : step,
+      ),
+    }));
+  }
+
+  function updateEventClassifierGroupActionConfig(
+    groupId: string,
+    actionId: string,
+    key: string,
+    value: string,
+  ) {
+    updateEventClassifierGroupActionDraft(groupId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        [key]: value,
+      },
+    }));
+  }
+
+  function updateEventClassifierGroupActionCondition(
+    groupId: string,
+    actionId: string,
+    condition: Partial<StepConditionDraft>,
+  ) {
+    updateEventClassifierGroupActionDraft(groupId, actionId, (step) => ({
+      ...step,
+      condition: mergeConditionDraft(step.condition, condition),
+    }));
+  }
+
+  function addEventClassifierGroupAction(
+    groupId: string,
+    actionType: EventActionStep["actionType"],
+  ) {
+    const actionId = localMessageId("classifier-action");
+    updateEventClassifierGroupDraft(groupId, (group) => ({
+      ...group,
+      handlerActions: [
+        ...group.handlerActions,
+        {
+          actionType,
+          condition: {
+            key: "",
+            type: "always",
+            value: "",
+          },
+          config: defaultStepConfigForEvent(
+            actionType,
+            editorEvents,
+            selectedEventId,
+          ),
+          enabled: true,
+          id: actionId,
+          label: defaultStepLabel(actionType),
+          sortOrder: group.handlerActions.length,
+        },
+      ],
+    }));
+    setExpandedStepId(actionId);
+    setConversationAddMenuCheckId("");
+  }
+
+  function deleteEventClassifierGroupAction(groupId: string, actionId: string) {
+    updateEventClassifierGroupDraft(groupId, (group) => ({
+      ...group,
+      handlerActions: group.handlerActions
         .filter((step) => step.id !== actionId)
         .map((step, index) => ({ ...step, sortOrder: index })),
     }));
@@ -3062,6 +3634,91 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function addEventClassifierGroup() {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const existingGroupIds = new Set(
+        (selectedEvent.classifierGroups ?? []).map((group) => group.id),
+      );
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            defaultClassifierGroupPayload(experience.events, selectedEvent.id),
+          ),
+        },
+      );
+      applyUpdatedEvent(payload.event);
+      const nextGroup = sortedEventClassifierGroups(
+        payload.event.classifierGroups ?? [],
+      ).find((group) => !existingGroupIds.has(group.id));
+      if (nextGroup) {
+        setExpandedStepId(nextGroup.id);
+      }
+      setIsConversationAddMenuOpen(false);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not add classifier group.",
+      );
+    }
+  }
+
+  async function addEventClassifier(groupId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const group = selectedEvent.classifierGroups.find(
+        (candidate) => candidate.id === groupId,
+      );
+      const existingNames = new Set(
+        (group?.classifiers ?? []).map((classifier) => classifier.name),
+      );
+      let name = "classifier";
+      let suffix = 2;
+      while (existingNames.has(name)) {
+        name = `classifier_${suffix}`;
+        suffix += 1;
+      }
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/classifiers/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            condition: {},
+            enabled: true,
+            model: "",
+            name,
+            prompt: "Return mentioned=true when the latest user message matches.",
+            schema: {},
+          }),
+        },
+      );
+      applyUpdatedEvent(payload.event);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not add classifier.",
+      );
+    }
+  }
+
   async function deleteEventChatTool(toolId: string) {
     const { selectedEvent } = getSelectedEventParts();
     if (!experience || !selectedEvent) return;
@@ -3113,6 +3770,61 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         deleteError instanceof Error
           ? deleteError.message
           : "Could not delete conversation check.",
+      );
+    }
+  }
+
+  async function deleteEventClassifierGroup(groupId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      applyUpdatedEvent(payload.event);
+      if (expandedStepId === groupId) {
+        setExpandedStepId("");
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete classifier group.",
+      );
+    }
+  }
+
+  async function deleteEventClassifier(groupId: string, classifierId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/classifiers/${classifierId}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      applyUpdatedEvent(payload.event);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete classifier.",
       );
     }
   }
@@ -3376,6 +4088,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           eventTitleForTrigger(editorEvents, check.triggersEvent) ||
           "Choose event",
       })),
+    )
+    .concat(
+      eventDraft.classifierGroups.map((group) => ({
+        id: group.id,
+        label: "Classifiers",
+        target:
+          eventTitleForTrigger(editorEvents, group.triggersEvent) ||
+          "No direct route",
+      })),
     );
 
   function renderActionStepDetail(
@@ -3410,6 +4131,20 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 type="text"
                 value={step.condition.value}
               />
+              <button
+                className="event-text-button"
+                onClick={() => updateCondition({ type: "always" })}
+                type="button"
+              >
+                Clear
+              </button>
+            </>
+          ) : step.condition.type === "custom" ? (
+            <>
+              <span className="event-detail-label">IF</span>
+              <span className="event-custom-condition">
+                {compactRuntimeValue(step.condition.raw, "custom condition")}
+              </span>
               <button
                 className="event-text-button"
                 onClick={() => updateCondition({ type: "always" })}
@@ -3454,6 +4189,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               aria-label="Context value"
               onChange={(event) => updateConfig("value", event.target.value)}
               placeholder="yes"
+              type="text"
+              value={stringConfigValue(step.config, "value")}
+            />
+          </div>
+        ) : null}
+
+        {step.actionType === "append_context_list" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">APPEND</span>
+            <input
+              aria-label="Context list key"
+              onChange={(event) => updateConfig("key", event.target.value)}
+              placeholder="fruits_mentioned"
+              type="text"
+              value={stringConfigValue(step.config, "key")}
+            />
+            <span className="event-inline-operator">+=</span>
+            <input
+              aria-label="Context list value"
+              onChange={(event) => updateConfig("value", event.target.value)}
+              placeholder="banana"
               type="text"
               value={stringConfigValue(step.config, "value")}
             />
@@ -3838,6 +4594,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 </div>
               ) : null}
 
+              <div className="event-context-line single-value event-chat-instructions-line">
+                <span className="event-detail-label">CHAT INSTRUCTIONS</span>
+                <input
+                  aria-label="Event chat instructions"
+                  onChange={(event) =>
+                    updateEventDraft("chatInstructions", event.target.value)
+                  }
+                  placeholder="Optional context-aware instructions for chat in this event."
+                  type="text"
+                  value={eventDraft.chatInstructions}
+                />
+              </div>
+
               <div className="event-sequence-header">
                 <span>On entry</span>
               </div>
@@ -3989,6 +4758,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   Clear
                                 </button>
                               </>
+                            ) : step.condition.type === "custom" ? (
+                              <>
+                                <span className="event-detail-label">IF</span>
+                                <span className="event-custom-condition">
+                                  {compactRuntimeValue(
+                                    step.condition.raw,
+                                    "custom condition",
+                                  )}
+                                </span>
+                                <button
+                                  className="event-text-button"
+                                  onClick={() =>
+                                    updateEventStepCondition(step.id, {
+                                      type: "always",
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  Clear
+                                </button>
+                              </>
                             ) : (
                               <button
                                 className="event-add-condition-button"
@@ -4047,6 +4837,39 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   )
                                 }
                                 placeholder="yes"
+                                type="text"
+                                value={stringConfigValue(step.config, "value")}
+                              />
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "append_context_list" ? (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">APPEND</span>
+                              <input
+                                aria-label="Context list key"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "key",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="fruits_mentioned"
+                                type="text"
+                                value={stringConfigValue(step.config, "key")}
+                              />
+                              <span className="event-inline-operator">+=</span>
+                              <input
+                                aria-label="Context list value"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "value",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="banana"
                                 type="text"
                                 value={stringConfigValue(step.config, "value")}
                               />
@@ -5035,8 +5858,471 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     </article>
                   );
                 })}
+                {eventDraft.classifierGroups.map((group) => {
+                  const isHandlerActionExpanded = group.handlerActions.some(
+                    (step) => step.id === expandedStepId,
+                  );
+                  const isExpanded =
+                    expandedStepId === group.id || isHandlerActionExpanded;
+                  const targetEventSlug = group.triggersEvent;
+                  const hasTriggerEventOption = editorEvents.some(
+                    (event) => event.slug === targetEventSlug,
+                  );
+                  const groupMenuId = `classifier-group:${group.id}`;
+
+                  return (
+                    <article
+                      className={[
+                        "event-step",
+                        "chat-exit-step",
+                        "tone-state",
+                        isExpanded ? "is-expanded" : "",
+                        !group.enabled ? "is-disabled" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={group.id}
+                    >
+                      <div className="event-step-main">
+                        <span className="event-drag-handle is-static">
+                          <GripIcon />
+                        </span>
+
+                        <div className="event-step-summary chat-exit-summary">
+                          <button
+                            aria-expanded={isExpanded}
+                            className="event-step-kind chat-exit-expand-button"
+                            onClick={() =>
+                              setExpandedStepId(isExpanded ? "" : group.id)
+                            }
+                            type="button"
+                          >
+                            Classifiers
+                          </button>
+                          <input
+                            aria-label="Classifier group title"
+                            className="chat-exit-title-input"
+                            onChange={(event) =>
+                              updateEventClassifierGroupDraftField(
+                                group.id,
+                                "title",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Title"
+                            style={inlineFieldWidthStyle(
+                              group.title,
+                              "Title",
+                              5,
+                              34,
+                            )}
+                            type="text"
+                            value={group.title}
+                          />
+                        </div>
+
+                        <div className="event-step-tools">
+                          <button
+                            aria-label={
+                              group.enabled
+                                ? "Disable classifier group"
+                                : "Enable classifier group"
+                            }
+                            className={`event-enable-button${
+                              group.enabled ? "" : " is-off"
+                            }`}
+                            onClick={() =>
+                              updateEventClassifierGroupDraft(
+                                group.id,
+                                (currentGroup) => ({
+                                  ...currentGroup,
+                                  enabled: !currentGroup.enabled,
+                                }),
+                              )
+                            }
+                            title={group.enabled ? "Enabled" : "Disabled"}
+                            type="button"
+                          >
+                            <span />
+                          </button>
+                          <button
+                            aria-label="Delete classifier group"
+                            className="event-icon-button danger"
+                            onClick={() =>
+                              void deleteEventClassifierGroup(group.id)
+                            }
+                            type="button"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="event-step-detail chat-exit-detail">
+                          <div className="event-context-line conversation-check-core-line">
+                            <span className="event-detail-label">SAVE AS</span>
+                            <input
+                              aria-label="Classifier group result context key"
+                              onChange={(event) =>
+                                updateEventClassifierGroupDraftField(
+                                  group.id,
+                                  "resultContextKey",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="_classifier_results"
+                              type="text"
+                              value={group.resultContextKey}
+                            />
+                            <span className="event-detail-label">DESTINATION</span>
+                            <select
+                              aria-label="Classifier group destination event"
+                              onChange={(event) =>
+                                updateEventClassifierGroupDraftField(
+                                  group.id,
+                                  "triggersEvent",
+                                  event.target.value,
+                                )
+                              }
+                              value={targetEventSlug}
+                            >
+                              <option value="">None</option>
+                              {targetEventSlug && !hasTriggerEventOption ? (
+                                <option value={targetEventSlug}>
+                                  {targetEventSlug}
+                                </option>
+                              ) : null}
+                              {editorEvents.map((event) => (
+                                <option key={event.id} value={event.slug}>
+                                  {event.title || event.slug}
+                                  {event.isStart ? " (start)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="event-context-line single-value">
+                            <span className="event-detail-label">
+                              GROUP INSTRUCTIONS
+                            </span>
+                            <input
+                              aria-label="Classifier group instructions"
+                              onChange={(event) =>
+                                updateEventClassifierGroupDraftField(
+                                  group.id,
+                                  "instructions",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Shared instructions for this classifier pass."
+                              type="text"
+                              value={group.instructions}
+                            />
+                          </div>
+
+                          <div className="chat-exit-capture-block">
+                            <div className="chat-exit-capture-header">
+                              <button
+                                className="event-add-button compact"
+                                onClick={() => void addEventClassifier(group.id)}
+                                type="button"
+                              >
+                                <PlusIcon />
+                                Classifier
+                              </button>
+                            </div>
+                            {group.classifiers.map((classifier) => (
+                              <div
+                                className="event-context-line chat-exit-capture-line"
+                                key={classifier.id}
+                              >
+                                <span className="event-detail-label">NAME</span>
+                                <input
+                                  aria-label="Classifier name"
+                                  onChange={(event) =>
+                                    updateEventClassifierDraftField(
+                                      group.id,
+                                      classifier.id,
+                                      "name",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="banana"
+                                  type="text"
+                                  value={classifier.name}
+                                />
+                                <span className="event-detail-label">PROMPT</span>
+                                <input
+                                  aria-label="Classifier prompt"
+                                  onChange={(event) =>
+                                    updateEventClassifierDraftField(
+                                      group.id,
+                                      classifier.id,
+                                      "prompt",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Return mentioned=true when..."
+                                  type="text"
+                                  value={classifier.prompt}
+                                />
+                                <button
+                                  className={`event-if-chip${
+                                    eventConditionSummary(classifier.condition)
+                                      ? ""
+                                      : " is-empty"
+                                  }`}
+                                  onClick={() =>
+                                    updateEventClassifierCondition(
+                                      group.id,
+                                      classifier.id,
+                                      classifier.condition.type === "always"
+                                        ? { type: "context_equals" }
+                                        : { type: "always" },
+                                    )
+                                  }
+                                  title="Toggle classifier condition"
+                                  type="button"
+                                >
+                                  IF
+                                  {eventConditionSummary(classifier.condition)
+                                    ? ` ${eventConditionSummary(classifier.condition)}`
+                                    : ""}
+                                </button>
+                                <button
+                                  aria-label={
+                                    classifier.enabled
+                                      ? "Disable classifier"
+                                      : "Enable classifier"
+                                  }
+                                  className={`event-enable-button${
+                                    classifier.enabled ? "" : " is-off"
+                                  }`}
+                                  onClick={() =>
+                                    updateEventClassifierDraft(
+                                      group.id,
+                                      classifier.id,
+                                      (currentClassifier) => ({
+                                        ...currentClassifier,
+                                        enabled: !currentClassifier.enabled,
+                                      }),
+                                    )
+                                  }
+                                  title={classifier.enabled ? "Enabled" : "Disabled"}
+                                  type="button"
+                                >
+                                  <span />
+                                </button>
+                                <button
+                                  aria-label="Delete classifier"
+                                  className="event-icon-button danger"
+                                  onClick={() =>
+                                    void deleteEventClassifier(
+                                      group.id,
+                                      classifier.id,
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </div>
+                            ))}
+                            {!group.classifiers.length ? (
+                              <div className="chat-exit-empty">---</div>
+                            ) : null}
+                          </div>
+
+                          <div className="chat-tool-actions-block">
+                            <div
+                              className="event-add-block chat-tool-action-add"
+                              ref={
+                                conversationAddMenuCheckId === groupMenuId
+                                  ? conversationCheckAddBlockRef
+                                  : null
+                              }
+                            >
+                              <button
+                                aria-expanded={
+                                  conversationAddMenuCheckId === groupMenuId
+                                }
+                                className="event-add-button compact"
+                                onClick={() =>
+                                  setConversationAddMenuCheckId((current) =>
+                                    current === groupMenuId ? "" : groupMenuId,
+                                  )
+                                }
+                                type="button"
+                              >
+                                <PlusIcon />
+                                Action
+                              </button>
+                              {conversationAddMenuCheckId === groupMenuId ? (
+                                <div className="event-add-menu chat-tool-add-menu">
+                                  {eventActionOptions.map((option) => (
+                                    <button
+                                      className={`event-add-option tone-${eventActionToneClass(
+                                        option.id,
+                                      )}`}
+                                      key={option.id}
+                                      onClick={() =>
+                                        addEventClassifierGroupAction(
+                                          group.id,
+                                          option.id,
+                                        )
+                                      }
+                                      type="button"
+                                    >
+                                      <span>{option.label}</span>
+                                      <small>{eventActionDescription(option.id)}</small>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {group.handlerActions.length ? (
+                              <div className="event-step-list chat-tool-action-list">
+                                {group.handlerActions.map((step) => {
+                                  const conditionText = eventConditionSummary(
+                                    step.condition,
+                                  );
+                                  const isActionExpanded =
+                                    expandedStepId === step.id;
+                                  const toneClass = eventActionToneClass(
+                                    step.actionType,
+                                  );
+
+                                  return (
+                                    <article
+                                      className={[
+                                        "event-step",
+                                        "chat-tool-action-step",
+                                        `tone-${toneClass}`,
+                                        isActionExpanded ? "is-expanded" : "",
+                                        !step.enabled ? "is-disabled" : "",
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" ")}
+                                      key={step.id}
+                                    >
+                                      <div className="event-step-main">
+                                        <span className="event-drag-handle is-static">
+                                          <GripIcon />
+                                        </span>
+
+                                        <button
+                                          aria-expanded={isActionExpanded}
+                                          className="event-step-summary"
+                                          onClick={() =>
+                                            setExpandedStepId(
+                                              isActionExpanded ? group.id : step.id,
+                                            )
+                                          }
+                                          type="button"
+                                        >
+                                          <span className="event-step-kind">
+                                            {eventActionLabel(step.actionType)}
+                                          </span>
+                                          <span className="event-step-copy">
+                                            {eventStepSummary(step, editorEvents)}
+                                          </span>
+                                        </button>
+
+                                        <div className="event-step-tools">
+                                          <button
+                                            className={`event-if-chip${
+                                              conditionText ? "" : " is-empty"
+                                            }`}
+                                            onClick={() => setExpandedStepId(step.id)}
+                                            title={
+                                              conditionText
+                                                ? `Condition: ${conditionText}`
+                                                : "Set condition"
+                                            }
+                                            type="button"
+                                          >
+                                            IF
+                                            {conditionText ? ` ${conditionText}` : ""}
+                                          </button>
+                                          <button
+                                            aria-label={
+                                              step.enabled
+                                                ? "Disable action"
+                                                : "Enable action"
+                                            }
+                                            className={`event-enable-button${
+                                              step.enabled ? "" : " is-off"
+                                            }`}
+                                            onClick={() =>
+                                              updateEventClassifierGroupActionDraft(
+                                                group.id,
+                                                step.id,
+                                                (currentStep) => ({
+                                                  ...currentStep,
+                                                  enabled: !currentStep.enabled,
+                                                }),
+                                              )
+                                            }
+                                            title={
+                                              step.enabled ? "Enabled" : "Disabled"
+                                            }
+                                            type="button"
+                                          >
+                                            <span />
+                                          </button>
+                                          <button
+                                            aria-label="Delete action"
+                                            className="event-icon-button danger"
+                                            onClick={() => {
+                                              deleteEventClassifierGroupAction(
+                                                group.id,
+                                                step.id,
+                                              );
+                                              if (expandedStepId === step.id) {
+                                                setExpandedStepId(group.id);
+                                              }
+                                            }}
+                                            type="button"
+                                          >
+                                            <TrashIcon />
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {isActionExpanded
+                                        ? renderActionStepDetail(
+                                            step,
+                                            (key, value) =>
+                                              updateEventClassifierGroupActionConfig(
+                                                group.id,
+                                                step.id,
+                                                key,
+                                                value,
+                                              ),
+                                            (condition) =>
+                                              updateEventClassifierGroupActionCondition(
+                                                group.id,
+                                                step.id,
+                                                condition,
+                                              ),
+                                            "event-step-detail chat-tool-action-detail",
+                                          )
+                                        : null}
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
                 {!eventDraft.chatTools.length &&
-                !eventDraft.conversationChecks.length ? (
+                !eventDraft.conversationChecks.length &&
+                !eventDraft.classifierGroups.length ? (
                   <div className="chat-exit-empty">---</div>
                 ) : null}
               </div>
@@ -5073,6 +6359,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     >
                       <span>Check</span>
                       <small>Classifier that can save, act, and route</small>
+                    </button>
+                    <button
+                      className="event-add-option tone-state"
+                      onClick={() => void addEventClassifierGroup()}
+                      type="button"
+                    >
+                      <span>Classifier group</span>
+                      <small>Concurrent function-call style classifiers</small>
                     </button>
                   </div>
                 ) : null}
