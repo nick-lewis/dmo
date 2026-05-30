@@ -21,6 +21,7 @@ class TutorSettingsInline(admin.StackedInline):
         "assistant_name",
         "avatar_path",
         "realtime_model",
+        "classification_model",
         "voice",
         "system_prompt",
         "voice_instructions",
@@ -130,7 +131,13 @@ class ExperienceAdmin(admin.ModelAdmin):
 
 @admin.register(TutorSettings)
 class TutorSettingsAdmin(admin.ModelAdmin):
-    list_display = ("experience", "assistant_name", "realtime_model", "voice")
+    list_display = (
+        "experience",
+        "assistant_name",
+        "realtime_model",
+        "classification_model",
+        "voice",
+    )
     search_fields = ("experience__title", "assistant_name")
 
 

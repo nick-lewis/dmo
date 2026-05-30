@@ -132,6 +132,7 @@ class Command(BaseCommand):
         TutorSettings.objects.filter(id=tutor_settings.id).update(
             assistant_name="dee-lou",
             avatar_path="test-images/dLU-right.png",
+            classification_model="gpt-5.4-mini",
             voice="ash",
         )
 

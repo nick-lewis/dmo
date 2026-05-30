@@ -641,10 +641,11 @@ button {
 .tutor-editor-section .tutor-compact-grid {
   grid-template-columns:
     minmax(86px, auto)
-    minmax(118px, 0.8fr)
-    minmax(88px, 0.54fr)
-    minmax(96px, 0.58fr)
-    minmax(250px, 1.65fr);
+    minmax(118px, 0.72fr)
+    minmax(88px, 0.48fr)
+    minmax(108px, 0.58fr)
+    minmax(96px, 0.52fr)
+    minmax(230px, 1.42fr);
   align-items: start;
 }
 

@@ -28,6 +28,7 @@ from .audio_cache import (
     voice_sample_audio_path,
 )
 from .models import (
+    DEFAULT_CLASSIFICATION_MODEL,
     EventActionStep,
     EventChatTool,
     EventClassifier,
@@ -53,6 +54,12 @@ REALTIME_MODELS = {
     "gpt-realtime-mini",
     "gpt-realtime-1.5",
     "gpt-realtime-2",
+}
+CLASSIFICATION_MODELS = {
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
 }
 REALTIME_VOICES = {
     "alloy",
@@ -131,6 +138,7 @@ def serialize_tutor_settings(tutor_settings):
     return {
         "assistantName": tutor_settings.assistant_name,
         "avatarPath": tutor_settings.avatar_path,
+        "classificationModel": tutor_settings.classification_model,
         "realtimeModel": tutor_settings.realtime_model,
         "systemPrompt": tutor_settings.system_prompt,
         "voice": tutor_settings.voice,
@@ -371,12 +379,16 @@ def ensure_tutor_settings(experience):
         defaults={
             "assistant_name": "dee-lou",
             "avatar_path": "test-images/dLU-right.png",
+            "classification_model": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
             "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
             "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
             "system_prompt": settings.DLU_REALTIME_DEFAULT_INSTRUCTIONS,
             "voice_instructions": "",
         },
     )
+    if not tutor_settings.classification_model:
+        tutor_settings.classification_model = settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+        tutor_settings.save(update_fields=["classification_model", "updated_at"])
     return tutor_settings
 
 
@@ -598,6 +610,13 @@ def normalize_realtime_choice(value, allowed_values, default_value):
     if choice not in allowed_values:
         return None
     return choice
+
+
+def classification_model_choices():
+    return CLASSIFICATION_MODELS | {
+        settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+        DEFAULT_CLASSIFICATION_MODEL,
+    }
 
 
 def normalize_runtime_value(value):
@@ -1866,6 +1885,7 @@ def evaluate_event_classifier(
     current_event,
     group,
     classifier,
+    default_model,
     runtime_context,
     transcript,
 ):
@@ -1873,7 +1893,12 @@ def evaluate_event_classifier(
         return None, "OPENAI_API_KEY is not configured."
 
     schema = classifier_schema(classifier)
-    model = classifier.model.strip() or settings.DLU_CONVERSATION_CHECK_MODEL
+    model = (
+        classifier.model.strip()
+        or str(default_model or "").strip()
+        or settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+        or DEFAULT_CLASSIFICATION_MODEL
+    )
     prompt = "\n\n".join(
         [
             "Run one independent classifier for the current tutoring chat.",
@@ -1995,6 +2020,16 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
 
     if classifiers_to_run:
         transcript = conversation_check_transcript(session)
+        tutor_settings = (
+            ensure_tutor_settings(session.experience)
+            if session.experience_id
+            else None
+        )
+        default_model = (
+            tutor_settings.classification_model
+            if tutor_settings
+            else settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+        )
         max_workers = min(6, len(classifiers_to_run))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -2004,6 +2039,7 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
                     current_event,
                     group,
                     classifier,
+                    default_model,
                     runtime_context,
                     transcript,
                 ): classifier
@@ -2045,6 +2081,16 @@ def evaluate_conversation_check(session, check):
         return None, "OPENAI_API_KEY is not configured."
 
     current_event = get_session_current_event(session)
+    tutor_settings = (
+        ensure_tutor_settings(session.experience)
+        if session.experience_id
+        else None
+    )
+    model = (
+        tutor_settings.classification_model
+        if tutor_settings
+        else settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+    )
     prompt = "\n\n".join(
         [
             "Evaluate this conversation check for the current tutoring session.",
@@ -2066,7 +2112,7 @@ def evaluate_conversation_check(session, check):
                 "OpenAI-Safety-Identifier": hash_safety_identifier(session.user),
             },
             json={
-                "model": settings.DLU_CONVERSATION_CHECK_MODEL,
+                "model": model,
                 "messages": [
                     {
                         "role": "system",
@@ -2285,6 +2331,19 @@ def update_experience(request, experience_id):
             if model is None:
                 return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
             tutor_settings.realtime_model = model
+
+        if "classificationModel" in tutor_data:
+            classification_model = normalize_realtime_choice(
+                tutor_data.get("classificationModel"),
+                classification_model_choices(),
+                settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+            )
+            if classification_model is None:
+                return JsonResponse(
+                    {"detail": "Classification model is not supported."},
+                    status=400,
+                )
+            tutor_settings.classification_model = classification_model
 
         if "voice" in tutor_data:
             voice = normalize_realtime_choice(

@@ -4,6 +4,9 @@ from django.conf import settings
 from django.db import models
 
 
+DEFAULT_CLASSIFICATION_MODEL = "gpt-5.4-mini"
+
+
 class Experience(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -42,6 +45,10 @@ class TutorSettings(models.Model):
     assistant_name = models.CharField(max_length=100, default="dee-lou")
     avatar_path = models.CharField(max_length=220, default="test-images/dLU-right.png")
     realtime_model = models.CharField(max_length=100, default="gpt-realtime-mini")
+    classification_model = models.CharField(
+        max_length=100,
+        default=DEFAULT_CLASSIFICATION_MODEL,
+    )
     voice = models.CharField(max_length=40, default="ash")
     system_prompt = models.TextField(blank=True, default="")
     voice_instructions = models.TextField(blank=True, default="")

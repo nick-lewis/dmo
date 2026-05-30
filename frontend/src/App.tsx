@@ -21,6 +21,15 @@ import {
   realtimeVoiceOptions,
 } from "./realtime";
 
+const classificationModelOptions = [
+  { id: "gpt-5.4-mini", label: "5.4 mini" },
+  { id: "gpt-5.4-nano", label: "5.4 nano" },
+  { id: "gpt-5.4", label: "5.4" },
+  { id: "gpt-5.5", label: "5.5" },
+] as const;
+
+type ClassificationModelId = string;
+
 const leftPanels = [
   { density: "tall", kind: "experience", label: "Experience" },
   { density: "tutor", kind: "tutor", label: "Tutor settings" },
@@ -102,6 +111,7 @@ type SessionPayload = {
 type TutorSettings = {
   assistantName: string;
   avatarPath: string;
+  classificationModel: ClassificationModelId;
   realtimeModel: RealtimeModelId;
   systemPrompt: string;
   voice: RealtimeVoiceId;
@@ -2156,6 +2166,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [tutorForm, setTutorForm] = useState<TutorSettings>({
     assistantName: "dee-lou",
     avatarPath: "test-images/dLU-right.png",
+    classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
     systemPrompt: "",
     voice: "ash",
@@ -2520,6 +2531,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     return (
       draft.assistantName !== experience.tutor.assistantName ||
       draft.avatarPath !== experience.tutor.avatarPath ||
+      draft.classificationModel !== experience.tutor.classificationModel ||
       draft.realtimeModel !== experience.tutor.realtimeModel ||
       draft.systemPrompt !== experience.tutor.systemPrompt ||
       draft.voice !== experience.tutor.voice ||
@@ -2559,6 +2571,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         if (
           current.assistantName !== draft.assistantName ||
           current.avatarPath !== draft.avatarPath ||
+          current.classificationModel !== draft.classificationModel ||
           current.realtimeModel !== draft.realtimeModel ||
           current.systemPrompt !== draft.systemPrompt ||
           current.voice !== draft.voice ||
@@ -4476,6 +4489,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 isSaving={isSavingTutor}
                 onAvatarPathChange={(avatarPath) =>
                   updateTutorDraft("avatarPath", avatarPath)
+                }
+                onClassificationModelChange={(classificationModel) =>
+                  updateTutorDraft("classificationModel", classificationModel)
                 }
                 onModelChange={(realtimeModel) =>
                   updateTutorDraft("realtimeModel", realtimeModel)
@@ -6454,6 +6470,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [tutorForm, setTutorForm] = useState<TutorSettings>({
     assistantName: "dee-lou",
     avatarPath: "test-images/dLU-right.png",
+    classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
     systemPrompt: "",
     voice: "ash",
@@ -7860,6 +7877,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                         ...current,
                         avatarPath,
                       })),
+                    onClassificationModelChange: (classificationModel) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        classificationModel,
+                      })),
                     onModelChange: (model) => {
                       setTutorForm((current) => ({
                         ...current,
@@ -8138,6 +8160,7 @@ type TutorControlsProps = {
   error: string;
   isSaving: boolean;
   onAvatarPathChange: (avatarPath: string) => void;
+  onClassificationModelChange: (model: ClassificationModelId) => void;
   onModelChange: (model: RealtimeModelId) => void;
   onNameChange: (assistantName: string) => void;
   onPlaySample?: () => Promise<void> | void;
@@ -8441,6 +8464,7 @@ function TutorControls({
   error,
   isSaving,
   onAvatarPathChange,
+  onClassificationModelChange,
   onModelChange,
   onNameChange,
   onPlaySample,
@@ -8458,6 +8482,17 @@ function TutorControls({
   )
     ? tutorAvatarOptions
     : [{ label: "Current image", path: tutor.avatarPath }, ...tutorAvatarOptions];
+  const classificationChoices = classificationModelOptions.some(
+    (option) => option.id === tutor.classificationModel,
+  )
+    ? classificationModelOptions
+    : [
+        {
+          id: tutor.classificationModel,
+          label: tutor.classificationModel,
+        },
+        ...classificationModelOptions,
+      ];
   const sampleActionLabel =
     sampleStatus === "playing"
       ? "Stop voice sample"
@@ -8558,6 +8593,24 @@ function TutorControls({
             value={tutor.realtimeModel}
           >
             {realtimeModelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="control-field">
+          <span>Classify</span>
+          <select
+            onChange={(event) =>
+              onClassificationModelChange(
+                event.target.value as ClassificationModelId,
+              )
+            }
+            value={tutor.classificationModel}
+          >
+            {classificationChoices.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.label}
               </option>
