@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type DragEvent,
   type Dispatch,
   type FocusEvent,
   type FormEvent,
@@ -288,6 +289,22 @@ function localMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function resizeTextareaToContent(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function inlineFieldWidthStyle(
+  value: string,
+  fallback: string,
+  minCh: number,
+  maxCh: number,
+): CSSProperties {
+  const length = (value.trim() || fallback).length + 1;
+  return { width: `${clamp(length, minCh, maxCh)}ch` };
+}
+
 function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => left.sequence - right.sequence);
 }
@@ -369,6 +386,52 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
 
 function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   return actionType === "set_context" ? "Set entry_ready" : "Say";
+}
+
+function eventActionLabel(actionType: EventActionStep["actionType"]) {
+  return (
+    eventActionOptions.find((option) => option.id === actionType)?.label ??
+    "Action"
+  );
+}
+
+function eventActionDescription(actionType: EventActionStep["actionType"]) {
+  if (actionType === "set_context") {
+    return "Write a value into the run context";
+  }
+
+  return "Have the agent speak in the chat";
+}
+
+function eventActionToneClass(actionType: EventActionStep["actionType"]) {
+  return actionType === "set_context" ? "state" : "speech";
+}
+
+function compactPreview(value: string, fallback: string) {
+  const compact = value.trim().replace(/\s+/g, " ");
+  if (!compact) return fallback;
+  return compact.length > 112 ? `${compact.slice(0, 109)}...` : compact;
+}
+
+function eventStepSummary(step: EventStepDraft) {
+  if (step.actionType === "set_context") {
+    const key = stringConfigValue(step.config, "key", "key");
+    const value = stringConfigValue(step.config, "value", "value");
+    return `${key || "key"} = ${value || "value"}`;
+  }
+
+  return compactPreview(
+    stringConfigValue(step.config, "text"),
+    "Write what the agent says",
+  );
+}
+
+function eventConditionSummary(condition: StepConditionDraft) {
+  if (condition.type !== "context_equals") return "";
+
+  const key = condition.key.trim() || "context";
+  const value = condition.value.trim() || "value";
+  return `${key} == ${value}`;
 }
 
 function normalizedStepCondition(condition: StepConditionDraft) {
@@ -1031,6 +1094,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     steps: [],
     title: "Start",
   });
+  const [draggingStepId, setDraggingStepId] = useState("");
+  const [expandedStepId, setExpandedStepId] = useState("");
+  const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isSavingTutor, setIsSavingTutor] = useState(false);
@@ -1044,6 +1110,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const eventAutosaveTimer = useRef<number | null>(null);
   const eventAutosaveVersion = useRef(0);
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const eventAddBlockRef = useRef<HTMLDivElement | null>(null);
 
   function applyExperience(nextExperience: Experience) {
     setExperience(nextExperience);
@@ -1113,6 +1181,40 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       voiceSampleAudioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    resizeTextareaToContent(overviewDescriptionRef.current);
+  }, [experienceForm.description]);
+
+  useEffect(() => {
+    if (!isEventAddMenuOpen) return;
+
+    function closeEventAddMenuOnPointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        eventAddBlockRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setIsEventAddMenuOpen(false);
+    }
+
+    function closeEventAddMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsEventAddMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeEventAddMenuOnPointerDown);
+    document.addEventListener("keydown", closeEventAddMenuOnKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", closeEventAddMenuOnPointerDown);
+      document.removeEventListener("keydown", closeEventAddMenuOnKeyDown);
+    };
+  }, [isEventAddMenuOpen]);
 
   function hasOverviewChanges(draft: ExperienceForm) {
     if (!experience) return false;
@@ -1555,6 +1657,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      const existingStepIds = new Set(startEvent.steps.map((step) => step.id));
       const payload = await apiFetch<{ event: ExperienceEvent }>(
         `/api/experiences/${experience.id}/events/${startEvent.id}/steps/`,
         {
@@ -1567,6 +1670,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedStartEvent(payload.event);
+      const nextSortedSteps = sortedEventSteps(payload.event.steps);
+      const newStep =
+        nextSortedSteps.find((step) => !existingStepIds.has(step.id)) ??
+        nextSortedSteps[nextSortedSteps.length - 1];
+      if (newStep) {
+        setExpandedStepId(newStep.id);
+      }
+      setIsEventAddMenuOpen(false);
     } catch (createError) {
       setError(
         createError instanceof Error
@@ -1593,6 +1704,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedStartEvent(payload.event);
+      if (expandedStepId === stepId) {
+        setExpandedStepId("");
+      }
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -1602,13 +1716,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
-  async function moveStartEventStep(stepId: string, direction: -1 | 1) {
+  async function reorderStartEventStep(stepId: string, targetStepId: string) {
     const { startEvent } = getStartEventParts();
     if (!experience || !startEvent) return;
 
     const currentIndex = startEventDraft.steps.findIndex((step) => step.id === stepId);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= startEventDraft.steps.length) {
+    const targetIndex = startEventDraft.steps.findIndex(
+      (step) => step.id === targetStepId,
+    );
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
       return;
     }
 
@@ -1617,7 +1733,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     const reorderedSteps = [...startEventDraft.steps];
     const [movedStep] = reorderedSteps.splice(currentIndex, 1);
-    reorderedSteps.splice(nextIndex, 0, movedStep);
+    reorderedSteps.splice(targetIndex, 0, movedStep);
     const nextSteps = reorderedSteps.map((step, index) => ({
       ...step,
       sortOrder: index,
@@ -1646,6 +1762,32 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setStartEventDraft(startEventDraftFromExperience(experience));
     }
+  }
+
+  function dragStartEventStep(
+    event: DragEvent<HTMLElement>,
+    stepId: string,
+  ) {
+    setDraggingStepId(stepId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", stepId);
+  }
+
+  function dragOverStartEventStep(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  async function dropStartEventStep(
+    event: DragEvent<HTMLElement>,
+    targetStepId: string,
+  ) {
+    event.preventDefault();
+    const sourceStepId =
+      event.dataTransfer.getData("text/plain") || draggingStepId;
+    setDraggingStepId("");
+    if (!sourceStepId || sourceStepId === targetStepId) return;
+    await reorderStartEventStep(sourceStepId, targetStepId);
   }
 
   async function flushEditorAutosave() {
@@ -1828,7 +1970,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   onChange={(event) =>
                     updateOverviewDraft("description", event.target.value)
                   }
+                  onInput={(event) =>
+                    resizeTextareaToContent(event.currentTarget)
+                  }
                   placeholder="---"
+                  ref={overviewDescriptionRef}
+                  rows={1}
                   value={experienceForm.description}
                 />
               </div>
@@ -1862,220 +2009,283 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             </section>
 
             <section className="editor-section event-editor-section">
-              <div className="runtime-control-header">
-                <span>On entry</span>
-                <div className="event-add-actions">
-                  <button
-                    className="header-action secondary"
-                    onClick={() => void addStartEventStep("script")}
-                    type="button"
-                  >
-                    Say
-                  </button>
-                  <button
-                    className="header-action secondary"
-                    onClick={() => void addStartEventStep("set_context")}
-                    type="button"
-                  >
-                    Set context
-                  </button>
+              <div className="event-document-header">
+                <div className="event-title-stack">
+                  <div className="event-title-line">
+                    <input
+                      aria-label="Event title"
+                      className="event-title-text"
+                      onChange={(event) =>
+                        updateStartEventDraft("title", event.target.value)
+                      }
+                      style={inlineFieldWidthStyle(
+                        startEventDraft.title,
+                        "Start",
+                        6,
+                        32,
+                      )}
+                      type="text"
+                      value={startEventDraft.title}
+                    />
+                    <input
+                      aria-label="Event description"
+                      className="event-description-text"
+                      onChange={(event) =>
+                        updateStartEventDraft("description", event.target.value)
+                      }
+                      placeholder="---"
+                      style={inlineFieldWidthStyle(
+                        startEventDraft.description,
+                        "---",
+                        4,
+                        54,
+                      )}
+                      type="text"
+                      value={startEventDraft.description}
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="event-inline-grid">
-                <label className="control-field">
-                  <span>Event</span>
-                  <input
-                    onChange={(event) =>
-                      updateStartEventDraft("title", event.target.value)
-                    }
-                    type="text"
-                    value={startEventDraft.title}
-                  />
-                </label>
-
-                <label className="control-field">
-                  <span>Description</span>
-                  <input
-                    onChange={(event) =>
-                      updateStartEventDraft("description", event.target.value)
-                    }
-                    placeholder="---"
-                    type="text"
-                    value={startEventDraft.description}
-                  />
-                </label>
+              <div className="event-sequence-header">
+                <span>On entry</span>
               </div>
 
               <div className="event-step-list">
-                {startEventDraft.steps.map((step, index) => (
-                  <article className="event-step" key={step.id}>
-                    <div className="event-step-header">
-                      <span className="event-step-number">{index + 1}</span>
-                      <label className="control-field event-action-field">
-                        <span>Action</span>
-                        <select
-                          onChange={(event) =>
-                            updateStartEventStepAction(
-                              step.id,
-                              event.target.value as EventActionStep["actionType"],
-                            )
-                          }
-                          value={step.actionType}
-                        >
-                          {eventActionOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="event-enabled-toggle">
-                        <input
-                          checked={step.enabled}
-                          onChange={(event) =>
-                            updateStartEventStepDraft(step.id, (currentStep) => ({
-                              ...currentStep,
-                              enabled: event.target.checked,
-                            }))
-                          }
-                          type="checkbox"
-                        />
-                        <span>Enabled</span>
-                      </label>
-                      <div className="event-step-actions">
-                        <button
-                          aria-label="Move step up"
-                          className="event-icon-button"
-                          disabled={index === 0}
-                          onClick={() => void moveStartEventStep(step.id, -1)}
-                          type="button"
-                        >
-                          <ArrowUpIcon />
-                        </button>
-                        <button
-                          aria-label="Move step down"
-                          className="event-icon-button"
-                          disabled={index === startEventDraft.steps.length - 1}
-                          onClick={() => void moveStartEventStep(step.id, 1)}
-                          type="button"
-                        >
-                          <ArrowDownIcon />
-                        </button>
-                        <button
-                          aria-label="Delete step"
-                          className="event-icon-button danger"
-                          disabled={startEventDraft.steps.length <= 1}
-                          onClick={() => void deleteStartEventStep(step.id)}
-                          type="button"
-                        >
-                          <TrashIcon />
-                        </button>
-                      </div>
-                    </div>
+                {startEventDraft.steps.map((step, index) => {
+                  const conditionText = eventConditionSummary(step.condition);
+                  const isExpanded = expandedStepId === step.id;
+                  const toneClass = eventActionToneClass(step.actionType);
 
-                    <div className="event-step-body">
-                      {step.actionType === "script" ? (
-                        <label className="control-field event-script-field">
-                          <span>Script</span>
-                          <textarea
-                            className="event-script-textarea"
-                            onChange={(event) =>
-                              updateStartEventStepConfig(
+                  return (
+                    <article
+                      className={[
+                        "event-step",
+                        `tone-${toneClass}`,
+                        draggingStepId === step.id ? "is-dragging" : "",
+                        isExpanded ? "is-expanded" : "",
+                        !step.enabled ? "is-disabled" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={step.id}
+                      onDragOver={dragOverStartEventStep}
+                      onDrop={(event) => void dropStartEventStep(event, step.id)}
+                    >
+                      <div className="event-step-main">
+                        <span
+                          aria-label={`Drag step ${index + 1}`}
+                          className="event-drag-handle"
+                          draggable
+                          onDragEnd={() => setDraggingStepId("")}
+                          onDragStart={(event) =>
+                            dragStartEventStep(event, step.id)
+                          }
+                          title="Drag to reorder"
+                        >
+                          <GripIcon />
+                        </span>
+
+                        <button
+                          aria-expanded={isExpanded}
+                          className="event-step-summary"
+                          onClick={() =>
+                            setExpandedStepId(isExpanded ? "" : step.id)
+                          }
+                          type="button"
+                        >
+                          <span className="event-step-kind">
+                            {eventActionLabel(step.actionType)}
+                          </span>
+                          <span className="event-step-copy">
+                            {eventStepSummary(step)}
+                          </span>
+                        </button>
+
+                        <div className="event-step-tools">
+                          <button
+                            className={`event-if-chip${
+                              conditionText ? "" : " is-empty"
+                            }`}
+                            onClick={() => setExpandedStepId(step.id)}
+                            title={
+                              conditionText
+                                ? `Condition: ${conditionText}`
+                                : "Set condition"
+                            }
+                            type="button"
+                          >
+                            IF{conditionText ? ` ${conditionText}` : ""}
+                          </button>
+                          <button
+                            aria-label={
+                              step.enabled ? "Disable step" : "Enable step"
+                            }
+                            className={`event-enable-button${
+                              step.enabled ? "" : " is-off"
+                            }`}
+                            onClick={() =>
+                              updateStartEventStepDraft(
                                 step.id,
-                                "text",
-                                event.target.value,
+                                (currentStep) => ({
+                                  ...currentStep,
+                                  enabled: !currentStep.enabled,
+                                }),
                               )
                             }
-                            placeholder="What dee-lou says at this point..."
-                            value={stringConfigValue(step.config, "text")}
-                          />
-                        </label>
-                      ) : (
-                        <div className="event-context-grid">
-                          <label className="control-field">
-                            <span>Key</span>
-                            <input
-                              onChange={(event) =>
-                                updateStartEventStepConfig(
-                                  step.id,
-                                  "key",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="entry_ready"
-                              type="text"
-                              value={stringConfigValue(step.config, "key")}
-                            />
-                          </label>
-                          <label className="control-field">
-                            <span>Value</span>
-                            <input
-                              onChange={(event) =>
-                                updateStartEventStepConfig(
-                                  step.id,
-                                  "value",
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="yes"
-                              type="text"
-                              value={stringConfigValue(step.config, "value")}
-                            />
-                          </label>
-                        </div>
-                      )}
-
-                      <div className="event-condition-grid">
-                        <label className="control-field">
-                          <span>Run if</span>
-                          <select
-                            onChange={(event) =>
-                              updateStartEventStepCondition(step.id, {
-                                type: event.target.value as StepConditionDraft["type"],
-                              })
-                            }
-                            value={step.condition.type}
+                            title={step.enabled ? "Enabled" : "Disabled"}
+                            type="button"
                           >
-                            <option value="always">Always</option>
-                            <option value="context_equals">Context equals</option>
-                          </select>
-                        </label>
+                            <span />
+                          </button>
+                          <button
+                            aria-label="Delete step"
+                            className="event-icon-button danger"
+                            disabled={startEventDraft.steps.length <= 1}
+                            onClick={() => void deleteStartEventStep(step.id)}
+                            type="button"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                      </div>
 
-                        {step.condition.type === "context_equals" ? (
-                          <>
-                            <label className="control-field">
-                              <span>Context key</span>
-                              <input
-                                onChange={(event) =>
+                      {isExpanded ? (
+                        <div className="event-step-detail">
+                          <div className="event-condition-editor">
+                            {step.condition.type === "context_equals" ? (
+                              <>
+                                <span className="event-detail-label">IF</span>
+                                <input
+                                  aria-label="Condition context key"
+                                  onChange={(event) =>
+                                    updateStartEventStepCondition(step.id, {
+                                      key: event.target.value,
+                                    })
+                                  }
+                                  placeholder="entry_ready"
+                                  type="text"
+                                  value={step.condition.key}
+                                />
+                                <span className="event-inline-operator">=</span>
+                                <input
+                                  aria-label="Condition context value"
+                                  onChange={(event) =>
+                                    updateStartEventStepCondition(step.id, {
+                                      value: event.target.value,
+                                    })
+                                  }
+                                  placeholder="yes"
+                                  type="text"
+                                  value={step.condition.value}
+                                />
+                                <button
+                                  className="event-text-button"
+                                  onClick={() =>
+                                    updateStartEventStepCondition(step.id, {
+                                      type: "always",
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  Clear
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                className="event-add-condition-button"
+                                onClick={() =>
                                   updateStartEventStepCondition(step.id, {
-                                    key: event.target.value,
+                                    type: "context_equals",
                                   })
+                                }
+                                type="button"
+                              >
+                                Add IF condition
+                              </button>
+                            )}
+                          </div>
+
+                          {step.actionType === "script" ? (
+                            <textarea
+                              aria-label="Speech text"
+                              className="event-script-textarea"
+                              onChange={(event) =>
+                                updateStartEventStepConfig(
+                                  step.id,
+                                  "text",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="What the agent says..."
+                              value={stringConfigValue(step.config, "text")}
+                            />
+                          ) : (
+                            <div className="event-context-line">
+                              <span className="event-detail-label">SET</span>
+                              <input
+                                aria-label="Context key"
+                                onChange={(event) =>
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "key",
+                                    event.target.value,
+                                  )
                                 }
                                 placeholder="entry_ready"
                                 type="text"
-                                value={step.condition.key}
+                                value={stringConfigValue(step.config, "key")}
                               />
-                            </label>
-                            <label className="control-field">
-                              <span>Equals</span>
+                              <span className="event-inline-operator">=</span>
                               <input
+                                aria-label="Context value"
                                 onChange={(event) =>
-                                  updateStartEventStepCondition(step.id, {
-                                    value: event.target.value,
-                                  })
+                                  updateStartEventStepConfig(
+                                    step.id,
+                                    "value",
+                                    event.target.value,
+                                  )
                                 }
                                 placeholder="yes"
                                 type="text"
-                                value={step.condition.value}
+                                value={stringConfigValue(step.config, "value")}
                               />
-                            </label>
-                          </>
-                        ) : null}
-                      </div>
-                    </div>
-                  </article>
-                ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="event-add-block" ref={eventAddBlockRef}>
+                <button
+                  aria-expanded={isEventAddMenuOpen}
+                  className="event-add-button"
+                  onClick={() => setIsEventAddMenuOpen((current) => !current)}
+                  type="button"
+                >
+                  <PlusIcon />
+                  Add action
+                </button>
+                {isEventAddMenuOpen ? (
+                  <div className="event-add-menu">
+                    {eventActionOptions.map((option) => (
+                      <button
+                        className={`event-add-option tone-${eventActionToneClass(
+                          option.id,
+                        )}`}
+                        key={option.id}
+                        onClick={() => void addStartEventStep(option.id)}
+                        type="button"
+                      >
+                        <span>{option.label}</span>
+                        <small>{eventActionDescription(option.id)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </section>
           </>
@@ -3469,13 +3679,6 @@ function TutorControls({
         if (!isSaving) onSave();
       }}
     >
-      <div className="runtime-control-header">
-        <span>Tutor</span>
-        <strong className={`voice-status voice-status-${realtimeStatus}`}>
-          {realtimeStatusLabels[realtimeStatus]}
-        </strong>
-      </div>
-
       <div className="tutor-compact-grid">
         <div
           className="tutor-avatar-row"
@@ -3584,7 +3787,8 @@ function TutorControls({
             <textarea
               className="prompt-textarea compact"
               onChange={(event) => onVoiceInstructionsChange(event.target.value)}
-              placeholder="How dee-lou should sound..."
+              placeholder="How the agent should sound..."
+              rows={1}
               value={tutor.voiceInstructions}
             />
           </label>
@@ -3924,27 +4128,21 @@ function PlayIcon() {
   );
 }
 
-function ArrowUpIcon() {
+function GripIcon() {
   return (
     <svg
       aria-hidden="true"
-      fill="none"
+      fill="currentColor"
       height="14"
       viewBox="0 0 24 24"
       width="14"
     >
-      <path
-        d="M12 19V5M6 11l6-6 6 6"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
+      <path d="M9 6.5A1.5 1.5 0 1 1 6 6.5 1.5 1.5 0 0 1 9 6.5Zm9 0A1.5 1.5 0 1 1 15 6.5a1.5 1.5 0 0 1 3 0ZM9 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm9 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM9 17.5A1.5 1.5 0 1 1 6 17.5a1.5 1.5 0 0 1 3 0Zm9 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
     </svg>
   );
 }
 
-function ArrowDownIcon() {
+function PlusIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -3954,10 +4152,9 @@ function ArrowDownIcon() {
       width="14"
     >
       <path
-        d="M12 5v14M6 13l6 6 6-6"
+        d="M12 5v14M5 12h14"
         stroke="currentColor"
         strokeLinecap="round"
-        strokeLinejoin="round"
         strokeWidth="2"
       />
     </svg>
