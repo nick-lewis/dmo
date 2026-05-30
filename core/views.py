@@ -19,14 +19,17 @@ import requests
 
 from .audio_cache import (
     AudioGenerationError,
+    OPENAI_CHAT_COMPLETIONS_URL,
     get_or_create_script_audio,
     get_or_create_voice_sample,
+    openai_error_message,
     script_audio_audio_path,
     voice_sample_audio_path,
 )
 from .models import (
     EventActionStep,
     EventChatTool,
+    EventConversationCheck,
     Experience,
     ExperienceEvent,
     SessionMessage,
@@ -68,6 +71,11 @@ DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
 TOOL_DISPLAY_TITLE_KEY = "x-dluDisplayTitle"
+SCRIPT_AUDIO_MESSAGE_SOURCES = {
+    "event-action",
+    "conversation-tool-action",
+    "conversation-check-action",
+}
 
 
 def serialize_user(user):
@@ -139,6 +147,7 @@ def serialize_event_chat_tool(tool):
         "name": tool.name,
         "description": tool.description,
         "parameters": tool.parameters,
+        "handlerActions": tool.handler_actions,
         "triggersEvent": tool.triggers_event,
         "saveArgument": tool.save_argument,
         "saveContextKey": tool.save_context_key,
@@ -146,6 +155,22 @@ def serialize_event_chat_tool(tool):
         "sortOrder": tool.sort_order,
         "createdAt": tool.created_at.isoformat(),
         "updatedAt": tool.updated_at.isoformat(),
+    }
+
+
+def serialize_event_conversation_check(check):
+    return {
+        "id": str(check.id),
+        "eventId": str(check.event_id),
+        "title": check.title,
+        "instructions": check.instructions,
+        "resultContextKey": check.result_context_key,
+        "handlerActions": check.handler_actions,
+        "triggersEvent": check.triggers_event,
+        "enabled": check.enabled,
+        "sortOrder": check.sort_order,
+        "createdAt": check.created_at.isoformat(),
+        "updatedAt": check.updated_at.isoformat(),
     }
 
 
@@ -192,6 +217,12 @@ def serialize_experience_event(event):
         "chatTools": [
             serialize_event_chat_tool(tool)
             for tool in event.chat_tools.order_by("sort_order", "created_at")
+        ],
+        "conversationChecks": [
+            serialize_event_conversation_check(check)
+            for check in event.conversation_checks.order_by(
+                "sort_order", "created_at"
+            )
         ],
         "createdAt": event.created_at.isoformat(),
         "updatedAt": event.updated_at.isoformat(),
@@ -449,9 +480,9 @@ def build_realtime_instructions(session, exclude_message_id=None):
         instruction_parts.append("\n".join(event_context))
     if current_tools:
         instruction_parts.append(
-            "This event has chat exits available as tools. When the learner's "
-            "message satisfies one of those exit conditions, call the matching "
-            "tool instead of announcing that you are changing events."
+            "This event has conversation routes available as tools. When the "
+            "learner's message satisfies one of those route conditions, call "
+            "the matching tool instead of announcing that you are changing events."
         )
     instructions = "\n\n".join(part for part in instruction_parts if part)
     messages_query = session.messages.filter(
@@ -638,6 +669,15 @@ def validate_chat_tool_payload(data, existing_tool=None):
     if parameters_error:
         return None, parameters_error
 
+    handler_actions, handler_actions_error = validate_action_sequence(
+        data.get(
+            "handlerActions",
+            existing_tool.handler_actions if existing_tool else [],
+        )
+    )
+    if handler_actions_error:
+        return None, handler_actions_error
+
     triggers_event, event_error = validate_event_slug(
         data.get(
             "triggersEvent",
@@ -667,10 +707,84 @@ def validate_chat_tool_payload(data, existing_tool=None):
     payload = {
         "description": description,
         "enabled": bool(data.get("enabled", existing_tool.enabled if existing_tool else True)),
+        "handler_actions": handler_actions,
         "name": name,
         "parameters": parameters,
         "save_argument": save_argument,
         "save_context_key": save_context_key,
+        "triggers_event": triggers_event,
+    }
+    if "sortOrder" in data:
+        try:
+            sort_order = int(data.get("sortOrder"))
+        except (TypeError, ValueError):
+            return None, "Sort order must be a number."
+        if sort_order < 0:
+            return None, "Sort order must be positive."
+        payload["sort_order"] = sort_order
+
+    return payload, ""
+
+
+def validate_conversation_check_payload(data, existing_check=None):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return None, "Conversation check must be an object."
+
+    title = str(
+        data.get("title", existing_check.title if existing_check else "Check")
+    ).strip()
+    if not title:
+        title = "Check"
+    if len(title) > 160:
+        return None, "Check title is too long."
+
+    instructions = str(
+        data.get(
+            "instructions",
+            existing_check.instructions if existing_check else "",
+        )
+    ).strip()
+    if len(instructions) > 12000:
+        return None, "Check instructions are too long."
+
+    result_context_key = str(
+        data.get(
+            "resultContextKey",
+            existing_check.result_context_key if existing_check else "",
+        )
+    ).strip()
+    if len(result_context_key) > 120:
+        return None, "Check result key is too long."
+
+    handler_actions, handler_actions_error = validate_action_sequence(
+        data.get(
+            "handlerActions",
+            existing_check.handler_actions if existing_check else [],
+        )
+    )
+    if handler_actions_error:
+        return None, handler_actions_error
+
+    triggers_event, event_error = validate_event_slug(
+        data.get(
+            "triggersEvent",
+            existing_check.triggers_event if existing_check else "",
+        ),
+        required=False,
+    )
+    if event_error:
+        return None, event_error
+
+    payload = {
+        "enabled": bool(
+            data.get("enabled", existing_check.enabled if existing_check else True)
+        ),
+        "handler_actions": handler_actions,
+        "instructions": instructions,
+        "result_context_key": result_context_key,
+        "title": title,
         "triggers_event": triggers_event,
     }
     if "sortOrder" in data:
@@ -799,8 +913,68 @@ def validate_step_condition(value):
     return None, "Step condition is not supported."
 
 
-def step_condition_matches(step, runtime_context):
-    condition = step.condition or {}
+def validate_action_sequence(value):
+    if value in (None, ""):
+        return [], ""
+    if not isinstance(value, list):
+        return None, "Action sequence must be a list."
+    if len(value) > 80:
+        return None, "Action sequence is too long."
+
+    actions = []
+    for index, raw_step in enumerate(value):
+        if not isinstance(raw_step, dict):
+            return None, "Action sequence steps must be objects."
+
+        action_type = str(raw_step.get("actionType", "")).strip()
+        if action_type not in EventActionStep.ActionType.values:
+            return None, "Action type is not supported."
+
+        config, config_error = validate_action_config(
+            action_type,
+            raw_step.get("config", {}),
+        )
+        if config_error:
+            return None, config_error
+
+        condition, condition_error = validate_step_condition(
+            raw_step.get("condition", {})
+        )
+        if condition_error:
+            return None, condition_error
+
+        label = str(raw_step.get("label", "")).strip()
+        if len(label) > 160:
+            return None, "Action label is too long."
+
+        try:
+            sort_order = int(raw_step.get("sortOrder", index))
+        except (TypeError, ValueError):
+            return None, "Action sort order must be a number."
+        if sort_order < 0:
+            return None, "Action sort order must be positive."
+
+        step_id = str(raw_step.get("id", "")).strip() or f"action-{index + 1}"
+        if len(step_id) > 120:
+            return None, "Action id is too long."
+
+        actions.append(
+            {
+                "actionType": action_type,
+                "condition": condition,
+                "config": config,
+                "enabled": bool(raw_step.get("enabled", True)),
+                "id": step_id,
+                "label": label,
+                "sortOrder": sort_order,
+            }
+        )
+
+    return sorted(actions, key=lambda action: action["sortOrder"]), ""
+
+
+def condition_matches(condition, runtime_context):
+    condition = condition or {}
     condition_type = condition.get("type") or "always"
     if condition_type == "always":
         return True
@@ -811,6 +985,22 @@ def step_condition_matches(step, runtime_context):
         return str(runtime_context.get(key, "")) == expected_value
 
     return False
+
+
+def step_condition_matches(step, runtime_context):
+    return condition_matches(step.condition, runtime_context)
+
+
+def action_step_from_model(step):
+    return {
+        "actionType": step.action_type,
+        "condition": step.condition or {},
+        "config": step.config or {},
+        "enabled": step.enabled,
+        "id": str(step.id),
+        "label": step.label,
+        "sortOrder": step.sort_order,
+    }
 
 
 def create_message_for_runtime(session, role, content, metadata=None):
@@ -902,28 +1092,49 @@ def apply_runtime_actions_to_state(
     return state
 
 
-def run_event_steps(session, event, client_ui_state=None):
+def run_action_sequence(
+    session,
+    event,
+    steps,
+    client_ui_state=None,
+    source="event-action",
+    metadata=None,
+):
     actions = []
     messages = []
     next_event_slug = ""
     runtime_context = dict(session.runtime_context or {})
     client_ui_state = parse_client_ui_state(client_ui_state)
+    metadata = dict(metadata or {})
 
-    for step in event.steps.filter(enabled=True).order_by("sort_order", "created_at"):
-        if not step_condition_matches(step, runtime_context):
+    sorted_steps = sorted(
+        steps,
+        key=lambda step: int(step.get("sortOrder", 0) or 0),
+    )
+
+    for step in sorted_steps:
+        if not step.get("enabled", True):
+            continue
+
+        action_type = str(step.get("actionType", "")).strip()
+        step_id = str(step.get("id", "")).strip()
+        config = step.get("config") if isinstance(step.get("config"), dict) else {}
+
+        if not condition_matches(step.get("condition"), runtime_context):
             actions.append(
                 {
                     "type": "skipped",
-                    "actionType": step.action_type,
+                    "actionType": action_type,
                     "eventId": str(event.id),
                     "reason": "condition_not_met",
-                    "stepId": str(step.id),
+                    "stepId": step_id,
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.SCRIPT:
-            text = str(step.config.get("text", "")).strip()
+        if action_type == EventActionStep.ActionType.SCRIPT:
+            text = str(config.get("text", "")).strip()
             if not text:
                 continue
 
@@ -932,10 +1143,11 @@ def run_event_steps(session, event, client_ui_state=None):
                 role=SessionMessage.Role.ASSISTANT,
                 content=text,
                 metadata={
-                    "actionType": step.action_type,
+                    "actionType": action_type,
                     "eventId": str(event.id),
-                    "source": "event-action",
-                    "stepId": str(step.id),
+                    "source": source,
+                    "stepId": step_id,
+                    **metadata,
                 },
             )
             messages.append(message)
@@ -943,31 +1155,33 @@ def run_event_steps(session, event, client_ui_state=None):
                 {
                     "type": "chat_message",
                     "eventId": str(event.id),
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "message": serialize_message(message),
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.SET_CONTEXT:
-            key = str(step.config.get("key", "")).strip()
+        if action_type == EventActionStep.ActionType.SET_CONTEXT:
+            key = str(config.get("key", "")).strip()
             if not key:
                 continue
-            runtime_context[key] = step.config.get("value")
+            runtime_context[key] = config.get("value")
             actions.append(
                 {
                     "type": "set_context",
                     "eventId": str(event.id),
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "key": key,
                     "value": runtime_context[key],
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.GET_UI_STATE:
-            state_key = str(step.config.get("stateKey", "")).strip()
-            context_key = str(step.config.get("contextKey", state_key)).strip()
+        if action_type == EventActionStep.ActionType.GET_UI_STATE:
+            state_key = str(config.get("stateKey", "")).strip()
+            context_key = str(config.get("contextKey", state_key)).strip()
             if not state_key or not context_key:
                 continue
             runtime_context[context_key] = normalize_runtime_value(
@@ -979,31 +1193,33 @@ def run_event_steps(session, event, client_ui_state=None):
                     "contextKey": context_key,
                     "eventId": str(event.id),
                     "stateKey": state_key,
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "value": runtime_context[context_key],
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.HIGHLIGHT_ON:
-            selector = str(step.config.get("selector", "")).strip()
+        if action_type == EventActionStep.ActionType.HIGHLIGHT_ON:
+            selector = str(config.get("selector", "")).strip()
             if not selector:
                 continue
             actions.append(
                 {
                     "type": "highlight_on",
                     "color": str(
-                        step.config.get("color", "rgba(59, 130, 246, 0.6)")
+                        config.get("color", "rgba(59, 130, 246, 0.6)")
                     ),
                     "eventId": str(event.id),
                     "selector": selector,
-                    "stepId": str(step.id),
+                    "stepId": step_id,
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.HIGHLIGHT_OFF:
-            selector = str(step.config.get("selector", "")).strip()
+        if action_type == EventActionStep.ActionType.HIGHLIGHT_OFF:
+            selector = str(config.get("selector", "")).strip()
             if not selector:
                 continue
             actions.append(
@@ -1011,14 +1227,15 @@ def run_event_steps(session, event, client_ui_state=None):
                     "type": "highlight_off",
                     "eventId": str(event.id),
                     "selector": selector,
-                    "stepId": str(step.id),
+                    "stepId": step_id,
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
-            selector = str(step.config.get("selector", "")).strip()
-            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+        if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
+            selector = str(config.get("selector", "")).strip()
+            triggers_event = str(config.get("triggersEvent", "")).strip()
             if not selector or not triggers_event:
                 continue
             actions.append(
@@ -1026,14 +1243,15 @@ def run_event_steps(session, event, client_ui_state=None):
                     "type": "set_ui_trigger",
                     "eventId": str(event.id),
                     "selector": selector,
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "triggersEvent": triggers_event,
+                    **metadata,
                 }
             )
             continue
 
-        if step.action_type == EventActionStep.ActionType.GOTO_EVENT:
-            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+        if action_type == EventActionStep.ActionType.GOTO_EVENT:
+            triggers_event = str(config.get("triggersEvent", "")).strip()
             if not triggers_event:
                 continue
             next_event_slug = triggers_event
@@ -1041,15 +1259,16 @@ def run_event_steps(session, event, client_ui_state=None):
                 {
                     "type": "goto_event",
                     "eventId": str(event.id),
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "triggersEvent": triggers_event,
+                    **metadata,
                 }
             )
             break
 
-        if step.action_type == EventActionStep.ActionType.BUTTON_CHOICE:
-            label = str(step.config.get("label", "")).strip()
-            triggers_event = str(step.config.get("triggersEvent", "")).strip()
+        if action_type == EventActionStep.ActionType.BUTTON_CHOICE:
+            label = str(config.get("label", "")).strip()
+            triggers_event = str(config.get("triggersEvent", "")).strip()
             if not label or not triggers_event:
                 continue
             actions.append(
@@ -1057,13 +1276,28 @@ def run_event_steps(session, event, client_ui_state=None):
                     "type": "button_choice",
                     "eventId": str(event.id),
                     "label": label,
-                    "stepId": str(step.id),
+                    "stepId": step_id,
                     "triggersEvent": triggers_event,
+                    **metadata,
                 }
             )
 
     session.runtime_context = runtime_context
     return actions, messages, next_event_slug
+
+
+def run_event_steps(session, event, client_ui_state=None):
+    steps = [
+        action_step_from_model(step)
+        for step in event.steps.filter(enabled=True).order_by("sort_order", "created_at")
+    ]
+    return run_action_sequence(
+        session,
+        event,
+        steps,
+        client_ui_state=client_ui_state,
+        source="event-action",
+    )
 
 
 def run_event_chain(session, first_event, client_ui_state=None, state=None):
@@ -1130,6 +1364,96 @@ def run_event_chain(session, first_event, client_ui_state=None, state=None):
         state["currentEventId"] = str(current_event.id)
         state["currentEventSlug"] = current_event.slug
     return actions, messages, ran_events, state
+
+
+def conversation_check_transcript(session, limit=16):
+    messages = list(
+        session.messages.filter(
+            role__in=[SessionMessage.Role.USER, SessionMessage.Role.ASSISTANT]
+        ).order_by("-sequence")[:limit]
+    )
+    messages.reverse()
+    return "\n".join(
+        f"{message.role}: {message.content.strip()}" for message in messages
+    )
+
+
+def parse_check_result(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "y", "1", "match", "matched"}:
+            return True
+        if normalized in {"false", "no", "n", "0", "none", "not_matched"}:
+            return False
+    return False
+
+
+def evaluate_conversation_check(session, check):
+    if not settings.OPENAI_API_KEY:
+        return None, "OPENAI_API_KEY is not configured."
+
+    current_event = get_session_current_event(session)
+    prompt = "\n\n".join(
+        [
+            "Evaluate this conversation check for the current tutoring session.",
+            f"Check title: {check.title.strip() or 'Check'}",
+            f"Current event: {current_event.title if current_event else ''}",
+            f"Instructions:\n{check.instructions.strip()}",
+            "Return JSON only with keys: result (boolean), reason (short string).",
+            f"Runtime context:\n{json.dumps(session.runtime_context or {}, ensure_ascii=True)[:2000]}",
+            f"Recent conversation:\n{conversation_check_transcript(session)}",
+        ]
+    )
+
+    try:
+        response = requests.post(
+            OPENAI_CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+                "OpenAI-Safety-Identifier": hash_safety_identifier(session.user),
+            },
+            json={
+                "model": settings.DLU_CONVERSATION_CHECK_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict conversation classifier. "
+                            "Only return a compact JSON object."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 180,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=45,
+        )
+    except requests.RequestException:
+        return None, "Could not reach OpenAI to run the conversation check."
+
+    if response.status_code >= 400:
+        return None, openai_error_message(
+            response,
+            "OpenAI could not run the conversation check.",
+        )
+
+    try:
+        payload = response.json()
+        content = payload["choices"][0]["message"]["content"]
+        result_payload = json.loads(content)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None, "OpenAI returned an unreadable conversation check."
+
+    return {
+        "reason": str(result_payload.get("reason", ""))[:1000],
+        "result": parse_check_result(result_payload.get("result")),
+    }, ""
 
 
 def health(request):
@@ -1724,6 +2048,84 @@ def update_event_chat_tool(request, experience_id, event_id, tool_id):
     return JsonResponse({"tool": serialize_event_chat_tool(tool)})
 
 
+@require_POST
+def create_event_conversation_check(request, experience_id, event_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_conversation_check_payload(data)
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    sort_order = (
+        event.conversation_checks.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    payload.setdefault("sort_order", sort_order)
+    EventConversationCheck.objects.create(event=event, **payload)
+
+    return JsonResponse({"event": serialize_experience_event(event)}, status=201)
+
+
+@require_http_methods(["DELETE", "PATCH"])
+def update_event_conversation_check(request, experience_id, event_id, check_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    event = experience.events.filter(id=event_id).first()
+    if not event:
+        return JsonResponse({"detail": "Event not found."}, status=404)
+
+    check = event.conversation_checks.filter(id=check_id).first()
+    if not check:
+        return JsonResponse({"detail": "Conversation check not found."}, status=404)
+
+    if request.method == "DELETE":
+        check.delete()
+        for index, event_check in enumerate(
+            event.conversation_checks.order_by("sort_order", "created_at")
+        ):
+            if event_check.sort_order == index:
+                continue
+            event_check.sort_order = index
+            event_check.save(update_fields=["sort_order", "updated_at"])
+        return JsonResponse({"event": serialize_experience_event(event)})
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    payload, payload_error = validate_conversation_check_payload(
+        data,
+        existing_check=check,
+    )
+    if payload_error:
+        return JsonResponse({"detail": payload_error}, status=400)
+
+    for field, value in payload.items():
+        setattr(check, field, value)
+    check.save()
+
+    return JsonResponse({"check": serialize_event_conversation_check(check)})
+
+
 @require_GET
 def current_session(request):
     auth_response = auth_required_response(request)
@@ -2030,6 +2432,7 @@ def run_session_chat_tool(request, session_id):
             {
                 "arguments": arguments,
                 "eventId": str(current_event.id),
+                "handlerActionCount": len(tool.handler_actions or []),
                 "saveArgument": tool.save_argument,
                 "saveContextKey": tool.save_context_key,
                 "savedValue": saved_value,
@@ -2041,27 +2444,41 @@ def run_session_chat_tool(request, session_id):
         ]
         messages = []
         ran_events = []
+        handler_next_event_slug = ""
 
-        if tool.triggers_event:
+        if tool.handler_actions:
+            handler_actions, messages, handler_next_event_slug = run_action_sequence(
+                session,
+                current_event,
+                tool.handler_actions,
+                client_ui_state=client_ui_state,
+                source="conversation-tool-action",
+                metadata={"toolName": tool.name, "toolId": str(tool.id)},
+            )
+            actions.extend(handler_actions)
+
+        next_event_slug = handler_next_event_slug or tool.triggers_event
+        if next_event_slug:
             next_event = session.experience.events.filter(
-                slug=tool.triggers_event
+                slug=next_event_slug
             ).first()
             if not next_event:
                 actions.append(
                     {
                         "type": "transition_missing",
                         "eventId": str(current_event.id),
-                        "triggersEvent": tool.triggers_event,
+                        "triggersEvent": next_event_slug,
                     }
                 )
             else:
-                step_actions, messages, ran_events, state = run_event_chain(
+                step_actions, event_messages, ran_events, state = run_event_chain(
                     session,
                     next_event,
                     client_ui_state=client_ui_state,
                     state=state,
                 )
                 actions.extend(step_actions)
+                messages.extend(event_messages)
 
         state = apply_runtime_actions_to_state(state, actions, clear_buttons=True)
         session.runtime_state = state
@@ -2072,6 +2489,190 @@ def run_session_chat_tool(request, session_id):
             **session_payload(session),
             "actions": actions,
             "event": serialize_experience_event(get_session_current_event(session)),
+            "ran": bool(ran_events),
+            "ranEvents": [
+                serialize_experience_event(ran_event) for ran_event in ran_events
+            ],
+            "ranMessages": [serialize_message(message) for message in messages],
+        }
+    )
+
+
+@require_POST
+def run_session_conversation_checks(request, session_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+    client_ui_state = parse_client_ui_state(data.get("uiState"))
+
+    session = (
+        TutoringSession.objects.filter(
+            id=session_id,
+            user=request.user,
+            status=TutoringSession.Status.ACTIVE,
+        )
+        .select_related("experience", "user")
+        .first()
+    )
+    if not session:
+        return JsonResponse({"detail": "Session not found."}, status=404)
+    if not session.experience:
+        return JsonResponse(
+            {"detail": "Session does not have an experience."},
+            status=400,
+        )
+
+    current_event = get_session_current_event(session)
+    if not current_event:
+        return JsonResponse({"detail": "Current event not found."}, status=404)
+
+    checks = list(
+        current_event.conversation_checks.filter(enabled=True).order_by(
+            "sort_order", "created_at"
+        )
+    )
+    if not checks:
+        return JsonResponse(
+            {
+                **session_payload(session),
+                "actions": [],
+                "checks": [],
+                "handled": False,
+                "ran": False,
+                "ranEvents": [],
+                "ranMessages": [],
+            }
+        )
+
+    evaluated_checks = []
+    runtime_context_preview = dict(session.runtime_context or {})
+    for check in checks:
+        session.runtime_context = runtime_context_preview
+        result_payload, result_error = evaluate_conversation_check(session, check)
+        if result_error:
+            return JsonResponse({"detail": result_error}, status=502)
+
+        result = bool(result_payload["result"])
+        reason = result_payload.get("reason", "")
+        if check.result_context_key:
+            runtime_context_preview[check.result_context_key] = (
+                "true" if result else "false"
+            )
+
+        check_action = {
+            "checkId": str(check.id),
+            "eventId": str(current_event.id),
+            "reason": reason,
+            "result": result,
+            "resultContextKey": check.result_context_key,
+            "type": "conversation_check_result",
+        }
+        evaluated_checks.append((check, check_action, result))
+        if result and (check.handler_actions or check.triggers_event):
+            break
+
+    with transaction.atomic():
+        session = (
+            TutoringSession.objects.select_for_update()
+            .filter(
+                id=session_id,
+                user=request.user,
+                status=TutoringSession.Status.ACTIVE,
+            )
+            .first()
+        )
+        if not session:
+            return JsonResponse({"detail": "Session not found."}, status=404)
+        if not session.experience:
+            return JsonResponse(
+                {"detail": "Session does not have an experience."},
+                status=400,
+            )
+
+        current_event = get_session_current_event(session)
+        if not current_event:
+            return JsonResponse({"detail": "Current event not found."}, status=404)
+
+        state = dict(session.runtime_state or {})
+        runtime_context = dict(session.runtime_context or {})
+        actions = []
+        messages = []
+        ran_events = []
+        check_results = []
+        handled = False
+
+        for check, check_action, result in evaluated_checks:
+            if check.result_context_key:
+                runtime_context[check.result_context_key] = (
+                    "true" if result else "false"
+                )
+                session.runtime_context = runtime_context
+
+            actions.append(check_action)
+            check_results.append(check_action)
+
+            if not result:
+                continue
+
+            handler_next_event_slug = ""
+            if check.handler_actions:
+                handler_actions, handler_messages, handler_next_event_slug = (
+                    run_action_sequence(
+                        session,
+                        current_event,
+                        check.handler_actions,
+                        client_ui_state=client_ui_state,
+                        source="conversation-check-action",
+                        metadata={
+                            "checkId": str(check.id),
+                            "checkTitle": check.title,
+                        },
+                    )
+                )
+                actions.extend(handler_actions)
+                messages.extend(handler_messages)
+
+            next_event_slug = handler_next_event_slug or check.triggers_event
+            if next_event_slug:
+                next_event = session.experience.events.filter(
+                    slug=next_event_slug
+                ).first()
+                if not next_event:
+                    actions.append(
+                        {
+                            "type": "transition_missing",
+                            "eventId": str(current_event.id),
+                            "triggersEvent": next_event_slug,
+                        }
+                    )
+                else:
+                    step_actions, event_messages, ran_events, state = run_event_chain(
+                        session,
+                        next_event,
+                        client_ui_state=client_ui_state,
+                        state=state,
+                    )
+                    actions.extend(step_actions)
+                    messages.extend(event_messages)
+
+            handled = bool(check.handler_actions or next_event_slug)
+            if handled:
+                break
+
+        state = apply_runtime_actions_to_state(state, actions, clear_buttons=handled)
+        session.runtime_state = state
+        session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
+
+    return JsonResponse(
+        {
+            **session_payload(session),
+            "actions": actions,
+            "checks": check_results,
+            "handled": handled,
             "ran": bool(ran_events),
             "ranEvents": [
                 serialize_experience_event(ran_event) for ran_event in ran_events
@@ -2184,9 +2785,9 @@ def create_message_audio(request, session_id, message_id):
         return JsonResponse({"detail": "Message has no script text."}, status=400)
 
     metadata = message.metadata or {}
-    if metadata.get("source") != "event-action":
+    if metadata.get("source") not in SCRIPT_AUDIO_MESSAGE_SOURCES:
         return JsonResponse(
-            {"detail": "Only scripted event messages can be recorded."},
+            {"detail": "Only scripted action messages can be recorded."},
             status=400,
         )
 

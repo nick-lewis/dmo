@@ -272,6 +272,9 @@ DLU_SCRIPT_AUDIO_TTS_MODEL = (
     os.environ.get("DLU_SCRIPT_AUDIO_TTS_MODEL", "").strip()
     or DLU_VOICE_SAMPLE_TTS_MODEL
 )
+DLU_CONVERSATION_CHECK_MODEL = (
+    os.environ.get("DLU_CONVERSATION_CHECK_MODEL", "").strip() or "gpt-4o-mini"
+)
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/surfaces/tutoring/panels"

@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     EventActionStep,
     EventChatTool,
+    EventConversationCheck,
     Experience,
     ExperienceEvent,
     SessionMessage,
@@ -57,6 +58,20 @@ class EventChatToolInline(admin.TabularInline):
     ordering = ("sort_order", "created_at")
 
 
+class EventConversationCheckInline(admin.TabularInline):
+    model = EventConversationCheck
+    extra = 0
+    fields = (
+        "sort_order",
+        "title",
+        "instructions",
+        "result_context_key",
+        "triggers_event",
+        "enabled",
+    )
+    ordering = ("sort_order", "created_at")
+
+
 @admin.register(TutoringSession)
 class TutoringSessionAdmin(admin.ModelAdmin):
     list_display = (
@@ -102,7 +117,7 @@ class ExperienceEventAdmin(admin.ModelAdmin):
     list_filter = ("is_start", "created_at", "updated_at")
     search_fields = ("title", "description", "slug", "experience__title")
     readonly_fields = ("id", "created_at", "updated_at")
-    inlines = [EventActionStepInline, EventChatToolInline]
+    inlines = [EventActionStepInline, EventChatToolInline, EventConversationCheckInline]
 
 
 @admin.register(EventActionStep)
@@ -118,4 +133,19 @@ class EventChatToolAdmin(admin.ModelAdmin):
     list_display = ("event", "name", "triggers_event", "enabled", "sort_order")
     list_filter = ("enabled",)
     search_fields = ("name", "description", "event__title", "event__experience__title")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(EventConversationCheck)
+class EventConversationCheckAdmin(admin.ModelAdmin):
+    list_display = (
+        "event",
+        "title",
+        "result_context_key",
+        "triggers_event",
+        "enabled",
+        "sort_order",
+    )
+    list_filter = ("enabled",)
+    search_fields = ("title", "instructions", "event__title", "event__experience__title")
     readonly_fields = ("id", "created_at", "updated_at")

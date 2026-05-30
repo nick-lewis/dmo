@@ -9,6 +9,7 @@ from django.urls import include, path, re_path
 
 from core.views import (
     create_event_chat_tool,
+    create_event_conversation_check,
     create_message,
     create_message_audio,
     create_event_action_step,
@@ -26,6 +27,7 @@ from core.views import (
     resolve_google_slide,
     reorder_event_action_steps,
     run_session_chat_tool,
+    run_session_conversation_checks,
     run_session_event,
     run_start_event,
     serve_script_audio,
@@ -33,6 +35,7 @@ from core.views import (
     serve_voice_sample_audio,
     update_event_action_step,
     update_event_chat_tool,
+    update_event_conversation_check,
     update_experience,
     update_experience_event,
 )
@@ -85,6 +88,16 @@ urlpatterns = [
         update_event_chat_tool,
         name="update-event-chat-tool",
     ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/conversation-checks/",
+        create_event_conversation_check,
+        name="create-event-conversation-check",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/conversation-checks/<uuid:check_id>/",
+        update_event_conversation_check,
+        name="update-event-conversation-check",
+    ),
     path("api/sessions/current/", current_session, name="current-session"),
     path("api/sessions/", create_session, name="create-session"),
     path(
@@ -131,6 +144,11 @@ urlpatterns = [
         "api/sessions/<uuid:session_id>/chat-tool/",
         run_session_chat_tool,
         name="run-session-chat-tool",
+    ),
+    path(
+        "api/sessions/<uuid:session_id>/conversation-checks/run/",
+        run_session_conversation_checks,
+        name="run-session-conversation-checks",
     ),
     path("api/slides/resolve/", resolve_google_slide, name="resolve-google-slide"),
     path(

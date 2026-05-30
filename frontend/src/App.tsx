@@ -57,6 +57,11 @@ const eventActionOptions = [
 ] as const;
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
+const scriptAudioSources = new Set([
+  "event-action",
+  "conversation-tool-action",
+  "conversation-check-action",
+]);
 
 type ChatMessage = {
   id: string;
@@ -122,15 +127,40 @@ type EventActionStep = {
   updatedAt: string;
 };
 
+type ActionSequenceStep = {
+  actionType: EventActionStep["actionType"];
+  condition: Record<string, unknown>;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  id: string;
+  label: string;
+  sortOrder: number;
+};
+
 type EventChatTool = {
   id: string;
   eventId: string;
   name: string;
   description: string;
+  handlerActions: ActionSequenceStep[];
   parameters: Record<string, unknown>;
   triggersEvent: string;
   saveArgument: string;
   saveContextKey: string;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type EventConversationCheck = {
+  id: string;
+  eventId: string;
+  title: string;
+  instructions: string;
+  resultContextKey: string;
+  handlerActions: ActionSequenceStep[];
+  triggersEvent: string;
   enabled: boolean;
   sortOrder: number;
   createdAt: string;
@@ -147,6 +177,7 @@ type ExperienceEvent = {
   sortOrder: number;
   steps: EventActionStep[];
   chatTools: EventChatTool[];
+  conversationChecks: EventConversationCheck[];
   createdAt: string;
   updatedAt: string;
 };
@@ -198,8 +229,20 @@ type EventChatToolDraft = {
   captures: EventChatCaptureDraft[];
   description: string;
   enabled: boolean;
+  handlerActions: EventStepDraft[];
   id: string;
   name: string;
+  sortOrder: number;
+  title: string;
+  triggersEvent: string;
+};
+
+type EventConversationCheckDraft = {
+  enabled: boolean;
+  handlerActions: EventStepDraft[];
+  id: string;
+  instructions: string;
+  resultContextKey: string;
   sortOrder: number;
   title: string;
   triggersEvent: string;
@@ -210,11 +253,21 @@ type EventDraft = {
   description: string;
   steps: EventStepDraft[];
   chatTools: EventChatToolDraft[];
+  conversationChecks: EventConversationCheckDraft[];
 };
 
 type StartEventPayload = SessionPayload & {
   actions: Array<Record<string, unknown>>;
   event: ExperienceEvent;
+  ran: boolean;
+  ranEvents?: ExperienceEvent[];
+  ranMessages?: ChatMessage[];
+};
+
+type ConversationCheckPayload = SessionPayload & {
+  actions: Array<Record<string, unknown>>;
+  checks: Array<Record<string, unknown>>;
+  handled: boolean;
   ran: boolean;
   ranEvents?: ExperienceEvent[];
   ranMessages?: ChatMessage[];
@@ -241,6 +294,13 @@ type RuntimeButton = {
   label: string;
   stepId: string;
   triggersEvent: string;
+};
+
+type RuntimeActionLogEntry = {
+  detail: string;
+  id: string;
+  time: string;
+  type: string;
 };
 
 type VoiceSampleStatus = "idle" | "loading" | "playing";
@@ -430,8 +490,20 @@ function sortedEventSteps(steps: EventActionStep[]) {
   );
 }
 
+function sortedActionSequenceSteps(steps: ActionSequenceStep[] = []) {
+  return [...steps].sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
 function sortedEventChatTools(tools: EventChatTool[]) {
   return [...tools].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+function sortedEventConversationChecks(checks: EventConversationCheck[]) {
+  return [...checks].sort(
     (left, right) =>
       left.sortOrder - right.sortOrder ||
       left.createdAt.localeCompare(right.createdAt),
@@ -447,7 +519,7 @@ function stringConfigValue(
   return typeof value === "string" ? value : fallback;
 }
 
-function conditionDraftFromStep(step: EventActionStep): StepConditionDraft {
+function conditionDraftFromStep(step: ActionSequenceStep): StepConditionDraft {
   const conditionType = step.condition?.type;
   if (conditionType === "context_equals") {
     return {
@@ -464,7 +536,7 @@ function conditionDraftFromStep(step: EventActionStep): StepConditionDraft {
   };
 }
 
-function stepDraftFromStep(step: EventActionStep): EventStepDraft {
+function stepDraftFromStep(step: ActionSequenceStep): EventStepDraft {
   return {
     actionType: step.actionType,
     condition: conditionDraftFromStep(step),
@@ -547,6 +619,9 @@ function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
     captures: toolCaptureDraftsFromTool(tool),
     description: tool.description,
     enabled: tool.enabled,
+    handlerActions: sortedActionSequenceSteps(tool.handlerActions ?? []).map(
+      stepDraftFromStep,
+    ),
     id: tool.id,
     name: tool.name,
     sortOrder: tool.sortOrder,
@@ -555,10 +630,32 @@ function chatToolDraftFromTool(tool: EventChatTool): EventChatToolDraft {
   };
 }
 
+function conversationCheckDraftFromCheck(
+  check: EventConversationCheck,
+): EventConversationCheckDraft {
+  return {
+    enabled: check.enabled,
+    handlerActions: sortedActionSequenceSteps(check.handlerActions ?? []).map(
+      stepDraftFromStep,
+    ),
+    id: check.id,
+    instructions: check.instructions,
+    resultContextKey: check.resultContextKey,
+    sortOrder: check.sortOrder,
+    title: check.title,
+    triggersEvent: check.triggersEvent,
+  };
+}
+
 function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
   return {
     chatTools: event
       ? sortedEventChatTools(event.chatTools).map(chatToolDraftFromTool)
+      : [],
+    conversationChecks: event
+      ? sortedEventConversationChecks(event.conversationChecks ?? []).map(
+          conversationCheckDraftFromCheck,
+        )
       : [],
     description: event?.description ?? "",
     steps: event ? sortedEventSteps(event.steps).map(stepDraftFromStep) : [],
@@ -637,6 +734,7 @@ function defaultChatToolPayload(events: ExperienceEvent[], currentEventId: strin
   return {
     description: "Call this when the learner is ready to move on.",
     enabled: true,
+    handlerActions: [],
     name: "student_done",
     parameters: {
       additionalProperties: false,
@@ -646,6 +744,25 @@ function defaultChatToolPayload(events: ExperienceEvent[], currentEventId: strin
     },
     saveArgument: "",
     saveContextKey: "",
+    triggersEvent: destination?.slug ?? "",
+  };
+}
+
+function defaultConversationCheckPayload(
+  events: ExperienceEvent[],
+  currentEventId: string,
+) {
+  const destination = sortedExperienceEvents(events).find(
+    (event) => event.id !== currentEventId,
+  );
+
+  return {
+    enabled: true,
+    handlerActions: [],
+    instructions:
+      "Return true when the learner is confused, stuck, unsure, or asking for help.",
+    resultContextKey: "conversation_check_result",
+    title: "Check",
     triggersEvent: destination?.slug ?? "",
   };
 }
@@ -705,6 +822,22 @@ function eventTitleForTrigger(events: ExperienceEvent[], eventSlug: string) {
   return target?.title ?? eventSlug;
 }
 
+function actionSequenceOutgoingSlugs(steps: ActionSequenceStep[] = []) {
+  const slugs = new Set<string>();
+  for (const step of steps) {
+    if (
+      step.actionType !== "set_ui_trigger" &&
+      step.actionType !== "goto_event" &&
+      step.actionType !== "button_choice"
+    ) {
+      continue;
+    }
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
+    if (triggersEvent) slugs.add(triggersEvent);
+  }
+  return [...slugs];
+}
+
 function eventOutgoingSlugs(event: ExperienceEvent) {
   const slugs = new Set<string>();
   for (const step of event.steps) {
@@ -721,6 +854,16 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
   for (const tool of event.chatTools) {
     const triggersEvent = tool.triggersEvent.trim();
     if (triggersEvent) slugs.add(triggersEvent);
+    for (const handlerSlug of actionSequenceOutgoingSlugs(tool.handlerActions)) {
+      slugs.add(handlerSlug);
+    }
+  }
+  for (const check of event.conversationChecks ?? []) {
+    const triggersEvent = check.triggersEvent.trim();
+    if (triggersEvent) slugs.add(triggersEvent);
+    for (const handlerSlug of actionSequenceOutgoingSlugs(check.handlerActions)) {
+      slugs.add(handlerSlug);
+    }
   }
   return [...slugs];
 }
@@ -750,6 +893,68 @@ function compactPreview(value: string, fallback: string) {
   const compact = value.trim().replace(/\s+/g, " ");
   if (!compact) return fallback;
   return compact.length > 112 ? `${compact.slice(0, 109)}...` : compact;
+}
+
+function compactRuntimeValue(value: unknown, fallback = "---") {
+  if (value === null) return "null";
+  if (value === undefined) return fallback;
+  if (typeof value === "string") return compactPreview(value, fallback);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return compactPreview(JSON.stringify(value), fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function runtimeActionText(action: Record<string, unknown>) {
+  const type = typeof action.type === "string" ? action.type : "action";
+  if (type === "conversation_check_result") {
+    const result = action.result ? "matched" : "missed";
+    const reason = compactRuntimeValue(action.reason, "");
+    return reason ? `${result}: ${reason}` : result;
+  }
+  if (type === "chat_tool_call") {
+    return compactRuntimeValue(action.toolName, "function call");
+  }
+  if (type === "set_context") {
+    return `${compactRuntimeValue(action.key, "key")} = ${compactRuntimeValue(
+      action.value,
+      "value",
+    )}`;
+  }
+  if (type === "get_ui_state") {
+    return `${compactRuntimeValue(action.stateKey, "ui")} -> ${compactRuntimeValue(
+      action.contextKey,
+      "context",
+    )}`;
+  }
+  if (type === "chat_message") {
+    return compactRuntimeValue(action.content, "message");
+  }
+  if (type === "goto_event" || type === "set_ui_trigger") {
+    return `-> ${compactRuntimeValue(action.triggersEvent, "event")}`;
+  }
+  if (type === "button_choice") {
+    return `${compactRuntimeValue(action.label, "button")} -> ${compactRuntimeValue(
+      action.triggersEvent,
+      "event",
+    )}`;
+  }
+  if (type === "highlight_on" || type === "highlight_off") {
+    return compactRuntimeValue(action.selector, "selector");
+  }
+  if (type === "transition_missing") {
+    return `missing ${compactRuntimeValue(action.triggersEvent, "event")}`;
+  }
+  if (type === "event_skipped") {
+    return compactRuntimeValue(action.reason, "skipped");
+  }
+
+  return compactRuntimeValue(action, type);
 }
 
 function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
@@ -825,6 +1030,20 @@ function comparableStep(step: EventActionStep) {
   return comparableStepDraft(stepDraftFromStep(step));
 }
 
+function normalizedActionSequenceSteps(steps: EventStepDraft[]) {
+  return [...steps]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((step, index) => ({
+      actionType: step.actionType,
+      condition: normalizedStepCondition(step.condition),
+      config: step.config,
+      enabled: step.enabled,
+      id: step.id,
+      label: step.label,
+      sortOrder: index,
+    }));
+}
+
 function normalizedChatToolParameters(tool: EventChatToolDraft) {
   const captures = tool.captures
     .map((capture) => ({
@@ -873,6 +1092,7 @@ function comparableChatToolDraft(tool: EventChatToolDraft) {
   return {
     description: tool.description,
     enabled: tool.enabled,
+    handlerActions: normalizedActionSequenceSteps(tool.handlerActions),
     name: tool.name,
     parameters: normalizedChatToolParameters(tool),
     saveArgument: primaryCapture?.saveAs.trim() ?? "",
@@ -884,6 +1104,22 @@ function comparableChatToolDraft(tool: EventChatToolDraft) {
 
 function comparableChatTool(tool: EventChatTool) {
   return comparableChatToolDraft(chatToolDraftFromTool(tool));
+}
+
+function comparableConversationCheckDraft(check: EventConversationCheckDraft) {
+  return {
+    enabled: check.enabled,
+    handlerActions: normalizedActionSequenceSteps(check.handlerActions),
+    instructions: check.instructions,
+    resultContextKey: check.resultContextKey,
+    sortOrder: check.sortOrder,
+    title: check.title,
+    triggersEvent: check.triggersEvent,
+  };
+}
+
+function comparableConversationCheck(check: EventConversationCheck) {
+  return comparableConversationCheckDraft(conversationCheckDraftFromCheck(check));
 }
 
 function replaceExperienceEvent(
@@ -944,6 +1180,26 @@ function replaceExperienceEventTool(
         ...event,
         chatTools: event.chatTools
           .map((tool) => (tool.id === nextTool.id ? nextTool : tool))
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
+}
+
+function replaceExperienceEventCheck(
+  experience: Experience,
+  eventId: string,
+  nextCheck: EventConversationCheck,
+) {
+  return {
+    ...experience,
+    events: experience.events.map((event) => {
+      if (event.id !== eventId) return event;
+
+      return {
+        ...event,
+        conversationChecks: (event.conversationChecks ?? [])
+          .map((check) => (check.id === nextCheck.id ? nextCheck : check))
           .sort((left, right) => left.sortOrder - right.sortOrder),
       };
     }),
@@ -1551,6 +1807,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [selectedEventId, setSelectedEventId] = useState("");
   const [eventDraft, setEventDraft] = useState<EventDraft>({
     chatTools: [],
+    conversationChecks: [],
     description: "",
     steps: [],
     title: "Start",
@@ -1559,6 +1816,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [draggingStepId, setDraggingStepId] = useState("");
   const [expandedStepId, setExpandedStepId] = useState("");
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
+  const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
+    useState(false);
+  const [conversationAddMenuToolId, setConversationAddMenuToolId] = useState("");
+  const [conversationAddMenuCheckId, setConversationAddMenuCheckId] =
+    useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isSavingTutor, setIsSavingTutor] = useState(false);
@@ -1574,6 +1836,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const eventAddBlockRef = useRef<HTMLDivElement | null>(null);
+  const conversationItemAddBlockRef = useRef<HTMLDivElement | null>(null);
+  const conversationAddBlockRef = useRef<HTMLDivElement | null>(null);
+  const conversationCheckAddBlockRef = useRef<HTMLDivElement | null>(null);
 
   function applyExperience(nextExperience: Experience) {
     const selectedEvent = getSelectedExperienceEvent(
@@ -1682,6 +1947,120 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       document.removeEventListener("keydown", closeEventAddMenuOnKeyDown);
     };
   }, [isEventAddMenuOpen]);
+
+  useEffect(() => {
+    if (!isConversationAddMenuOpen) return;
+
+    function closeConversationItemAddMenuOnPointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        conversationItemAddBlockRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setIsConversationAddMenuOpen(false);
+    }
+
+    function closeConversationItemAddMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsConversationAddMenuOpen(false);
+      }
+    }
+
+    document.addEventListener(
+      "mousedown",
+      closeConversationItemAddMenuOnPointerDown,
+    );
+    document.addEventListener("keydown", closeConversationItemAddMenuOnKeyDown);
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        closeConversationItemAddMenuOnPointerDown,
+      );
+      document.removeEventListener(
+        "keydown",
+        closeConversationItemAddMenuOnKeyDown,
+      );
+    };
+  }, [isConversationAddMenuOpen]);
+
+  useEffect(() => {
+    if (!conversationAddMenuToolId) return;
+
+    function closeConversationAddMenuOnPointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        conversationAddBlockRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setConversationAddMenuToolId("");
+    }
+
+    function closeConversationAddMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setConversationAddMenuToolId("");
+      }
+    }
+
+    document.addEventListener("mousedown", closeConversationAddMenuOnPointerDown);
+    document.addEventListener("keydown", closeConversationAddMenuOnKeyDown);
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        closeConversationAddMenuOnPointerDown,
+      );
+      document.removeEventListener("keydown", closeConversationAddMenuOnKeyDown);
+    };
+  }, [conversationAddMenuToolId]);
+
+  useEffect(() => {
+    if (!conversationAddMenuCheckId) return;
+
+    function closeConversationCheckAddMenuOnPointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        conversationCheckAddBlockRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setConversationAddMenuCheckId("");
+    }
+
+    function closeConversationCheckAddMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setConversationAddMenuCheckId("");
+      }
+    }
+
+    document.addEventListener(
+      "mousedown",
+      closeConversationCheckAddMenuOnPointerDown,
+    );
+    document.addEventListener(
+      "keydown",
+      closeConversationCheckAddMenuOnKeyDown,
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        closeConversationCheckAddMenuOnPointerDown,
+      );
+      document.removeEventListener(
+        "keydown",
+        closeConversationCheckAddMenuOnKeyDown,
+      );
+    };
+  }, [conversationAddMenuCheckId]);
 
   function hasOverviewChanges(draft: ExperienceForm) {
     if (!experience) return false;
@@ -1924,13 +2303,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const currentTools = sortedEventChatTools(selectedEvent.chatTools);
     if (draft.chatTools.length !== currentTools.length) return true;
 
-    return draft.chatTools.some((draftTool) => {
+    const hasToolChanges = draft.chatTools.some((draftTool) => {
       const currentTool = currentTools.find((tool) => tool.id === draftTool.id);
       if (!currentTool) return true;
 
       return (
         JSON.stringify(comparableChatToolDraft(draftTool)) !==
         JSON.stringify(comparableChatTool(currentTool))
+      );
+    });
+    if (hasToolChanges) return true;
+
+    const currentChecks = sortedEventConversationChecks(
+      selectedEvent.conversationChecks ?? [],
+    );
+    if (draft.conversationChecks.length !== currentChecks.length) return true;
+
+    return draft.conversationChecks.some((draftCheck) => {
+      const currentCheck = currentChecks.find(
+        (check) => check.id === draftCheck.id,
+      );
+      if (!currentCheck) return true;
+
+      return (
+        JSON.stringify(comparableConversationCheckDraft(draftCheck)) !==
+        JSON.stringify(comparableConversationCheck(currentCheck))
       );
     });
   }
@@ -1946,6 +2343,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     try {
       const currentSteps = sortedEventSteps(selectedEvent.steps);
       const currentTools = sortedEventChatTools(selectedEvent.chatTools);
+      const currentChecks = sortedEventConversationChecks(
+        selectedEvent.conversationChecks ?? [],
+      );
 
       if (
         draft.title !== selectedEvent.title ||
@@ -2031,6 +2431,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             body: JSON.stringify({
               description: draftTool.description,
               enabled: draftTool.enabled,
+              handlerActions: normalizedActionSequenceSteps(
+                draftTool.handlerActions,
+              ),
               name: draftTool.name,
               parameters: normalizedChatToolParameters(draftTool),
               saveArgument: primaryCapture?.saveAs.trim() ?? "",
@@ -2048,6 +2451,50 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   current,
                   selectedEvent.id,
                   toolPayload.tool,
+                )
+              : current,
+          );
+        }
+      }
+
+      for (const draftCheck of draft.conversationChecks) {
+        const currentCheck = currentChecks.find(
+          (check) => check.id === draftCheck.id,
+        );
+        if (!currentCheck) continue;
+
+        if (
+          JSON.stringify(comparableConversationCheckDraft(draftCheck)) ===
+          JSON.stringify(comparableConversationCheck(currentCheck))
+        ) {
+          continue;
+        }
+
+        const checkPayload = await apiFetch<{ check: EventConversationCheck }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${draftCheck.id}/`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              enabled: draftCheck.enabled,
+              handlerActions: normalizedActionSequenceSteps(
+                draftCheck.handlerActions,
+              ),
+              instructions: draftCheck.instructions,
+              resultContextKey: draftCheck.resultContextKey,
+              sortOrder: draftCheck.sortOrder,
+              title: draftCheck.title,
+              triggersEvent: draftCheck.triggersEvent,
+            }),
+          },
+        );
+
+        if (eventAutosaveVersion.current === version) {
+          setExperience((current) =>
+            current && current.id === experience.id
+              ? replaceExperienceEventCheck(
+                  current,
+                  selectedEvent.id,
+                  checkPayload.check,
                 )
               : current,
           );
@@ -2212,6 +2659,218 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }));
   }
 
+  function updateEventChatToolActionDraft(
+    toolId: string,
+    actionId: string,
+    updater: (step: EventStepDraft) => EventStepDraft,
+  ) {
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      handlerActions: tool.handlerActions.map((step) =>
+        step.id === actionId ? updater(step) : step,
+      ),
+    }));
+  }
+
+  function updateEventChatToolActionConfig(
+    toolId: string,
+    actionId: string,
+    key: string,
+    value: string,
+  ) {
+    updateEventChatToolActionDraft(toolId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        [key]: value,
+      },
+    }));
+  }
+
+  function updateEventChatToolActionCondition(
+    toolId: string,
+    actionId: string,
+    condition: Partial<StepConditionDraft>,
+  ) {
+    updateEventChatToolActionDraft(toolId, actionId, (step) => {
+      const nextCondition = {
+        ...step.condition,
+        ...condition,
+      };
+
+      if (condition.type === "always") {
+        nextCondition.key = "";
+        nextCondition.value = "";
+      }
+
+      return {
+        ...step,
+        condition: nextCondition,
+      };
+    });
+  }
+
+  function addEventChatToolAction(
+    toolId: string,
+    actionType: EventActionStep["actionType"],
+  ) {
+    const actionId = localMessageId("tool-action");
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      handlerActions: [
+        ...tool.handlerActions,
+        {
+          actionType,
+          condition: {
+            key: "",
+            type: "always",
+            value: "",
+          },
+          config: defaultStepConfigForEvent(
+            actionType,
+            editorEvents,
+            selectedEventId,
+          ),
+          enabled: true,
+          id: actionId,
+          label: defaultStepLabel(actionType),
+          sortOrder: tool.handlerActions.length,
+        },
+      ],
+    }));
+    setExpandedStepId(actionId);
+    setConversationAddMenuToolId("");
+  }
+
+  function deleteEventChatToolAction(toolId: string, actionId: string) {
+    updateEventChatToolDraft(toolId, (tool) => ({
+      ...tool,
+      handlerActions: tool.handlerActions
+        .filter((step) => step.id !== actionId)
+        .map((step, index) => ({ ...step, sortOrder: index })),
+    }));
+  }
+
+  function updateEventConversationCheckDraft(
+    checkId: string,
+    updater: (check: EventConversationCheckDraft) => EventConversationCheckDraft,
+  ) {
+    const nextDraft = {
+      ...eventDraft,
+      conversationChecks: eventDraft.conversationChecks.map((check) =>
+        check.id === checkId ? updater(check) : check,
+      ),
+    };
+
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
+  function updateEventConversationCheckDraftField<
+    K extends keyof EventConversationCheckDraft,
+  >(
+    checkId: string,
+    field: K,
+    value: EventConversationCheckDraft[K],
+  ) {
+    updateEventConversationCheckDraft(checkId, (check) => ({
+      ...check,
+      [field]: value,
+    }));
+  }
+
+  function updateEventConversationCheckActionDraft(
+    checkId: string,
+    actionId: string,
+    updater: (step: EventStepDraft) => EventStepDraft,
+  ) {
+    updateEventConversationCheckDraft(checkId, (check) => ({
+      ...check,
+      handlerActions: check.handlerActions.map((step) =>
+        step.id === actionId ? updater(step) : step,
+      ),
+    }));
+  }
+
+  function updateEventConversationCheckActionConfig(
+    checkId: string,
+    actionId: string,
+    key: string,
+    value: string,
+  ) {
+    updateEventConversationCheckActionDraft(checkId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        [key]: value,
+      },
+    }));
+  }
+
+  function updateEventConversationCheckActionCondition(
+    checkId: string,
+    actionId: string,
+    condition: Partial<StepConditionDraft>,
+  ) {
+    updateEventConversationCheckActionDraft(checkId, actionId, (step) => {
+      const nextCondition = {
+        ...step.condition,
+        ...condition,
+      };
+
+      if (condition.type === "always") {
+        nextCondition.key = "";
+        nextCondition.value = "";
+      }
+
+      return {
+        ...step,
+        condition: nextCondition,
+      };
+    });
+  }
+
+  function addEventConversationCheckAction(
+    checkId: string,
+    actionType: EventActionStep["actionType"],
+  ) {
+    const actionId = localMessageId("check-action");
+    updateEventConversationCheckDraft(checkId, (check) => ({
+      ...check,
+      handlerActions: [
+        ...check.handlerActions,
+        {
+          actionType,
+          condition: {
+            key: "",
+            type: "always",
+            value: "",
+          },
+          config: defaultStepConfigForEvent(
+            actionType,
+            editorEvents,
+            selectedEventId,
+          ),
+          enabled: true,
+          id: actionId,
+          label: defaultStepLabel(actionType),
+          sortOrder: check.handlerActions.length,
+        },
+      ],
+    }));
+    setExpandedStepId(actionId);
+    setConversationAddMenuCheckId("");
+  }
+
+  function deleteEventConversationCheckAction(checkId: string, actionId: string) {
+    updateEventConversationCheckDraft(checkId, (check) => ({
+      ...check,
+      handlerActions: check.handlerActions
+        .filter((step) => step.id !== actionId)
+        .map((step, index) => ({ ...step, sortOrder: index })),
+    }));
+  }
+
   function applyUpdatedEvent(nextEvent: ExperienceEvent) {
     if (!experience) return;
 
@@ -2233,6 +2892,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setExpandedStepId("");
     setDraggingStepId("");
     setIsEventAddMenuOpen(false);
+    setIsConversationAddMenuOpen(false);
+    setConversationAddMenuToolId("");
+    setConversationAddMenuCheckId("");
   }
 
   async function createEditorEvent() {
@@ -2262,6 +2924,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       setExpandedStepId("");
       setDraggingStepId("");
       setIsEventAddMenuOpen(false);
+      setIsConversationAddMenuOpen(false);
+      setConversationAddMenuToolId("");
+      setConversationAddMenuCheckId("");
     } catch (createError) {
       setError(
         createError instanceof Error
@@ -2348,11 +3013,51 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedEvent(payload.event);
+      setIsConversationAddMenuOpen(false);
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : "Could not add chat exit.",
+          : "Could not add FC route.",
+      );
+    }
+  }
+
+  async function addEventConversationCheck() {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const existingCheckIds = new Set(
+        (selectedEvent.conversationChecks ?? []).map((check) => check.id),
+      );
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            defaultConversationCheckPayload(experience.events, selectedEvent.id),
+          ),
+        },
+      );
+      applyUpdatedEvent(payload.event);
+      const nextCheck = sortedEventConversationChecks(
+        payload.event.conversationChecks ?? [],
+      ).find((check) => !existingCheckIds.has(check.id));
+      if (nextCheck) {
+        setExpandedStepId(nextCheck.id);
+      }
+      setIsConversationAddMenuOpen(false);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Could not add conversation check.",
       );
     }
   }
@@ -2378,7 +3083,36 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       setError(
         deleteError instanceof Error
           ? deleteError.message
-          : "Could not delete chat exit.",
+          : "Could not delete FC route.",
+      );
+    }
+  }
+
+  async function deleteEventConversationCheck(checkId: string) {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${checkId}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      applyUpdatedEvent(payload.event);
+      if (expandedStepId === checkId) {
+        setExpandedStepId("");
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete conversation check.",
       );
     }
   }
@@ -2630,10 +3364,241 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     .concat(
       eventDraft.chatTools.map((tool) => ({
         id: tool.id,
-        label: "Chat exit",
+        label: "FC route",
         target: eventTitleForTrigger(editorEvents, tool.triggersEvent) || "Choose event",
       })),
+    )
+    .concat(
+      eventDraft.conversationChecks.map((check) => ({
+        id: check.id,
+        label: "Check",
+        target:
+          eventTitleForTrigger(editorEvents, check.triggersEvent) ||
+          "Choose event",
+      })),
     );
+
+  function renderActionStepDetail(
+    step: EventStepDraft,
+    updateConfig: (key: string, value: string) => void,
+    updateCondition: (condition: Partial<StepConditionDraft>) => void,
+    className = "event-step-detail",
+  ) {
+    const triggerEventSlug = stringConfigValue(step.config, "triggersEvent");
+    const hasTriggerEventOption = editorEvents.some(
+      (event) => event.slug === triggerEventSlug,
+    );
+
+    return (
+      <div className={className}>
+        <div className="event-condition-editor">
+          {step.condition.type === "context_equals" ? (
+            <>
+              <span className="event-detail-label">IF</span>
+              <input
+                aria-label="Condition context key"
+                onChange={(event) => updateCondition({ key: event.target.value })}
+                placeholder="entry_ready"
+                type="text"
+                value={step.condition.key}
+              />
+              <span className="event-inline-operator">=</span>
+              <input
+                aria-label="Condition context value"
+                onChange={(event) => updateCondition({ value: event.target.value })}
+                placeholder="yes"
+                type="text"
+                value={step.condition.value}
+              />
+              <button
+                className="event-text-button"
+                onClick={() => updateCondition({ type: "always" })}
+                type="button"
+              >
+                Clear
+              </button>
+            </>
+          ) : (
+            <button
+              className="event-add-condition-button"
+              onClick={() => updateCondition({ type: "context_equals" })}
+              type="button"
+            >
+              Add IF condition
+            </button>
+          )}
+        </div>
+
+        {step.actionType === "script" ? (
+          <textarea
+            aria-label="Speech text"
+            className="event-script-textarea"
+            onChange={(event) => updateConfig("text", event.target.value)}
+            placeholder="What the agent says..."
+            value={stringConfigValue(step.config, "text")}
+          />
+        ) : null}
+
+        {step.actionType === "set_context" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">SET</span>
+            <input
+              aria-label="Context key"
+              onChange={(event) => updateConfig("key", event.target.value)}
+              placeholder="entry_ready"
+              type="text"
+              value={stringConfigValue(step.config, "key")}
+            />
+            <span className="event-inline-operator">=</span>
+            <input
+              aria-label="Context value"
+              onChange={(event) => updateConfig("value", event.target.value)}
+              placeholder="yes"
+              type="text"
+              value={stringConfigValue(step.config, "value")}
+            />
+          </div>
+        ) : null}
+
+        {step.actionType === "get_ui_state" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">READ</span>
+            <input
+              aria-label="UI state key"
+              onChange={(event) => updateConfig("stateKey", event.target.value)}
+              placeholder="notesVisible"
+              type="text"
+              value={stringConfigValue(step.config, "stateKey")}
+            />
+            <span className="event-inline-operator">{"->"}</span>
+            <input
+              aria-label="Context key"
+              onChange={(event) => updateConfig("contextKey", event.target.value)}
+              placeholder="notes_visible"
+              type="text"
+              value={stringConfigValue(step.config, "contextKey")}
+            />
+          </div>
+        ) : null}
+
+        {step.actionType === "highlight_on" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">TARGET</span>
+            <input
+              aria-label="Highlight selector"
+              onChange={(event) => updateConfig("selector", event.target.value)}
+              placeholder=".runtime-notes-toggle"
+              type="text"
+              value={stringConfigValue(step.config, "selector")}
+            />
+            <span className="event-detail-label">COLOR</span>
+            <input
+              aria-label="Highlight color"
+              onChange={(event) => updateConfig("color", event.target.value)}
+              placeholder="rgba(59, 130, 246, 0.6)"
+              type="text"
+              value={stringConfigValue(step.config, "color")}
+            />
+          </div>
+        ) : null}
+
+        {step.actionType === "highlight_off" ? (
+          <div className="event-context-line single-value">
+            <span className="event-detail-label">CLEAR</span>
+            <input
+              aria-label="Highlight selector"
+              onChange={(event) => updateConfig("selector", event.target.value)}
+              placeholder=".runtime-notes-toggle"
+              type="text"
+              value={stringConfigValue(step.config, "selector")}
+            />
+          </div>
+        ) : null}
+
+        {step.actionType === "set_ui_trigger" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">WHEN</span>
+            <input
+              aria-label="Trigger selector"
+              onChange={(event) => updateConfig("selector", event.target.value)}
+              placeholder=".runtime-notes-toggle"
+              type="text"
+              value={stringConfigValue(step.config, "selector")}
+            />
+            <span className="event-inline-operator">{"->"}</span>
+            <select
+              aria-label="Triggered event"
+              onChange={(event) => updateConfig("triggersEvent", event.target.value)}
+              value={triggerEventSlug}
+            >
+              <option value="">Choose event</option>
+              {triggerEventSlug && !hasTriggerEventOption ? (
+                <option value={triggerEventSlug}>{triggerEventSlug}</option>
+              ) : null}
+              {editorEvents.map((event) => (
+                <option key={event.id} value={event.slug}>
+                  {event.title || event.slug}
+                  {event.isStart ? " (start)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        {step.actionType === "goto_event" ? (
+          <div className="event-context-line single-value">
+            <span className="event-detail-label">GO</span>
+            <select
+              aria-label="Target event"
+              onChange={(event) => updateConfig("triggersEvent", event.target.value)}
+              value={triggerEventSlug}
+            >
+              <option value="">Choose event</option>
+              {triggerEventSlug && !hasTriggerEventOption ? (
+                <option value={triggerEventSlug}>{triggerEventSlug}</option>
+              ) : null}
+              {editorEvents.map((event) => (
+                <option key={event.id} value={event.slug}>
+                  {event.title || event.slug}
+                  {event.isStart ? " (start)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        {step.actionType === "button_choice" ? (
+          <div className="event-context-line">
+            <span className="event-detail-label">BUTTON</span>
+            <input
+              aria-label="Button label"
+              onChange={(event) => updateConfig("label", event.target.value)}
+              placeholder="Continue"
+              type="text"
+              value={stringConfigValue(step.config, "label")}
+            />
+            <span className="event-inline-operator">{"->"}</span>
+            <select
+              aria-label="Button target event"
+              onChange={(event) => updateConfig("triggersEvent", event.target.value)}
+              value={triggerEventSlug}
+            >
+              <option value="">Choose event</option>
+              {triggerEventSlug && !hasTriggerEventOption ? (
+                <option value={triggerEventSlug}>{triggerEventSlug}</option>
+              ) : null}
+              {editorEvents.map((event) => (
+                <option key={event.id} value={event.slug}>
+                  {event.title || event.slug}
+                  {event.isStart ? " (start)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <main
@@ -3327,20 +4292,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               </div>
 
               <div className="event-sequence-header chat-exits-header">
-                <span>Chat exits</span>
-                <button
-                  className="event-add-button compact"
-                  onClick={() => void addEventChatTool()}
-                  type="button"
-                >
-                  <PlusIcon />
-                  Exit
-                </button>
+                <span>Conversation</span>
               </div>
 
               <div className="event-step-list chat-exit-list">
                 {eventDraft.chatTools.map((tool) => {
-                  const isExpanded = expandedStepId === tool.id;
+                  const isHandlerActionExpanded = tool.handlerActions.some(
+                    (step) => step.id === expandedStepId,
+                  );
+                  const isExpanded =
+                    expandedStepId === tool.id || isHandlerActionExpanded;
                   const targetEventSlug = tool.triggersEvent;
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
@@ -3373,10 +4334,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             }
                             type="button"
                           >
-                            Chat exit
+                            FC route
                           </button>
                           <input
-                            aria-label="Chat exit title"
+                            aria-label="FC route title"
                             className="chat-exit-title-input"
                             onChange={(event) =>
                               updateEventChatToolDraftField(
@@ -3399,7 +4360,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
                         <div className="event-step-tools">
                           <button
-                            aria-label={tool.enabled ? "Disable exit" : "Enable exit"}
+                            aria-label={
+                              tool.enabled ? "Disable FC route" : "Enable FC route"
+                            }
                             className={`event-enable-button${
                               tool.enabled ? "" : " is-off"
                             }`}
@@ -3415,7 +4378,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             <span />
                           </button>
                           <button
-                            aria-label="Delete chat exit"
+                            aria-label="Delete FC route"
                             className="event-icon-button danger"
                             onClick={() => void deleteEventChatTool(tool.id)}
                             type="button"
@@ -3430,7 +4393,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <div className="event-context-line chat-exit-core-line">
                             <span className="event-detail-label">DESTINATION</span>
                             <select
-                              aria-label="Chat exit destination event"
+                              aria-label="FC route destination event"
                               onChange={(event) =>
                                 updateEventChatToolDraftField(
                                   tool.id,
@@ -3467,7 +4430,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   event.target.value,
                                 )
                               }
-                              placeholder="Describe the conditions that should trigger this exit."
+                              placeholder="Describe the conditions that should trigger this FC route."
                               type="text"
                               value={tool.description}
                             />
@@ -3540,13 +4503,578 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               <div className="chat-exit-empty">---</div>
                             ) : null}
                           </div>
+
+                          <div className="chat-tool-actions-block">
+                            <div
+                              className="event-add-block chat-tool-action-add"
+                              ref={
+                                conversationAddMenuToolId === tool.id
+                                  ? conversationAddBlockRef
+                                  : null
+                              }
+                            >
+                              <button
+                                aria-expanded={conversationAddMenuToolId === tool.id}
+                                className="event-add-button compact"
+                                onClick={() =>
+                                  setConversationAddMenuToolId((current) =>
+                                    current === tool.id ? "" : tool.id,
+                                  )
+                                }
+                                type="button"
+                              >
+                                <PlusIcon />
+                                Action
+                              </button>
+                              {conversationAddMenuToolId === tool.id ? (
+                                <div className="event-add-menu chat-tool-add-menu">
+                                  {eventActionOptions.map((option) => (
+                                    <button
+                                      className={`event-add-option tone-${eventActionToneClass(
+                                        option.id,
+                                      )}`}
+                                      key={option.id}
+                                      onClick={() =>
+                                        addEventChatToolAction(tool.id, option.id)
+                                      }
+                                      type="button"
+                                    >
+                                      <span>{option.label}</span>
+                                      <small>{eventActionDescription(option.id)}</small>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {tool.handlerActions.length ? (
+                              <div className="event-step-list chat-tool-action-list">
+                                {tool.handlerActions.map((step) => {
+                                  const conditionText = eventConditionSummary(
+                                    step.condition,
+                                  );
+                                  const isActionExpanded =
+                                    expandedStepId === step.id;
+                                  const toneClass = eventActionToneClass(
+                                    step.actionType,
+                                  );
+
+                                  return (
+                                    <article
+                                      className={[
+                                        "event-step",
+                                        "chat-tool-action-step",
+                                        `tone-${toneClass}`,
+                                        isActionExpanded ? "is-expanded" : "",
+                                        !step.enabled ? "is-disabled" : "",
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" ")}
+                                      key={step.id}
+                                    >
+                                      <div className="event-step-main">
+                                        <span className="event-drag-handle is-static">
+                                          <GripIcon />
+                                        </span>
+
+                                        <button
+                                          aria-expanded={isActionExpanded}
+                                          className="event-step-summary"
+                                          onClick={() =>
+                                            setExpandedStepId(
+                                              isActionExpanded ? tool.id : step.id,
+                                            )
+                                          }
+                                          type="button"
+                                        >
+                                          <span className="event-step-kind">
+                                            {eventActionLabel(step.actionType)}
+                                          </span>
+                                          <span className="event-step-copy">
+                                            {eventStepSummary(step, editorEvents)}
+                                          </span>
+                                        </button>
+
+                                        <div className="event-step-tools">
+                                          <button
+                                            className={`event-if-chip${
+                                              conditionText ? "" : " is-empty"
+                                            }`}
+                                            onClick={() => setExpandedStepId(step.id)}
+                                            title={
+                                              conditionText
+                                                ? `Condition: ${conditionText}`
+                                                : "Set condition"
+                                            }
+                                            type="button"
+                                          >
+                                            IF
+                                            {conditionText ? ` ${conditionText}` : ""}
+                                          </button>
+                                          <button
+                                            aria-label={
+                                              step.enabled
+                                                ? "Disable action"
+                                                : "Enable action"
+                                            }
+                                            className={`event-enable-button${
+                                              step.enabled ? "" : " is-off"
+                                            }`}
+                                            onClick={() =>
+                                              updateEventChatToolActionDraft(
+                                                tool.id,
+                                                step.id,
+                                                (currentStep) => ({
+                                                  ...currentStep,
+                                                  enabled: !currentStep.enabled,
+                                                }),
+                                              )
+                                            }
+                                            title={
+                                              step.enabled ? "Enabled" : "Disabled"
+                                            }
+                                            type="button"
+                                          >
+                                            <span />
+                                          </button>
+                                          <button
+                                            aria-label="Delete action"
+                                            className="event-icon-button danger"
+                                            onClick={() => {
+                                              deleteEventChatToolAction(
+                                                tool.id,
+                                                step.id,
+                                              );
+                                              if (expandedStepId === step.id) {
+                                                setExpandedStepId(tool.id);
+                                              }
+                                            }}
+                                            type="button"
+                                          >
+                                            <TrashIcon />
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {isActionExpanded
+                                        ? renderActionStepDetail(
+                                            step,
+                                            (key, value) =>
+                                              updateEventChatToolActionConfig(
+                                                tool.id,
+                                                step.id,
+                                                key,
+                                                value,
+                                              ),
+                                            (condition) =>
+                                              updateEventChatToolActionCondition(
+                                                tool.id,
+                                                step.id,
+                                                condition,
+                                              ),
+                                            "event-step-detail chat-tool-action-detail",
+                                          )
+                                        : null}
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                     </article>
                   );
                 })}
-                {!eventDraft.chatTools.length ? (
+                {eventDraft.conversationChecks.map((check) => {
+                  const isHandlerActionExpanded = check.handlerActions.some(
+                    (step) => step.id === expandedStepId,
+                  );
+                  const isExpanded =
+                    expandedStepId === check.id || isHandlerActionExpanded;
+                  const targetEventSlug = check.triggersEvent;
+                  const hasTriggerEventOption = editorEvents.some(
+                    (event) => event.slug === targetEventSlug,
+                  );
+
+                  return (
+                    <article
+                      className={[
+                        "event-step",
+                        "chat-exit-step",
+                        "conversation-check-step",
+                        "tone-state",
+                        isExpanded ? "is-expanded" : "",
+                        !check.enabled ? "is-disabled" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={check.id}
+                    >
+                      <div className="event-step-main">
+                        <span className="event-drag-handle is-static">
+                          <GripIcon />
+                        </span>
+
+                        <div className="event-step-summary chat-exit-summary">
+                          <button
+                            aria-expanded={isExpanded}
+                            className="event-step-kind chat-exit-expand-button"
+                            onClick={() =>
+                              setExpandedStepId(isExpanded ? "" : check.id)
+                            }
+                            type="button"
+                          >
+                            Check
+                          </button>
+                          <input
+                            aria-label="Conversation check title"
+                            className="chat-exit-title-input"
+                            onChange={(event) =>
+                              updateEventConversationCheckDraftField(
+                                check.id,
+                                "title",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Title"
+                            style={inlineFieldWidthStyle(
+                              check.title,
+                              "Title",
+                              5,
+                              34,
+                            )}
+                            type="text"
+                            value={check.title}
+                          />
+                        </div>
+
+                        <div className="event-step-tools">
+                          <button
+                            aria-label={
+                              check.enabled
+                                ? "Disable conversation check"
+                                : "Enable conversation check"
+                            }
+                            className={`event-enable-button${
+                              check.enabled ? "" : " is-off"
+                            }`}
+                            onClick={() =>
+                              updateEventConversationCheckDraft(
+                                check.id,
+                                (currentCheck) => ({
+                                  ...currentCheck,
+                                  enabled: !currentCheck.enabled,
+                                }),
+                              )
+                            }
+                            title={check.enabled ? "Enabled" : "Disabled"}
+                            type="button"
+                          >
+                            <span />
+                          </button>
+                          <button
+                            aria-label="Delete conversation check"
+                            className="event-icon-button danger"
+                            onClick={() =>
+                              void deleteEventConversationCheck(check.id)
+                            }
+                            type="button"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="event-step-detail chat-exit-detail">
+                          <div className="event-context-line conversation-check-core-line">
+                            <span className="event-detail-label">SAVE AS</span>
+                            <input
+                              aria-label="Conversation check result context key"
+                              onChange={(event) =>
+                                updateEventConversationCheckDraftField(
+                                  check.id,
+                                  "resultContextKey",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="student_confused"
+                              type="text"
+                              value={check.resultContextKey}
+                            />
+                            <span className="event-detail-label">DESTINATION</span>
+                            <select
+                              aria-label="Conversation check destination event"
+                              onChange={(event) =>
+                                updateEventConversationCheckDraftField(
+                                  check.id,
+                                  "triggersEvent",
+                                  event.target.value,
+                                )
+                              }
+                              value={targetEventSlug}
+                            >
+                              <option value="">Choose event</option>
+                              {targetEventSlug && !hasTriggerEventOption ? (
+                                <option value={targetEventSlug}>
+                                  {targetEventSlug}
+                                </option>
+                              ) : null}
+                              {editorEvents.map((event) => (
+                                <option key={event.id} value={event.slug}>
+                                  {event.title || event.slug}
+                                  {event.isStart ? " (start)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="event-context-line single-value">
+                            <span className="event-detail-label">
+                              CHECK INSTRUCTIONS
+                            </span>
+                            <input
+                              aria-label="Conversation check instructions"
+                              onChange={(event) =>
+                                updateEventConversationCheckDraftField(
+                                  check.id,
+                                  "instructions",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Describe exactly when this check should return true."
+                              type="text"
+                              value={check.instructions}
+                            />
+                          </div>
+
+                          <div className="chat-tool-actions-block">
+                            <div
+                              className="event-add-block chat-tool-action-add"
+                              ref={
+                                conversationAddMenuCheckId === check.id
+                                  ? conversationCheckAddBlockRef
+                                  : null
+                              }
+                            >
+                              <button
+                                aria-expanded={
+                                  conversationAddMenuCheckId === check.id
+                                }
+                                className="event-add-button compact"
+                                onClick={() =>
+                                  setConversationAddMenuCheckId((current) =>
+                                    current === check.id ? "" : check.id,
+                                  )
+                                }
+                                type="button"
+                              >
+                                <PlusIcon />
+                                Action
+                              </button>
+                              {conversationAddMenuCheckId === check.id ? (
+                                <div className="event-add-menu chat-tool-add-menu">
+                                  {eventActionOptions.map((option) => (
+                                    <button
+                                      className={`event-add-option tone-${eventActionToneClass(
+                                        option.id,
+                                      )}`}
+                                      key={option.id}
+                                      onClick={() =>
+                                        addEventConversationCheckAction(
+                                          check.id,
+                                          option.id,
+                                        )
+                                      }
+                                      type="button"
+                                    >
+                                      <span>{option.label}</span>
+                                      <small>{eventActionDescription(option.id)}</small>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {check.handlerActions.length ? (
+                              <div className="event-step-list chat-tool-action-list">
+                                {check.handlerActions.map((step) => {
+                                  const conditionText = eventConditionSummary(
+                                    step.condition,
+                                  );
+                                  const isActionExpanded =
+                                    expandedStepId === step.id;
+                                  const toneClass = eventActionToneClass(
+                                    step.actionType,
+                                  );
+
+                                  return (
+                                    <article
+                                      className={[
+                                        "event-step",
+                                        "chat-tool-action-step",
+                                        `tone-${toneClass}`,
+                                        isActionExpanded ? "is-expanded" : "",
+                                        !step.enabled ? "is-disabled" : "",
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" ")}
+                                      key={step.id}
+                                    >
+                                      <div className="event-step-main">
+                                        <span className="event-drag-handle is-static">
+                                          <GripIcon />
+                                        </span>
+
+                                        <button
+                                          aria-expanded={isActionExpanded}
+                                          className="event-step-summary"
+                                          onClick={() =>
+                                            setExpandedStepId(
+                                              isActionExpanded ? check.id : step.id,
+                                            )
+                                          }
+                                          type="button"
+                                        >
+                                          <span className="event-step-kind">
+                                            {eventActionLabel(step.actionType)}
+                                          </span>
+                                          <span className="event-step-copy">
+                                            {eventStepSummary(step, editorEvents)}
+                                          </span>
+                                        </button>
+
+                                        <div className="event-step-tools">
+                                          <button
+                                            className={`event-if-chip${
+                                              conditionText ? "" : " is-empty"
+                                            }`}
+                                            onClick={() => setExpandedStepId(step.id)}
+                                            title={
+                                              conditionText
+                                                ? `Condition: ${conditionText}`
+                                                : "Set condition"
+                                            }
+                                            type="button"
+                                          >
+                                            IF
+                                            {conditionText ? ` ${conditionText}` : ""}
+                                          </button>
+                                          <button
+                                            aria-label={
+                                              step.enabled
+                                                ? "Disable action"
+                                                : "Enable action"
+                                            }
+                                            className={`event-enable-button${
+                                              step.enabled ? "" : " is-off"
+                                            }`}
+                                            onClick={() =>
+                                              updateEventConversationCheckActionDraft(
+                                                check.id,
+                                                step.id,
+                                                (currentStep) => ({
+                                                  ...currentStep,
+                                                  enabled: !currentStep.enabled,
+                                                }),
+                                              )
+                                            }
+                                            title={
+                                              step.enabled ? "Enabled" : "Disabled"
+                                            }
+                                            type="button"
+                                          >
+                                            <span />
+                                          </button>
+                                          <button
+                                            aria-label="Delete action"
+                                            className="event-icon-button danger"
+                                            onClick={() => {
+                                              deleteEventConversationCheckAction(
+                                                check.id,
+                                                step.id,
+                                              );
+                                              if (expandedStepId === step.id) {
+                                                setExpandedStepId(check.id);
+                                              }
+                                            }}
+                                            type="button"
+                                          >
+                                            <TrashIcon />
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {isActionExpanded
+                                        ? renderActionStepDetail(
+                                            step,
+                                            (key, value) =>
+                                              updateEventConversationCheckActionConfig(
+                                                check.id,
+                                                step.id,
+                                                key,
+                                                value,
+                                              ),
+                                            (condition) =>
+                                              updateEventConversationCheckActionCondition(
+                                                check.id,
+                                                step.id,
+                                                condition,
+                                              ),
+                                            "event-step-detail chat-tool-action-detail",
+                                          )
+                                        : null}
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+                {!eventDraft.chatTools.length &&
+                !eventDraft.conversationChecks.length ? (
                   <div className="chat-exit-empty">---</div>
+                ) : null}
+              </div>
+
+              <div
+                className="event-add-block conversation-add-block"
+                ref={conversationItemAddBlockRef}
+              >
+                <button
+                  aria-expanded={isConversationAddMenuOpen}
+                  className="event-add-button"
+                  onClick={() =>
+                    setIsConversationAddMenuOpen((current) => !current)
+                  }
+                  type="button"
+                >
+                  <PlusIcon />
+                  Add conversation item
+                </button>
+                {isConversationAddMenuOpen ? (
+                  <div className="event-add-menu">
+                    <button
+                      className="event-add-option tone-flow"
+                      onClick={() => void addEventChatTool()}
+                      type="button"
+                    >
+                      <span>FC route</span>
+                      <small>Function call that can capture, act, and route</small>
+                    </button>
+                    <button
+                      className="event-add-option tone-state"
+                      onClick={() => void addEventConversationCheck()}
+                      type="button"
+                    >
+                      <span>Check</span>
+                      <small>Classifier that can save, act, and route</small>
+                    </button>
+                  </div>
                 ) : null}
               </div>
                 </div>
@@ -3579,6 +5107,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const scriptAudioRef = useRef<HTMLAudioElement | null>(null);
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const [isLeftOpen, setIsLeftOpen] = useState(true);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [workspaceWidth, setWorkspaceWidth] = useState(
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
   );
@@ -3638,6 +5167,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   >({});
   const [runtimeButtons, setRuntimeButtons] = useState<RuntimeButton[]>([]);
   const [runtimeTriggers, setRuntimeTriggers] = useState<RuntimeUiTrigger[]>([]);
+  const [runtimeActionLog, setRuntimeActionLog] = useState<
+    RuntimeActionLogEntry[]
+  >([]);
   const shellStyle = {
     "--left-width": `${leftWidth}px`,
     "--workspace-width": `${workspaceWidth}px`,
@@ -3648,6 +5180,16 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     typeof session?.runtimeState?.currentEventId === "string"
       ? session.runtimeState.currentEventId
       : "";
+  const currentRuntimeEventSlug =
+    typeof session?.runtimeState?.currentEventSlug === "string"
+      ? session.runtimeState.currentEventSlug
+      : "";
+  const currentRuntimeEvent =
+    selectedExperience?.events.find(
+      (event) =>
+        event.id === currentRuntimeEventId ||
+        event.slug === currentRuntimeEventSlug,
+    ) ?? null;
 
   function currentRuntimeUiState(
     overrides: Partial<RuntimeUiState> = {},
@@ -3660,6 +5202,21 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
     if (!actions.length) return;
+
+    const now = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    setRuntimeActionLog((current) => [
+      ...actions.map((action) => ({
+        detail: runtimeActionText(action),
+        id: localMessageId("runtime-action"),
+        time: now,
+        type: typeof action.type === "string" ? action.type : "action",
+      })),
+      ...current,
+    ].slice(0, 48));
 
     setRuntimeButtons((current) => {
       let next = [...current];
@@ -3921,6 +5478,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   useEffect(() => {
     setNotesVisible(false);
+    setRuntimeActionLog([]);
   }, [session?.id]);
 
   useEffect(() => {
@@ -4353,10 +5911,14 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   }
 
   function isScriptAudioMessage(message: ChatMessage) {
+    const source =
+      typeof message.metadata?.source === "string"
+        ? message.metadata.source
+        : "";
     return (
       message.role === "assistant" &&
       message.content.trim().length > 0 &&
-      message.metadata?.source === "event-action"
+      scriptAudioSources.has(source)
     );
   }
 
@@ -4572,6 +6134,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       setSession(payload.session);
       setMessages(payload.messages);
       setTurnAnchorMessageId(null);
+      setRuntimeActionLog([]);
       setChatStatus("ready");
     } catch (error) {
       setChatStatus("error");
@@ -4654,6 +6217,36 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     queueScriptMessages(payload.session, payload.ranMessages);
   }
 
+  async function runConversationChecks(activeSession: TutoringSession) {
+    const payload = await apiFetch<ConversationCheckPayload>(
+      `/api/sessions/${activeSession.id}/conversation-checks/run/`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          uiState: currentRuntimeUiState(),
+        }),
+      },
+    );
+
+    setSession(payload.session);
+    setMessages(payload.messages);
+    applyRuntimeActions(payload.actions);
+
+    if (payload.handled) {
+      realtimeConnectionRef.current?.close();
+      realtimeConnectionRef.current = null;
+      if (payload.ranMessages?.[0]) {
+        setTurnAnchorMessageId(payload.ranMessages[0].id);
+      }
+      queueScriptMessages(payload.session, payload.ranMessages);
+    }
+
+    return {
+      handled: payload.handled,
+      session: payload.session,
+    };
+  }
+
   async function saveSessionMessage(
     activeSession: TutoringSession,
     content: string,
@@ -4679,7 +6272,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     try {
       const payload = await saveSessionMessage(session, content);
-      const activeSession = payload.session;
+      let activeSession = payload.session;
+      setSession(activeSession);
+      setMessages((current) => sortMessages([...current, payload.message]));
+      setTurnAnchorMessageId(payload.message.id);
+      setChatStatus("ready");
+
+      const checkResult = await runConversationChecks(activeSession);
+      activeSession = checkResult.session;
+      if (checkResult.handled) {
+        return;
+      }
+
       const assistantMessageId = localMessageId("assistant");
       pendingAssistantId = assistantMessageId;
       const assistantMessage: ChatMessage = {
@@ -4696,12 +6300,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         },
       };
 
-      setSession(activeSession);
       setMessages((current) =>
-        sortMessages([...current, payload.message, assistantMessage]),
+        sortMessages([...current, assistantMessage]),
       );
-      setTurnAnchorMessageId(payload.message.id);
-      setChatStatus("ready");
 
       const connection = await getRealtimeConnection(
         activeSession,
@@ -4851,7 +6452,13 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       </header>
 
       <section
-        className={`workspace-shell ${isLeftOpen ? "drawer-open" : "drawer-closed"}`}
+        className={[
+          "workspace-shell",
+          isLeftOpen ? "drawer-open" : "drawer-closed",
+          isInspectorOpen ? "inspector-open" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         ref={shellRef}
         style={shellStyle}
       >
@@ -5012,8 +6619,154 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             </PanelWindow>
           </section>
         </section>
+
+        <button
+          aria-label={
+            isInspectorOpen ? "Hide runtime inspector" : "Show runtime inspector"
+          }
+          aria-pressed={isInspectorOpen}
+          className="runtime-inspector-toggle"
+          onClick={() => setIsInspectorOpen((current) => !current)}
+          title={isInspectorOpen ? "Hide runtime inspector" : "Show runtime inspector"}
+          type="button"
+        >
+          <InspectorIcon />
+        </button>
+
+        <aside
+          aria-hidden={!isInspectorOpen}
+          aria-label="Runtime inspector"
+          className="runtime-inspector-drawer"
+        >
+          <RuntimeInspectorPanel
+            actionLog={runtimeActionLog}
+            buttons={runtimeButtons}
+            currentEvent={currentRuntimeEvent}
+            currentEventSlug={currentRuntimeEventSlug}
+            highlights={runtimeHighlights}
+            runtimeContext={session?.runtimeContext ?? {}}
+            session={session}
+            triggers={runtimeTriggers}
+          />
+        </aside>
       </section>
     </main>
+  );
+}
+
+function RuntimeInspectorPanel({
+  actionLog,
+  buttons,
+  currentEvent,
+  currentEventSlug,
+  highlights,
+  runtimeContext,
+  session,
+  triggers,
+}: {
+  actionLog: RuntimeActionLogEntry[];
+  buttons: RuntimeButton[];
+  currentEvent: ExperienceEvent | null;
+  currentEventSlug: string;
+  highlights: Record<string, RuntimeHighlight>;
+  runtimeContext: Record<string, unknown>;
+  session: TutoringSession | null;
+  triggers: RuntimeUiTrigger[];
+}) {
+  const contextEntries = Object.entries(runtimeContext);
+  const highlightEntries = Object.values(highlights);
+  const currentEventLabel =
+    currentEvent?.title || currentEventSlug || (session ? "Start" : "---");
+
+  return (
+    <div className="runtime-inspector-scroll">
+      <div className="runtime-inspector-panel">
+        <header className="runtime-inspector-header">
+          <span>Runtime</span>
+          <strong>{currentEventLabel}</strong>
+        </header>
+
+        <div className="runtime-inspector-section">
+          <div className="runtime-inspector-kv">
+            <span>Session</span>
+            <strong>{session?.id.slice(0, 8) || "---"}</strong>
+          </div>
+          <div className="runtime-inspector-kv">
+            <span>Event slug</span>
+            <strong>{currentEvent?.slug || currentEventSlug || "---"}</strong>
+          </div>
+        </div>
+
+        <section className="runtime-inspector-section">
+          <h2>Context</h2>
+          {contextEntries.length ? (
+            <div className="runtime-inspector-list">
+              {contextEntries.map(([key, value]) => (
+                <div className="runtime-inspector-row" key={key}>
+                  <span>{key}</span>
+                  <code>{compactRuntimeValue(value)}</code>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Waiting</h2>
+          <div className="runtime-inspector-list">
+            {triggers.map((trigger) => (
+              <div
+                className="runtime-inspector-row"
+                key={`${trigger.selector}-${trigger.triggersEvent}`}
+              >
+                <span>{trigger.selector}</span>
+                <code>{trigger.triggersEvent}</code>
+              </div>
+            ))}
+            {buttons.map((button) => (
+              <div
+                className="runtime-inspector-row"
+                key={`${button.stepId}-${button.triggersEvent}`}
+              >
+                <span>{button.label}</span>
+                <code>{button.triggersEvent}</code>
+              </div>
+            ))}
+            {highlightEntries.map((highlight) => (
+              <div
+                className="runtime-inspector-row"
+                key={highlight.selector}
+              >
+                <span>{highlight.selector}</span>
+                <code>highlight</code>
+              </div>
+            ))}
+          </div>
+          {!triggers.length && !buttons.length && !highlightEntries.length ? (
+            <p className="runtime-inspector-empty">---</p>
+          ) : null}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Recent actions</h2>
+          {actionLog.length ? (
+            <div className="runtime-action-log">
+              {actionLog.map((entry) => (
+                <div className="runtime-action-row" key={entry.id}>
+                  <span>{entry.time}</span>
+                  <strong>{entry.type}</strong>
+                  <p>{entry.detail}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -5844,6 +7597,26 @@ function SendIcon() {
     >
       <path
         d="M21 3 10.6 13.4M21 3l-6.7 18-3.7-7.6L3 9.7 21 3Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function InspectorIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="15"
+      viewBox="0 0 24 24"
+      width="15"
+    >
+      <path
+        d="M4 6h16M4 12h10M4 18h16M18 10v4"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
