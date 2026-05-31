@@ -5901,6 +5901,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         {step.actionType === "script" ? (
           <ScriptActionEditor
             deckUrl={stringConfigValue(step.config, "deckUrl")}
+            events={editorEvents}
             onDeckUrlChange={(value) => updateConfig("deckUrl", value)}
             onTextChange={(value) => updateConfig("text", value)}
             text={stringConfigValue(step.config, "text")}
@@ -6642,6 +6643,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           {step.actionType === "script" ? (
                             <ScriptActionEditor
                               deckUrl={stringConfigValue(step.config, "deckUrl")}
+                              events={editorEvents}
                               onDeckUrlChange={(value) =>
                                 updateEventStepConfig(step.id, "deckUrl", value)
                               }
@@ -10996,11 +10998,13 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
 
 function ScriptActionEditor({
   deckUrl,
+  events,
   onDeckUrlChange,
   onTextChange,
   text,
 }: {
   deckUrl: string;
+  events: ExperienceEvent[];
   onDeckUrlChange: (value: string) => void;
   onTextChange: (value: string) => void;
   text: string;
@@ -11109,7 +11113,11 @@ function ScriptActionEditor({
       const appDefinition =
         getMainPanelAppDefinition(appId) ?? defaultMainPanelApp;
       const view = marker.argList[1] || appDefinition.defaultView;
+      const destination = marker.argList[2] ?? "";
       const hasCurrentView = appDefinition.views.some((item) => item.id === view);
+      const hasDestinationOption = events.some(
+        (event) => event.slug === destination,
+      );
 
       return (
         <div className="script-marker-controls interactive-marker-controls">
@@ -11151,13 +11159,22 @@ function ScriptActionEditor({
             ))}
           </select>
           <span className="event-detail-label">DESTINATION</span>
-          <input
+          <select
             aria-label="Timed main-panel app destination event"
             onChange={(event) => updateMarkerArg(marker, 2, event.target.value)}
-            placeholder="event_slug"
-            type="text"
-            value={marker.argList[2] ?? ""}
-          />
+            value={destination}
+          >
+            <option value="">No destination</option>
+            {destination && !hasDestinationOption ? (
+              <option value={destination}>{destination}</option>
+            ) : null}
+            {events.map((event) => (
+              <option key={event.id} value={event.slug}>
+                {event.title || event.slug}
+                {event.isStart ? " (start)" : ""}
+              </option>
+            ))}
+          </select>
         </div>
       );
     }
