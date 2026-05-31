@@ -779,7 +779,9 @@ button {
 
 .script-audio-row {
   display: grid;
-  grid-template-columns: minmax(130px, 0.5fr) minmax(0, 1fr) minmax(54px, auto) minmax(88px, auto) 28px 28px;
+  grid-template-columns:
+    minmax(122px, 0.42fr) minmax(0, 1fr) minmax(92px, 0.28fr)
+    minmax(54px, auto) minmax(70px, auto) 28px 28px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -789,8 +791,17 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
 }
 
+.script-audio-row.is-playing {
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-bg-strong));
+}
+
+.script-audio-row.is-dynamic {
+  opacity: 0.86;
+}
+
 .script-audio-source,
-.script-audio-preview {
+.script-audio-preview,
+.script-audio-meta {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -807,6 +818,12 @@ button {
   color: var(--muted-ink);
   font-size: 0.7rem;
   font-weight: 690;
+}
+
+.script-audio-meta {
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  font-size: 0.64rem;
+  font-weight: 720;
 }
 
 .script-audio-pill {

@@ -584,13 +584,18 @@ type ScriptAudioItem = {
   cached: boolean;
   cacheKey: string;
   canGenerate: boolean;
+  characterCount?: number;
   durationSeconds: number | null;
+  generationReason?: string;
   id: string;
   preview: string;
   realtimeModel?: RealtimeModelId;
+  script?: string;
   source: string;
+  timingModel?: string;
   ttsModel?: string;
   voice?: RealtimeVoiceId;
+  wordCount?: number;
   wordsCached: boolean;
 };
 
@@ -3107,6 +3112,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     "idle" | "loading" | "generating"
   >("idle");
   const [scriptAudioError, setScriptAudioError] = useState("");
+  const [playingScriptAudioId, setPlayingScriptAudioId] = useState("");
   const overviewAutosaveTimer = useRef<number | null>(null);
   const overviewAutosaveVersion = useRef(0);
   const tutorAutosaveTimer = useRef<number | null>(null);
@@ -3308,8 +3314,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       }
       voiceSampleAudioRef.current?.pause();
       voiceSampleAudioRef.current = null;
-      scriptAudioPreviewRef.current?.pause();
-      scriptAudioPreviewRef.current = null;
+      stopScriptAudioPreview(false);
     };
   }, []);
 
@@ -3318,17 +3323,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }, [experienceForm.description]);
 
   useEffect(() => {
-    function stopScriptAudioPreview(event: KeyboardEvent) {
+    function handleScriptAudioPreviewEscape(event: KeyboardEvent) {
       if (event.key !== "Escape" || !scriptAudioPreviewRef.current) return;
 
-      scriptAudioPreviewRef.current.pause();
-      scriptAudioPreviewRef.current = null;
+      stopScriptAudioPreview();
       event.preventDefault();
     }
 
-    document.addEventListener("keydown", stopScriptAudioPreview, true);
+    document.addEventListener("keydown", handleScriptAudioPreviewEscape, true);
     return () =>
-      document.removeEventListener("keydown", stopScriptAudioPreview, true);
+      document.removeEventListener("keydown", handleScriptAudioPreviewEscape, true);
   }, []);
 
   useEffect(() => {
@@ -5587,26 +5591,38 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  function stopScriptAudioPreview(resetState = true) {
+    scriptAudioPreviewRef.current?.pause();
+    scriptAudioPreviewRef.current = null;
+    if (resetState) {
+      setPlayingScriptAudioId("");
+    }
+  }
+
   function playScriptAudioPreview(item: ScriptAudioItem) {
     if (!item.audioUrl) return;
 
-    scriptAudioPreviewRef.current?.pause();
+    stopScriptAudioPreview();
     const audio = new Audio(item.audioUrl);
     scriptAudioPreviewRef.current = audio;
+    setPlayingScriptAudioId(item.id);
     audio.onended = () => {
       if (scriptAudioPreviewRef.current === audio) {
         scriptAudioPreviewRef.current = null;
+        setPlayingScriptAudioId("");
       }
     };
     audio.onerror = () => {
       if (scriptAudioPreviewRef.current === audio) {
         scriptAudioPreviewRef.current = null;
+        setPlayingScriptAudioId("");
         setScriptAudioError("Could not play cached scripted audio.");
       }
     };
     void audio.play().catch(() => {
       if (scriptAudioPreviewRef.current === audio) {
         scriptAudioPreviewRef.current = null;
+        setPlayingScriptAudioId("");
         setScriptAudioError("Could not play cached scripted audio.");
       }
     });
@@ -6132,6 +6148,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onPlay={playScriptAudioPreview}
                 onRegenerateAll={() => void generateScriptAudio("", true)}
                 onRegenerateOne={(scriptId) => void generateScriptAudio(scriptId, true)}
+                onStop={stopScriptAudioPreview}
+                playingId={playingScriptAudioId}
                 status={scriptAudioStatus}
               />
             </section>
@@ -10981,6 +10999,23 @@ function RuntimePlaceholderPanel({
   );
 }
 
+function formatScriptAudioDuration(durationSeconds: number | null) {
+  if (!durationSeconds || !Number.isFinite(durationSeconds)) return "";
+  if (durationSeconds < 60) return `${durationSeconds.toFixed(1)}s`;
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = Math.round(durationSeconds % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function scriptAudioMetadataText(item: ScriptAudioItem) {
+  const pieces = [
+    formatScriptAudioDuration(item.durationSeconds),
+    item.wordCount ? `${item.wordCount} words` : "",
+    item.voice ? item.voice : "",
+  ].filter(Boolean);
+  return pieces.length ? pieces.join(" / ") : "---";
+}
+
 function ScriptAudioPanel({
   error,
   isBusy,
@@ -10990,6 +11025,8 @@ function ScriptAudioPanel({
   onPlay,
   onRegenerateAll,
   onRegenerateOne,
+  onStop,
+  playingId,
   status,
 }: {
   error: string;
@@ -11000,11 +11037,14 @@ function ScriptAudioPanel({
   onPlay: (item: ScriptAudioItem) => void;
   onRegenerateAll: () => void;
   onRegenerateOne: (scriptId: string) => void;
+  onStop: () => void;
+  playingId: string;
   status: "idle" | "loading" | "generating";
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const cachedCount = items.filter((item) => item.cached && item.wordsCached).length;
+  const readyCount = items.filter((item) => item.cached && item.wordsCached).length;
   const audioCount = items.filter((item) => item.cached).length;
+  const dynamicCount = items.filter((item) => !item.canGenerate).length;
   const timingCount = items.filter((item) => item.wordsCached).length;
   const statusLabel =
     status === "generating"
@@ -11025,6 +11065,7 @@ function ScriptAudioPanel({
             className="header-action"
             disabled={isBusy || !items.some((item) => item.canGenerate)}
             onClick={onGenerateAll}
+            title="Generate audio and word timing for scripts that are missing either artifact."
             type="button"
           >
             Generate missing
@@ -11033,6 +11074,7 @@ function ScriptAudioPanel({
             className="header-action secondary"
             disabled={isBusy || !items.some((item) => item.canGenerate)}
             onClick={onRegenerateAll}
+            title="Regenerate every static script's audio and word timing from the current tutor settings."
             type="button"
           >
             Regenerate
@@ -11049,54 +11091,105 @@ function ScriptAudioPanel({
       </div>
 
       <div className="script-audio-summary">
+        <span>{readyCount}/{items.length} ready</span>
         <span>{audioCount}/{items.length} audio</span>
         <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
           {timingCount}/{items.length} timed subtitles
         </span>
-        {cachedCount === items.length && items.length ? <span>ready</span> : null}
+        {dynamicCount ? (
+          <span title="Dynamic scripts contain template variables and are skipped by pregeneration for now.">
+            {dynamicCount} dynamic
+          </span>
+        ) : null}
+        {playingId ? <span>playing</span> : null}
       </div>
 
       {isExpanded ? (
         <div className="script-audio-list">
-          {items.map((item) => (
-            <div className="script-audio-row" key={item.id}>
-              <span className="script-audio-source">{item.source}</span>
-              <span className="script-audio-preview">{item.preview || "---"}</span>
-              <span className={`script-audio-pill ${item.cached ? "ready" : ""}`}>
-                {item.cached ? "audio" : "missing"}
-              </span>
-              <span
-                className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}
-                title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text."
+          {items.map((item) => {
+            const isPlaying = playingId === item.id;
+            const preview = item.preview || "---";
+            return (
+              <div
+                className={[
+                  "script-audio-row",
+                  isPlaying ? "is-playing" : "",
+                  item.canGenerate ? "" : "is-dynamic",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={item.id}
               >
-                {item.wordsCached ? "subtitle timing" : "no timing"}
-              </span>
-              <button
-                className="event-icon-button"
-                disabled={!item.audioUrl}
-                onClick={() => onPlay(item)}
-                title="Play cached audio. Press Escape to stop."
-                type="button"
-              >
-                <PlayIcon />
-              </button>
-              <button
-                className="event-icon-button"
-                disabled={isBusy || !item.canGenerate}
-                onClick={() =>
-                  item.cached ? onRegenerateOne(item.id) : onGenerateOne(item.id)
-                }
-                title={
-                  item.cached
-                    ? "Regenerate this script's audio and timing"
-                    : "Generate this script's audio and timing"
-                }
-                type="button"
-              >
-                <RefreshIcon />
-              </button>
-            </div>
-          ))}
+                <span className="script-audio-source" title={item.source}>
+                  {item.source}
+                </span>
+                <span className="script-audio-preview" title={item.script || preview}>
+                  {preview}
+                </span>
+                <span className="script-audio-meta">
+                  {scriptAudioMetadataText(item)}
+                </span>
+                <span
+                  className={`script-audio-pill ${item.cached ? "ready" : ""}`}
+                  title={
+                    item.cached
+                      ? `Audio artifact cached (${item.cacheKey})`
+                      : item.canGenerate
+                        ? "Audio artifact has not been generated yet."
+                        : item.generationReason ||
+                          "This script cannot be pregenerated."
+                  }
+                >
+                  {item.cached ? "audio" : item.canGenerate ? "missing" : "dynamic"}
+                </span>
+                <span
+                  className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}
+                  title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text."
+                >
+                  {item.wordsCached ? "timing" : "no timing"}
+                </span>
+                <button
+                  aria-label={
+                    isPlaying ? "Stop script audio preview" : "Play script audio preview"
+                  }
+                  className="event-icon-button"
+                  disabled={!item.audioUrl}
+                  onClick={() => (isPlaying ? onStop() : onPlay(item))}
+                  title={
+                    isPlaying
+                      ? "Stop cached audio preview."
+                      : "Play cached audio. Press Escape to stop."
+                  }
+                  type="button"
+                >
+                  {isPlaying ? <StopIcon /> : <PlayIcon />}
+                </button>
+                <button
+                  aria-label={
+                    item.cached
+                      ? "Regenerate script audio and timing"
+                      : "Generate script audio and timing"
+                  }
+                  className="event-icon-button"
+                  disabled={isBusy || !item.canGenerate}
+                  onClick={() =>
+                    item.cached ? onRegenerateOne(item.id) : onGenerateOne(item.id)
+                  }
+                  title={
+                    item.cached
+                      ? "Regenerate this script's audio and timing"
+                      : item.canGenerate
+                        ? "Generate this script's audio and timing"
+                        : item.generationReason ||
+                          "Dynamic scripts cannot be pregenerated yet."
+                  }
+                  type="button"
+                >
+                  <RefreshIcon />
+                </button>
+              </div>
+            );
+          })}
           {!items.length ? <div className="script-audio-empty">---</div> : null}
         </div>
       ) : null}
@@ -12431,6 +12524,20 @@ function PlayIcon() {
       width="13"
     >
       <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="currentColor"
+      height="12"
+      viewBox="0 0 24 24"
+      width="12"
+    >
+      <path d="M7 7h10v10H7V7Z" />
     </svg>
   );
 }

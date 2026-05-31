@@ -1262,19 +1262,29 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     )
     cached = audio_path.exists()
     words_cached = words_path.exists()
+    can_generate = script_is_static_for_audio(raw_text)
     return {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
         "cacheKey": cache_key,
-        "canGenerate": script_is_static_for_audio(raw_text),
+        "canGenerate": can_generate,
+        "characterCount": len(script),
         "cached": cached,
         "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
         "experienceId": str(experience.id),
+        "generationReason": ""
+        if can_generate
+        else "Dynamic scripts with template variables cannot be pregenerated yet.",
         "id": hashlib.sha1(
             f"{experience.id}:{index}:{source}:{script}".encode("utf-8")
         ).hexdigest()[:16],
         "preview": script[:240],
+        "realtimeModel": tutor_settings.realtime_model,
         "script": script,
         "source": source,
+        "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+        "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+        "voice": tutor_settings.voice,
+        "wordCount": script_word_count(script),
         "wordsCached": words_cached,
     }
 
