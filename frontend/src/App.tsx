@@ -126,6 +126,8 @@ const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 const scriptMarkerPattern =
   /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
+const scriptMarkerParsePattern =
+  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
 const scriptAudioSources = new Set([
   "event-action",
   "conversation-tool-action",
@@ -606,6 +608,17 @@ type ScriptAudioPayload = {
   totalScripts: number;
 };
 
+type ScriptMarkerInstance = {
+  args: string;
+  end: number;
+  id: string;
+  label: string;
+  marker: string;
+  start: number;
+  type: string;
+  wordIndex: number;
+};
+
 type ScriptCue = {
   action: Record<string, unknown>;
   progress: number;
@@ -742,6 +755,58 @@ function inlineFieldWidthStyle(
 ): CSSProperties {
   const length = (value.trim() || fallback).length + 1;
   return { width: `${clamp(length, minCh, maxCh)}ch` };
+}
+
+function countScriptWords(text: string) {
+  const words = text.trim().match(/[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g);
+  return words?.length ?? 0;
+}
+
+function scriptMarkerLabel(type: string) {
+  const labels: Record<string, string> = {
+    add_note: "Note",
+    chat_off: "Chat off",
+    chat_on: "Chat on",
+    gslide: "Slide",
+    highlight: "Highlight",
+    highlight_off: "Clear highlight",
+    highlight_on: "Highlight",
+    interactive: "App",
+    interactive_clear: "Clear app",
+    interactive_update: "Update app",
+    overlay: "Overlay",
+    overlay_off: "Clear overlay",
+    pause: "Pause",
+    play_sound: "Sound",
+    show_image: "Image",
+    slide: "Slide",
+  };
+  return labels[type] ?? type;
+}
+
+function parseScriptMarkerInstances(text: string) {
+  const markers: ScriptMarkerInstance[] = [];
+  const pattern = new RegExp(scriptMarkerParsePattern);
+
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const marker = match[0];
+    const type = (match[1] ?? "").toLowerCase();
+    const args = (match[2] ?? "").trim();
+    const spokenBefore = text.slice(0, start).replace(scriptMarkerPattern, " ");
+    markers.push({
+      args,
+      end: start + marker.length,
+      id: `${start}-${marker}`,
+      label: scriptMarkerLabel(type),
+      marker,
+      start,
+      type,
+      wordIndex: countScriptWords(spokenBefore),
+    });
+  }
+
+  return markers;
 }
 
 function sortMessages(messages: ChatMessage[]) {
@@ -10738,6 +10803,7 @@ function ScriptActionEditor({
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const markers = parseScriptMarkerInstances(text);
 
   useEffect(() => {
     resizeTextareaToContent(textareaRef.current);
@@ -10766,6 +10832,32 @@ function ScriptActionEditor({
     });
   }
 
+  function focusMarker(marker: ScriptMarkerInstance) {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(marker.start, marker.end);
+  }
+
+  function removeMarker(marker: ScriptMarkerInstance) {
+    const before = text.slice(0, marker.start);
+    const after = text.slice(marker.end);
+    const nextText =
+      /[ \t]$/.test(before) && /^[ \t]/.test(after)
+        ? `${before.replace(/[ \t]+$/, " ")}${after.replace(/^[ \t]+/, "")}`
+        : `${before}${after}`;
+    const nextCursor = Math.min(before.length, nextText.length);
+
+    onTextChange(nextText);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+      resizeTextareaToContent(textarea);
+    });
+  }
+
   return (
     <div className="script-action-editor">
       <div className="script-marker-bar" aria-label="Insert timed script action">
@@ -10790,6 +10882,39 @@ function ScriptActionEditor({
         ref={textareaRef}
         value={text}
       />
+      {markers.length ? (
+        <div className="script-marker-outline" aria-label="Timed script actions">
+          <span className="event-detail-label">TIMED ACTIONS</span>
+          <div className="script-marker-list">
+            {markers.map((marker, index) => (
+              <div className="script-marker-item" key={marker.id}>
+                <button
+                  className="script-marker-jump"
+                  onClick={() => focusMarker(marker)}
+                  title="Select this marker in the script text."
+                  type="button"
+                >
+                  <span>{index + 1}</span>
+                  <strong>{marker.label}</strong>
+                  <small>
+                    {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
+                  </small>
+                  {marker.args ? <code>{marker.args}</code> : null}
+                </button>
+                <button
+                  aria-label={`Remove ${marker.label} marker`}
+                  className="event-icon-button danger"
+                  onClick={() => removeMarker(marker)}
+                  title="Remove this timed action marker."
+                  type="button"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="event-context-line single-value script-deck-line">
         <span className="event-detail-label">DECK</span>
         <input
