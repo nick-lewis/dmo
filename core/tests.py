@@ -1,9 +1,25 @@
 import json
+import tempfile
+import wave
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
-from .models import EventActionStep, Experience, ExperienceEvent, TutoringSession
+from .audio_cache import (
+    compute_script_audio_cache_key,
+    script_audio_audio_path,
+    script_audio_metadata_path,
+    script_audio_words_path,
+)
+from .models import (
+    EventActionStep,
+    Experience,
+    ExperienceEvent,
+    TutorSettings,
+    TutoringSession,
+)
+from .views import cached_script_audio_payload
 
 
 class InteractiveRuntimeActionTests(TestCase):
@@ -148,3 +164,75 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertTrue(
             any(action.get("type") == "chat_message" for action in payload["actions"])
         )
+
+
+class ScriptAudioCachePayloadTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="script-audio-cache-test",
+            email="script-audio-cache-test@example.com",
+            password="test-password",
+        )
+        self.experience = Experience.objects.create(
+            user=self.user,
+            title="Script audio cache test",
+            slug="script-audio-cache-test",
+        )
+        TutorSettings.objects.create(experience=self.experience)
+
+    def test_cached_payload_includes_word_timing_and_timed_cues(self):
+        script = "First second."
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                tutor = self.experience.tutor_settings
+                cache_key = compute_script_audio_cache_key(
+                    assistant_name=tutor.assistant_name,
+                    realtime_model=tutor.realtime_model,
+                    script=script,
+                    tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+                    voice=tutor.voice,
+                    voice_instructions=tutor.voice_instructions,
+                )
+                audio_path = script_audio_audio_path(cache_key)
+                metadata_path = script_audio_metadata_path(cache_key)
+                words_path = script_audio_words_path(
+                    cache_key,
+                    settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+                )
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+                with wave.open(str(audio_path), "wb") as audio_file:
+                    audio_file.setnchannels(1)
+                    audio_file.setsampwidth(2)
+                    audio_file.setframerate(24000)
+                    audio_file.writeframes(b"\x00\x00" * 2400)
+                metadata_path.write_text("{}", encoding="utf-8")
+                words_path.write_text(
+                    json.dumps(
+                        [
+                            {"word": "First", "start": 0.1, "end": 0.4},
+                            {"word": "second", "start": 0.5, "end": 0.8},
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+
+                session = TutoringSession.objects.create(
+                    user=self.user,
+                    experience=self.experience,
+                )
+                payload = cached_script_audio_payload(
+                    session,
+                    script,
+                    [
+                        {
+                            "action": {"type": "gslide", "slideRef": "2"},
+                            "progress": 0.5,
+                            "wordIndex": 1,
+                        }
+                    ],
+                )
+
+        self.assertEqual(payload["scriptWords"][1]["word"], "second")
+        self.assertEqual(payload["scriptCues"][0]["time"], 0.5)

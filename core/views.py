@@ -27,6 +27,7 @@ from .audio_cache import (
     get_or_create_script_audio,
     get_or_create_script_audio_words,
     get_or_create_voice_sample,
+    normalize_transcription_words,
     openai_error_message,
     script_audio_audio_path,
     script_audio_metadata_path,
@@ -392,7 +393,7 @@ def resolve_script_marker_action(marker, config, runtime_context):
     return None
 
 
-def cached_script_audio_payload(session, script):
+def cached_script_audio_payload(session, script, script_cues=None):
     if not session.experience:
         return {}
 
@@ -410,15 +411,37 @@ def cached_script_audio_payload(session, script):
     if not audio_path.exists() or not metadata_path.exists():
         return {}
 
-    return {
+    words_path = script_audio_words_path(
+        cache_key,
+        settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+    )
+    script_words = []
+    if words_path.exists():
+        try:
+            script_words = normalize_transcription_words(
+                json.loads(words_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError):
+            script_words = []
+
+    payload = {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/",
         "cached": True,
         "durationSeconds": audio_duration_seconds(audio_path),
         "messageId": "",
         "realtimeModel": tutor_settings.realtime_model,
+        "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         "voice": tutor_settings.voice,
     }
+    if script_words:
+        payload["scriptWords"] = script_words
+        if script_cues is not None:
+            payload["scriptCues"] = script_cues_with_word_times(
+                script_cues,
+                script_words,
+            )
+    return payload
 
 
 def serialize_user(user):
@@ -2925,7 +2948,11 @@ def run_action_sequence(
                     "actionType": action_type,
                     "eventId": str(event.id),
                     "source": source,
-                    "scriptAudio": cached_script_audio_payload(session, text),
+                    "scriptAudio": cached_script_audio_payload(
+                        session,
+                        text,
+                        script_cues,
+                    ),
                     "scriptCues": script_cues,
                     "stepId": step_id,
                     **metadata,

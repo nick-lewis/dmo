@@ -1834,6 +1834,7 @@ function cachedScriptAudioFromMessage(
     typeof audio.realtimeModel === "string" ? audio.realtimeModel : "";
   const voice = typeof audio.voice === "string" ? audio.voice : "";
   if (!audioUrl || !realtimeModel || !voice) return null;
+  const audioScriptCues = scriptCuesFromValue(audio.scriptCues);
 
   return {
     audioUrl,
@@ -1846,7 +1847,9 @@ function cachedScriptAudioFromMessage(
     messageId:
       typeof audio.messageId === "string" ? audio.messageId : message.id,
     realtimeModel: realtimeModel as RealtimeModelId,
-    scriptCues: scriptCuesFromMessage(message),
+    scriptCues: audioScriptCues.length
+      ? audioScriptCues
+      : scriptCuesFromMessage(message),
     scriptWords: scriptWordsFromValue(audio.scriptWords),
     timingModel: typeof audio.timingModel === "string" ? audio.timingModel : "",
     timingWarning:
