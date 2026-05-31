@@ -2679,8 +2679,10 @@ button {
 
 .slide-workspace.empty {
   place-items: center;
-  border: 1px dashed var(--panel-soft-border);
-  border-radius: 6px;
+  background: #ffffff;
+}
+
+.slide-workspace.empty.error {
   background: color-mix(in srgb, var(--panel-bg-strong) 44%, transparent);
 }
 

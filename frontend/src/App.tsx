@@ -6956,30 +6956,36 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setRuntimeHighlights(nextHighlights);
     setRuntimeTriggers(nextTriggers);
 
-    const nextSlide = runtimeSlideFromRecord(slideValue);
-    const nextSlideError =
-      typeof slideErrorValue === "string" ? slideErrorValue : "";
-    if (nextSlide) {
-      setResolvedSlide({
-        cached: nextSlide.cached,
-        imageUrl: nextSlide.imageUrl,
-        pageId: nextSlide.pageId,
-        presentationId: nextSlide.presentationId,
-        slideRef: nextSlide.slideRef,
-      });
-      suppressSlideControlResetRef.current = true;
-      setSlideDeckUrl(nextSlide.deckUrl);
-      setSlideError("");
-      setSlideRef(nextSlide.slideRef);
-      setSlideStatus("ready");
-    } else if (nextSlideError) {
-      setResolvedSlide(null);
-      setSlideError(nextSlideError);
-      setSlideStatus("error");
-    } else {
-      setResolvedSlide(null);
-      setSlideError("");
-      setSlideStatus("empty");
+    const hasRuntimeSlideState =
+      Object.prototype.hasOwnProperty.call(uiRuntime, "slide") ||
+      Object.prototype.hasOwnProperty.call(uiRuntime, "slideError");
+
+    if (hasRuntimeSlideState) {
+      const nextSlide = runtimeSlideFromRecord(slideValue);
+      const nextSlideError =
+        typeof slideErrorValue === "string" ? slideErrorValue : "";
+      if (nextSlide) {
+        setResolvedSlide({
+          cached: nextSlide.cached,
+          imageUrl: nextSlide.imageUrl,
+          pageId: nextSlide.pageId,
+          presentationId: nextSlide.presentationId,
+          slideRef: nextSlide.slideRef,
+        });
+        suppressSlideControlResetRef.current = true;
+        setSlideDeckUrl(nextSlide.deckUrl);
+        setSlideError("");
+        setSlideRef(nextSlide.slideRef);
+        setSlideStatus("ready");
+      } else if (nextSlideError) {
+        setResolvedSlide(null);
+        setSlideError(nextSlideError);
+        setSlideStatus("error");
+      } else {
+        setResolvedSlide(null);
+        setSlideError("");
+        setSlideStatus("empty");
+      }
     }
   }
 
@@ -7095,6 +7101,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   useEffect(() => {
     setNotesVisible(false);
     setRuntimeActionLog([]);
+    setResolvedSlide(null);
+    setSlideError("");
+    setSlideStatus("empty");
   }, [session?.id]);
 
   useEffect(() => {
@@ -9337,15 +9346,21 @@ function MainPanelContent({
     );
   }
 
-  const emptyLabel =
-    status === "loading" ? "Loading slide" : error ? "Slide unavailable" : "Slides";
+  if (error) {
+    return (
+      <div className="slide-workspace empty error">
+        <div className="slide-empty-state">
+          <span>Slide unavailable</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="slide-workspace empty">
-      <div className="slide-empty-state">
-        <span>{emptyLabel}</span>
-      </div>
-    </div>
+    <div
+      aria-label={status === "loading" ? "Loading slide" : "Empty slide panel"}
+      className="slide-workspace empty"
+    />
   );
 }
 
