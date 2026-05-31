@@ -3553,6 +3553,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
       setConversationAddMenuCheckId("");
+      void loadScriptAudioItems(experience.id, false);
     } catch (restoreError) {
       setError(
         restoreError instanceof Error
@@ -3590,10 +3591,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     clearEventUndoHistory();
   }
 
-  async function loadScriptAudioItems(targetExperienceId = experience?.id ?? "") {
+  async function loadScriptAudioItems(
+    targetExperienceId = experience?.id ?? "",
+    showLoading = true,
+  ) {
     if (!targetExperienceId) return;
 
-    setScriptAudioStatus("loading");
+    if (showLoading) {
+      setScriptAudioStatus("loading");
+    }
     setScriptAudioError("");
     try {
       const payload = await apiFetch<ScriptAudioPayload>(
@@ -3607,7 +3613,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           : "Could not load scripted audio.",
       );
     } finally {
-      setScriptAudioStatus("idle");
+      if (showLoading) {
+        setScriptAudioStatus("idle");
+      }
     }
   }
 
@@ -4017,6 +4025,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
         return payload.experience.tutor;
       });
+      void loadScriptAudioItems(payload.experience.id, false);
       return true;
     } catch (saveError) {
       if (tutorAutosaveVersion.current === version) {
@@ -4764,6 +4773,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             ? eventDraftFromEvent(persistedEvent)
             : current,
         );
+        void loadScriptAudioItems(experience.id, false);
       }
 
       return true;
@@ -5430,6 +5440,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
       setConversationAddMenuCheckId("");
+      void loadScriptAudioItems(experience.id, false);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
