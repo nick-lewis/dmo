@@ -515,6 +515,7 @@ type EventOutgoingLink = {
   kind: string;
   slug: string;
   source: string;
+  sourceItemId?: string;
 };
 
 type EventGraphRouteRow = EventOutgoingLink & {
@@ -1497,6 +1498,7 @@ function actionSequenceOutgoingLinks(
           source: `${sourcePrefix}: ${step.label || "Say"} / ${
             marker.detail || marker.marker
           }`,
+          sourceItemId: step.id,
         });
       });
     }
@@ -1517,6 +1519,7 @@ function actionSequenceOutgoingLinks(
       kind: eventActionLabel(step.actionType),
       slug: triggersEvent,
       source: `${sourcePrefix}: ${step.label || eventActionLabel(step.actionType)}`,
+      sourceItemId: step.id,
     });
   }
   return links;
@@ -1532,6 +1535,7 @@ function eventOutgoingLinks(event: ExperienceEvent) {
         kind: "FC route",
         slug: triggersEvent,
         source: tool.description || tool.name,
+        sourceItemId: tool.id,
       });
     }
     links.push(...actionSequenceOutgoingLinks(tool.handlerActions, `FC route ${tool.name}`));
@@ -1544,6 +1548,7 @@ function eventOutgoingLinks(event: ExperienceEvent) {
         kind: "Check",
         slug: triggersEvent,
         source: check.title || "Conversation check",
+        sourceItemId: check.id,
       });
     }
     links.push(...actionSequenceOutgoingLinks(check.handlerActions, `Check ${check.title}`));
@@ -1557,6 +1562,7 @@ function eventOutgoingLinks(event: ExperienceEvent) {
         kind: "Classifiers",
         slug: triggersEvent,
         source: group.title || "Classifier group",
+        sourceItemId: group.id,
       });
     }
     links.push(
@@ -5507,10 +5513,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   async function selectEditorEvent(nextEventId: string) {
-    if (!experience || nextEventId === selectedEventId) return;
+    if (!experience) return false;
+    if (nextEventId === selectedEventId) return true;
 
     const didSave = await flushEventAutosave();
-    if (!didSave) return;
+    if (!didSave) return false;
 
     const nextEvent = getSelectedExperienceEvent(experience, nextEventId);
     setSelectedEventId(nextEvent?.id ?? "");
@@ -5523,6 +5530,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setIsConversationAddMenuOpen(false);
     setConversationAddMenuToolId("");
     setConversationAddMenuCheckId("");
+    return true;
+  }
+
+  async function openEditorRouteSource(eventId: string, itemId?: string) {
+    const didSelect = await selectEditorEvent(eventId);
+    if (!didSelect) return;
+    if (itemId) {
+      openExpandedItem(itemId);
+    }
   }
 
   async function createEditorEvent() {
@@ -6893,6 +6909,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   {isEventGraphOpen ? (
                     <EventGraphView
                       events={editorEvents}
+                      onOpenRouteSource={(eventId, itemId) =>
+                        void openEditorRouteSource(eventId, itemId)
+                      }
                       onSelectEvent={(eventId) => void selectEditorEvent(eventId)}
                       selectedEventId={selectedEvent?.id ?? ""}
                     />
@@ -12828,10 +12847,12 @@ function ScriptAudioPanel({
 
 function EventGraphView({
   events,
+  onOpenRouteSource,
   onSelectEvent,
   selectedEventId,
 }: {
   events: ExperienceEvent[];
+  onOpenRouteSource: (eventId: string, itemId?: string) => void;
   onSelectEvent: (eventId: string) => void;
   selectedEventId: string;
 }) {
@@ -13105,6 +13126,7 @@ function EventGraphView({
       <EventGraphRouteCatalog
         events={sortedEvents}
         links={visibleRouteRows}
+        onOpenRouteSource={onOpenRouteSource}
         onSelectEvent={onSelectEvent}
         title={selectedRouteKind ? `All ${selectedRouteKind} routes` : "All routes"}
       />
@@ -13115,11 +13137,13 @@ function EventGraphView({
 function EventGraphRouteCatalog({
   events,
   links,
+  onOpenRouteSource,
   onSelectEvent,
   title,
 }: {
   events: ExperienceEvent[];
   links: EventGraphRouteRow[];
+  onOpenRouteSource: (eventId: string, itemId?: string) => void;
   onSelectEvent: (eventId: string) => void;
   title: string;
 }) {
@@ -13148,7 +13172,14 @@ function EventGraphRouteCatalog({
               >
                 <button
                   className="event-graph-route-event"
-                  onClick={() => onSelectEvent(link.sourceEventId)}
+                  onClick={() =>
+                    onOpenRouteSource(link.sourceEventId, link.sourceItemId)
+                  }
+                  title={
+                    link.sourceItemId
+                      ? "Open the source action in the editor"
+                      : "Open the source event"
+                  }
                   type="button"
                 >
                   {link.sourceEvent}
