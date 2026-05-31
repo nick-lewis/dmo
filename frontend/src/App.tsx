@@ -743,6 +743,19 @@ function scriptMarkerDetail(type: string, args: string, argList: string[]) {
   return args;
 }
 
+function buildScriptMarker(type: string, args: string[]) {
+  const trimmedArgs = args.map((arg) => arg.trim());
+  let lastValueIndex = -1;
+  for (let index = trimmedArgs.length - 1; index >= 0; index -= 1) {
+    if (trimmedArgs[index].length > 0) {
+      lastValueIndex = index;
+      break;
+    }
+  }
+  if (lastValueIndex < 0) return `[${type}]`;
+  return `[${type}: ${trimmedArgs.slice(0, lastValueIndex + 1).join(", ")}]`;
+}
+
 function parseScriptMarkerInstances(text: string) {
   const markers: ScriptMarkerInstance[] = [];
   const pattern = new RegExp(scriptMarkerParsePattern);
@@ -11045,6 +11058,164 @@ function ScriptActionEditor({
     });
   }
 
+  function replaceMarker(marker: ScriptMarkerInstance, nextMarker: string) {
+    const nextText = `${text.slice(0, marker.start)}${nextMarker}${text.slice(
+      marker.end,
+    )}`;
+    const nextCursor = marker.start + nextMarker.length;
+
+    onTextChange(nextText);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+      resizeTextareaToContent(textarea);
+    });
+  }
+
+  function updateMarkerArg(
+    marker: ScriptMarkerInstance,
+    argIndex: number,
+    value: string,
+  ) {
+    const args = [...marker.argList];
+    while (args.length <= argIndex) args.push("");
+    args[argIndex] = value;
+    replaceMarker(marker, buildScriptMarker(marker.type, args));
+  }
+
+  function renderMarkerControls(marker: ScriptMarkerInstance) {
+    if (marker.type === "gslide" || marker.type === "slide") {
+      return (
+        <div className="script-marker-controls">
+          <span className="event-detail-label">SLIDE</span>
+          <input
+            aria-label="Timed slide number"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="1"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "interactive" || marker.type === "interactive_update") {
+      const appId = marker.argList[0] || defaultMainPanelApp.id;
+      const appDefinition =
+        getMainPanelAppDefinition(appId) ?? defaultMainPanelApp;
+      const view = marker.argList[1] || appDefinition.defaultView;
+      const hasCurrentView = appDefinition.views.some((item) => item.id === view);
+
+      return (
+        <div className="script-marker-controls interactive-marker-controls">
+          <span className="event-detail-label">APP</span>
+          <select
+            aria-label="Timed main-panel app"
+            onChange={(event) => {
+              const nextApp =
+                getMainPanelAppDefinition(event.target.value) ??
+                defaultMainPanelApp;
+              replaceMarker(
+                marker,
+                buildScriptMarker(marker.type, [
+                  nextApp.id,
+                  nextApp.defaultView,
+                  marker.argList[2] ?? "",
+                ]),
+              );
+            }}
+            value={appDefinition.id}
+          >
+            {mainPanelAppDefinitions.map((app) => (
+              <option key={app.id} value={app.id}>
+                {app.label}
+              </option>
+            ))}
+          </select>
+          <span className="event-detail-label">VIEW</span>
+          <select
+            aria-label="Timed main-panel app view"
+            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
+            value={hasCurrentView ? view : ""}
+          >
+            {!hasCurrentView && view ? <option value="">{view}</option> : null}
+            {appDefinition.views.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <span className="event-detail-label">DESTINATION</span>
+          <input
+            aria-label="Timed main-panel app destination event"
+            onChange={(event) => updateMarkerArg(marker, 2, event.target.value)}
+            placeholder="event_slug"
+            type="text"
+            value={marker.argList[2] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "highlight_on" || marker.type === "highlight") {
+      return (
+        <div className="script-marker-controls highlight-marker-controls">
+          <span className="event-detail-label">SELECTOR</span>
+          <input
+            aria-label="Timed highlight selector"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder=".selector"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+          <span className="event-detail-label">COLOR</span>
+          <input
+            aria-label="Timed highlight color"
+            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
+            placeholder="rgba(59, 130, 246, 0.6)"
+            type="text"
+            value={marker.argList[1] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "highlight_off") {
+      return (
+        <div className="script-marker-controls">
+          <span className="event-detail-label">SELECTOR</span>
+          <input
+            aria-label="Timed clear-highlight selector"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder=".selector"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "pause") {
+      return (
+        <div className="script-marker-controls">
+          <span className="event-detail-label">MS</span>
+          <input
+            aria-label="Timed pause milliseconds"
+            inputMode="numeric"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="500"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    return null;
+  }
+
   return (
     <div className="script-action-editor">
       <div className="script-marker-bar" aria-label="Insert timed script action">
@@ -11075,19 +11246,22 @@ function ScriptActionEditor({
           <div className="script-marker-list">
             {markers.map((marker, index) => (
               <div className="script-marker-item" key={marker.id}>
-                <button
-                  className="script-marker-jump"
-                  onClick={() => focusMarker(marker)}
-                  title="Select this marker in the script text."
-                  type="button"
-                >
-                  <span>{index + 1}</span>
-                  <strong>{marker.label}</strong>
-                  <small>
-                    {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
-                  </small>
-                  {marker.detail ? <code>{marker.detail}</code> : null}
-                </button>
+                <div className="script-marker-main">
+                  <button
+                    className="script-marker-jump"
+                    onClick={() => focusMarker(marker)}
+                    title="Select this marker in the script text."
+                    type="button"
+                  >
+                    <span>{index + 1}</span>
+                    <strong>{marker.label}</strong>
+                    <small>
+                      {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
+                    </small>
+                    {marker.detail ? <code>{marker.detail}</code> : null}
+                  </button>
+                  {renderMarkerControls(marker)}
+                </div>
                 <button
                   aria-label={`Remove ${marker.label} marker`}
                   className="event-icon-button danger"

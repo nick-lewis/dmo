@@ -1672,8 +1672,14 @@ button {
 .script-marker-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 26px;
-  align-items: center;
+  align-items: start;
   gap: 5px;
+  min-width: 0;
+}
+
+.script-marker-main {
+  display: grid;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -1725,6 +1731,43 @@ button {
 
 .script-marker-jump code {
   font-family: inherit;
+}
+
+.script-marker-controls {
+  display: grid;
+  grid-template-columns: auto minmax(76px, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 2px 2px 26px;
+}
+
+.script-marker-controls.interactive-marker-controls {
+  grid-template-columns:
+    auto minmax(118px, 0.8fr) auto minmax(86px, 0.52fr) auto
+    minmax(110px, 0.75fr);
+}
+
+.script-marker-controls.highlight-marker-controls {
+  grid-template-columns: auto minmax(140px, 1fr) auto minmax(150px, 0.88fr);
+}
+
+.script-marker-controls input,
+.script-marker-controls select {
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--page-ink) 86%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 74%, transparent);
+  font-size: 0.68rem;
+  font-weight: 720;
+}
+
+.script-marker-controls select {
+  padding-right: 22px;
 }
 
 .event-detail-label,
