@@ -31,12 +31,15 @@ from .views import (
     apply_runtime_actions_to_state,
     build_realtime_instructions,
     cached_script_audio_payload,
+    classification_model_choices,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
     evaluate_classifier_group,
     EXPERIENCE_EXPORT_FORMAT,
     EXPERIENCE_EXPORT_VERSION,
+    normalize_realtime_voice_choice,
     REGISTERED_MAIN_PANEL_APP_IDS,
+    realtime_voice_choices_for_model,
     run_action_sequence,
     serialize_experience,
 )
@@ -795,6 +798,35 @@ class RealtimeModelChoiceTests(TestCase):
         experience.tutor_settings.refresh_from_db()
         self.assertEqual(payload["tutor"]["realtimeModel"], "gpt-realtime")
         self.assertEqual(experience.tutor_settings.realtime_model, "gpt-realtime")
+
+    def test_realtime_voice_choices_are_scoped_to_realtime_models(self):
+        for model in [
+            "gpt-realtime-mini",
+            "gpt-realtime",
+            "gpt-realtime-1.5",
+            "gpt-realtime-2",
+        ]:
+            voices = realtime_voice_choices_for_model(model)
+            self.assertIn("marin", voices)
+            self.assertIn("cedar", voices)
+            self.assertIn("ash", voices)
+            self.assertNotIn("fable", voices)
+            self.assertNotIn("nova", voices)
+            self.assertNotIn("onyx", voices)
+            self.assertEqual(
+                normalize_realtime_voice_choice("marin", "ash", model),
+                "marin",
+            )
+            self.assertIsNone(
+                normalize_realtime_voice_choice("fable", "ash", model)
+            )
+
+    def test_classification_choices_include_current_pro_variants(self):
+        choices = classification_model_choices()
+
+        self.assertIn("gpt-5.5-pro", choices)
+        self.assertIn("gpt-5.4-pro", choices)
+        self.assertIn("gpt-5.4-mini", choices)
 
 
 class ScriptAudioCachePayloadTests(TestCase):

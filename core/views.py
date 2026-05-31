@@ -71,20 +71,26 @@ CLASSIFICATION_MODELS = {
     "gpt-5.5",
     "gpt-5.5-pro",
     "gpt-5.4",
+    "gpt-5.4-pro",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
 }
-REALTIME_VOICES = {
-    "alloy",
+REALTIME_VOICE_ORDER = (
+    "marin",
+    "cedar",
+    "verse",
     "ash",
     "ballad",
-    "cedar",
     "coral",
     "echo",
-    "marin",
     "sage",
     "shimmer",
-    "verse",
+    "alloy",
+)
+REALTIME_VOICES = set(REALTIME_VOICE_ORDER)
+REALTIME_VOICES_BY_MODEL = {
+    realtime_model: set(REALTIME_VOICE_ORDER)
+    for realtime_model in REALTIME_MODELS
 }
 REALTIME_CONTEXT_MESSAGE_LIMIT = 24
 REALTIME_CONTEXT_CHAR_LIMIT = 8000
@@ -847,6 +853,14 @@ def ensure_tutor_settings(experience):
     if tutor_settings.realtime_model != normalized_realtime_model:
         tutor_settings.realtime_model = normalized_realtime_model
         tutor_settings.save(update_fields=["realtime_model", "updated_at"])
+    normalized_voice = normalize_realtime_voice_choice(
+        None,
+        tutor_settings.voice,
+        tutor_settings.realtime_model,
+    )
+    if normalized_voice and tutor_settings.voice != normalized_voice:
+        tutor_settings.voice = normalized_voice
+        tutor_settings.save(update_fields=["voice", "updated_at"])
     return tutor_settings
 
 
@@ -1252,11 +1266,11 @@ def create_experience_from_export_payload(user, payload):
                 settings.DLU_REALTIME_DEFAULT_VOICE,
                 max_length=40,
             )
-            tutor_settings.voice = normalize_realtime_choice(
+            tutor_settings.voice = normalize_realtime_voice_choice(
                 imported_voice,
-                REALTIME_VOICES,
                 settings.DLU_REALTIME_DEFAULT_VOICE,
-            ) or settings.DLU_REALTIME_DEFAULT_VOICE
+                tutor_settings.realtime_model,
+            ) or default_realtime_voice_for_model(tutor_settings.realtime_model)
             tutor_settings.voice_instructions = import_string(
                 tutor_data.get("voiceInstructions"),
                 "",
@@ -1723,6 +1737,39 @@ def normalize_realtime_model_choice(value, default_value):
     if choice not in REALTIME_MODELS:
         return None
     return choice
+
+
+def realtime_voice_choices_for_model(realtime_model):
+    model = normalize_realtime_model_choice(realtime_model, realtime_model)
+    if model is None:
+        return set(REALTIME_VOICES)
+    return set(REALTIME_VOICES_BY_MODEL.get(model, REALTIME_VOICES))
+
+
+def default_realtime_voice_for_model(realtime_model, preferred_voice=""):
+    allowed_voices = realtime_voice_choices_for_model(realtime_model)
+    preferred = str(preferred_voice or "").strip()
+    if preferred in allowed_voices:
+        return preferred
+    default_voice = str(settings.DLU_REALTIME_DEFAULT_VOICE or "").strip()
+    if default_voice in allowed_voices:
+        return default_voice
+    for voice in REALTIME_VOICE_ORDER:
+        if voice in allowed_voices:
+            return voice
+    return ""
+
+
+def normalize_realtime_voice_choice(value, default_value, realtime_model):
+    has_explicit_value = value is not None and str(value).strip() != ""
+    choice = str(value if has_explicit_value else default_value).strip()
+    allowed_voices = realtime_voice_choices_for_model(realtime_model)
+    if choice in allowed_voices:
+        return choice
+    if has_explicit_value:
+        return None
+    fallback_voice = default_realtime_voice_for_model(realtime_model, default_value)
+    return fallback_voice or None
 
 
 def classification_model_choices():
@@ -4220,10 +4267,10 @@ def update_experience(request, experience_id):
             tutor_settings.classification_model = classification_model
 
         if "voice" in tutor_data:
-            voice = normalize_realtime_choice(
+            voice = normalize_realtime_voice_choice(
                 tutor_data.get("voice"),
-                REALTIME_VOICES,
                 settings.DLU_REALTIME_DEFAULT_VOICE,
+                tutor_settings.realtime_model,
             )
             if voice is None:
                 return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
@@ -6035,10 +6082,10 @@ def create_message_audio(request, session_id, message_id):
         return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
 
     default_voice = str(data.get("voice") or tutor_settings.voice).strip()
-    voice = normalize_realtime_choice(
+    voice = normalize_realtime_voice_choice(
         default_voice,
-        REALTIME_VOICES,
         tutor_settings.voice,
+        realtime_model,
     )
     if voice is None:
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
@@ -6159,10 +6206,10 @@ def create_voice_sample(request, experience_id):
         return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
 
     default_voice = sample_tutor.get("voice") or tutor_settings.voice
-    voice = normalize_realtime_choice(
+    voice = normalize_realtime_voice_choice(
         data.get("voice"),
-        REALTIME_VOICES,
         default_voice,
+        realtime_model,
     )
     if voice is None:
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
@@ -6272,10 +6319,10 @@ def create_realtime_client_secret(request):
     if model is None:
         return JsonResponse({"detail": "Realtime model is not supported."}, status=400)
 
-    voice = normalize_realtime_choice(
+    voice = normalize_realtime_voice_choice(
         data.get("voice"),
-        REALTIME_VOICES,
         default_voice,
+        model,
     )
     if voice is None:
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
