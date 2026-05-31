@@ -915,6 +915,83 @@ class EventEditorApiTests(TestCase):
         tool = event.chat_tools.get(name="student_done")
         self.assertEqual(tool.handler_actions[0]["config"]["key"], "done")
 
+    def test_reorder_events_updates_sort_order(self):
+        first = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="First",
+            slug="first",
+            is_start=True,
+            sort_order=0,
+        )
+        second = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Second",
+            slug="second",
+            sort_order=1,
+        )
+        third = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Third",
+            slug="third",
+            sort_order=2,
+        )
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/reorder/",
+            data=json.dumps(
+                {
+                    "eventIds": [
+                        str(third.id),
+                        str(first.id),
+                        str(second.id),
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [event["slug"] for event in response.json()["events"]],
+            ["third", "first", "second"],
+        )
+        self.assertEqual(
+            list(
+                self.experience.events.order_by("sort_order").values_list(
+                    "slug",
+                    "sort_order",
+                )
+            ),
+            [("third", 0), ("first", 1), ("second", 2)],
+        )
+
+    def test_reorder_events_requires_every_event_once(self):
+        first = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="First",
+            slug="first",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Second",
+            slug="second",
+            sort_order=1,
+        )
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/reorder/",
+            data=json.dumps({"eventIds": [str(first.id), str(first.id)]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["detail"],
+            "Event order must include every event exactly once.",
+        )
+
 
 class SeedLocalDemosCommandTests(TestCase):
     def test_seed_local_demos_targets_requested_username(self):

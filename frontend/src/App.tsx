@@ -344,7 +344,12 @@ type ExperienceEvent = {
 
 type EventStructuralHistoryItem =
   | { event: ExperienceEvent; type: "delete" }
-  | { event: ExperienceEvent; type: "restore" };
+  | { event: ExperienceEvent; type: "restore" }
+  | {
+      eventIdOrder: string[];
+      selectedEventId: string;
+      type: "reorder_events";
+    };
 
 type Experience = {
   id: string;
@@ -3475,6 +3480,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     title: "Start",
   });
   const [eventSearch, setEventSearch] = useState("");
+  const [draggingEventId, setDraggingEventId] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
   const [draggingConversationItem, setDraggingConversationItem] =
     useState<DraggingConversationItem | null>(null);
@@ -3665,6 +3671,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventDraft(eventDraftFromEvent(nextEvent));
     clearEventUndoHistory();
     resetExpandedItems();
+    setDraggingEventId("");
     setDraggingStepId("");
     setDraggingConversationItem(null);
     setDraggingHandlerAction(null);
@@ -3697,6 +3704,47 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     if (!experience) return;
 
     setError("");
+
+    if (item.type === "reorder_events") {
+      const previousOrder = sortedExperienceEvents(experience.events).map(
+        (event) => event.id,
+      );
+      const previousSelectedEventId = selectedEventId;
+
+      try {
+        const payload = await apiFetch<{ events: ExperienceEvent[] }>(
+          `/api/experiences/${experience.id}/events/reorder/`,
+          {
+            method: "POST",
+            body: JSON.stringify({ eventIds: item.eventIdOrder }),
+          },
+        );
+        const nextEvents = sortedExperienceEvents(payload.events);
+        const nextSelectedEvent =
+          nextEvents.find((event) => event.id === item.selectedEventId) ??
+          nextEvents.find((event) => event.id === previousSelectedEventId) ??
+          nextEvents[0] ??
+          null;
+
+        setExperience({
+          ...experience,
+          events: nextEvents,
+        });
+        resetStructuralEditorState(nextSelectedEvent);
+        completeStructuralHistoryMove(from, {
+          eventIdOrder: previousOrder,
+          selectedEventId: previousSelectedEventId,
+          type: "reorder_events",
+        });
+      } catch (reorderError) {
+        setError(
+          reorderError instanceof Error
+            ? reorderError.message
+            : "Could not reorder events.",
+        );
+      }
+      return;
+    }
 
     if (item.type === "restore") {
       try {
@@ -5745,6 +5793,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventDraft(eventDraftFromEvent(nextEvent));
     clearEventUndoHistory();
     resetExpandedItems();
+    setDraggingEventId("");
     setDraggingStepId("");
     setDraggingConversationItem(null);
     setDraggingHandlerAction(null);
@@ -5848,6 +5897,91 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     } finally {
       setDeletingEventId("");
     }
+  }
+
+  async function reorderEditorEvent(eventId: string, targetEventId: string) {
+    if (!experience || eventId === targetEventId || normalizedEventSearch) return;
+
+    const currentIndex = editorEvents.findIndex((event) => event.id === eventId);
+    const targetIndex = editorEvents.findIndex(
+      (event) => event.id === targetEventId,
+    );
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
+      return;
+    }
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    const previousOrder = editorEvents.map((event) => event.id);
+    const reorderedEvents = [...editorEvents];
+    const [movedEvent] = reorderedEvents.splice(currentIndex, 1);
+    reorderedEvents.splice(targetIndex, 0, movedEvent);
+    const nextOrder = reorderedEvents.map((event) => event.id);
+
+    setError("");
+    setDraggingEventId("");
+
+    try {
+      const payload = await apiFetch<{ events: ExperienceEvent[] }>(
+        `/api/experiences/${experience.id}/events/reorder/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ eventIds: nextOrder }),
+        },
+      );
+      const nextEvents = sortedExperienceEvents(payload.events);
+      const nextSelectedEvent =
+        nextEvents.find((event) => event.id === selectedEventId) ??
+        nextEvents[0] ??
+        null;
+
+      setExperience({
+        ...experience,
+        events: nextEvents,
+      });
+      lastPersistedEvent.current = nextSelectedEvent;
+      setSelectedEventId(nextSelectedEvent?.id ?? "");
+      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
+      clearEventUndoHistory();
+      pushEventStructuralUndo({
+        eventIdOrder: previousOrder,
+        selectedEventId,
+        type: "reorder_events",
+      });
+    } catch (reorderError) {
+      setError(
+        reorderError instanceof Error
+          ? reorderError.message
+          : "Could not reorder events.",
+      );
+    }
+  }
+
+  function dragEditorEvent(event: DragEvent<HTMLElement>, eventId: string) {
+    if (normalizedEventSearch) return;
+    setDraggingEventId(eventId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", eventId);
+  }
+
+  function dragOverEditorEvent(event: DragEvent<HTMLElement>) {
+    if (normalizedEventSearch) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  async function dropEditorEvent(
+    event: DragEvent<HTMLElement>,
+    targetEventId: string,
+  ) {
+    if (normalizedEventSearch) return;
+    event.preventDefault();
+    const sourceEventId =
+      event.dataTransfer.getData("text/plain") || draggingEventId;
+    setDraggingEventId("");
+    if (!sourceEventId || sourceEventId === targetEventId) return;
+    await reorderEditorEvent(sourceEventId, targetEventId);
   }
 
   async function addEventStep(actionType: EventActionStep["actionType"]) {
@@ -6718,13 +6852,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     );
   const nextStructuralUndo = eventStructuralUndoStack[0];
   const nextStructuralRedo = eventStructuralRedoStack[0];
-  const structuralHistoryEventLabel = (item: EventStructuralHistoryItem) =>
-    item.event.title || item.event.slug || "event";
+  const structuralHistoryEventLabel = (item: EventStructuralHistoryItem) => {
+    if (item.type === "reorder_events") return "events";
+    return item.event.title || item.event.slug || "event";
+  };
   const canUndoEditorHistory =
     eventUndoStack.length > 0 || Boolean(nextStructuralUndo);
   const undoEditorTitle = eventUndoStack.length
     ? `Undo event edit (${eventUndoStack.length} available)`
-    : nextStructuralUndo?.type === "restore"
+    : nextStructuralUndo?.type === "reorder_events"
+      ? `Restore previous event order (${eventStructuralUndoStack.length} structural available)`
+      : nextStructuralUndo?.type === "restore"
       ? `Restore deleted event: ${structuralHistoryEventLabel(nextStructuralUndo)} (${eventStructuralUndoStack.length} structural available)`
       : nextStructuralUndo?.type === "delete"
         ? `Remove new event: ${structuralHistoryEventLabel(nextStructuralUndo)} (${eventStructuralUndoStack.length} structural available)`
@@ -6733,7 +6871,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     eventRedoStack.length > 0 || Boolean(nextStructuralRedo);
   const redoEditorTitle = eventRedoStack.length
     ? `Redo event edit (${eventRedoStack.length} available)`
-    : nextStructuralRedo?.type === "restore"
+    : nextStructuralRedo?.type === "reorder_events"
+      ? `Reapply event order (${eventStructuralRedoStack.length} structural available)`
+      : nextStructuralRedo?.type === "restore"
       ? `Restore event: ${structuralHistoryEventLabel(nextStructuralRedo)} (${eventStructuralRedoStack.length} structural available)`
       : nextStructuralRedo?.type === "delete"
         ? `Delete event again: ${structuralHistoryEventLabel(nextStructuralRedo)} (${eventStructuralRedoStack.length} structural available)`
@@ -7244,11 +7384,29 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
                       return (
                         <button
-                          className={`event-outline-row${
-                            event.id === selectedEvent?.id ? " is-selected" : ""
-                          }`}
+                          className={[
+                            "event-outline-row",
+                            event.id === selectedEvent?.id ? "is-selected" : "",
+                            draggingEventId === event.id ? "is-dragging" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          draggable={!normalizedEventSearch}
                           key={event.id}
+                          onDragEnd={() => setDraggingEventId("")}
+                          onDragOver={dragOverEditorEvent}
+                          onDragStart={(dragEvent) =>
+                            dragEditorEvent(dragEvent, event.id)
+                          }
+                          onDrop={(dropEvent) =>
+                            void dropEditorEvent(dropEvent, event.id)
+                          }
                           onClick={() => void selectEditorEvent(event.id)}
+                          title={
+                            normalizedEventSearch
+                              ? "Clear search to reorder events"
+                              : "Drag to reorder events"
+                          }
                           type="button"
                         >
                           <span className="event-outline-copy">

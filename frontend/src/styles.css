@@ -1040,6 +1040,10 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 48%, transparent);
 }
 
+.event-outline-row.is-dragging {
+  opacity: 0.48;
+}
+
 .event-outline-copy {
   display: grid;
   gap: 1px;

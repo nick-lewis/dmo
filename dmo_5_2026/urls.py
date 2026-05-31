@@ -33,6 +33,7 @@ from core.views import (
     logout_user,
     main_panel_apps,
     resolve_google_slide,
+    reorder_experience_events,
     reorder_event_action_steps,
     run_session_chat_tool,
     run_session_conversation_checks,
@@ -89,6 +90,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/events/",
         experience_events,
         name="experience-events",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/reorder/",
+        reorder_experience_events,
+        name="reorder-experience-events",
     ),
     path(
         "api/experiences/<uuid:experience_id>/script-audio/",

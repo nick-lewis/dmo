@@ -5075,6 +5075,57 @@ def experience_events(request, experience_id):
     return JsonResponse({"event": serialize_experience_event(event)}, status=201)
 
 
+@require_POST
+def reorder_experience_events(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    event_ids = data.get("eventIds")
+    if not isinstance(event_ids, list):
+        return JsonResponse({"detail": "Event order must be a list."}, status=400)
+
+    normalized_event_ids = [str(event_id).strip() for event_id in event_ids]
+    current_events = list(experience.events.order_by("sort_order", "created_at"))
+    current_event_ids = [str(event.id) for event in current_events]
+    if (
+        len(normalized_event_ids) != len(current_event_ids)
+        or len(set(normalized_event_ids)) != len(normalized_event_ids)
+        or set(normalized_event_ids) != set(current_event_ids)
+    ):
+        return JsonResponse(
+            {"detail": "Event order must include every event exactly once."},
+            status=400,
+        )
+
+    event_by_id = {str(event.id): event for event in current_events}
+    with transaction.atomic():
+        for index, event_id in enumerate(normalized_event_ids):
+            event = event_by_id[event_id]
+            if event.sort_order == index:
+                continue
+            event.sort_order = index
+            event.save(update_fields=["sort_order", "updated_at"])
+        ensure_start_event(experience)
+
+    return JsonResponse(
+        {
+            "events": [
+                serialize_experience_event(event)
+                for event in experience.events.order_by("sort_order", "created_at")
+            ],
+        }
+    )
+
+
 @require_http_methods(["DELETE", "PATCH"])
 def update_experience_event(request, experience_id, event_id):
     auth_response = auth_required_response(request)
