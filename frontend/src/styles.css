@@ -3325,6 +3325,110 @@ button {
   opacity: 0.45;
 }
 
+.interactive-button-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.interactive-secondary-action {
+  min-height: 36px;
+  padding: 6px 13px;
+  border: 1px solid rgba(72, 101, 113, 0.16);
+  border-radius: 7px;
+  color: #263942;
+  background: rgba(255, 255, 255, 0.74);
+  font-size: 0.8rem;
+  font-weight: 820;
+}
+
+.interactive-secondary-action:hover {
+  border-color: rgba(72, 101, 113, 0.28);
+  background: #ffffff;
+}
+
+.timing-interactive {
+  gap: 15px;
+}
+
+.timing-readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(760px, 100%);
+}
+
+.timing-readout strong {
+  color: #1f3038;
+  font-family: var(--mono-font);
+  font-size: clamp(2.5rem, 8vh, 5.6rem);
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 0.94;
+}
+
+.timing-readout span,
+.timing-status-row span,
+.timing-status-row strong {
+  color: #5b7280;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.timing-track {
+  position: relative;
+  width: min(760px, 100%);
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(72, 101, 113, 0.16);
+  border-radius: 999px;
+  background: rgba(65, 92, 104, 0.08);
+}
+
+.timing-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: rgba(83, 161, 137, 0.32);
+}
+
+.timing-target,
+.timing-mark {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 2px;
+  transform: translateX(-1px);
+}
+
+.timing-target {
+  background: #c75f48;
+}
+
+.timing-mark {
+  background: #2e7bb7;
+}
+
+.timing-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(760px, 100%);
+  min-height: 24px;
+}
+
+.timing-status-row strong {
+  color: #b25b48;
+}
+
+.timing-status-row strong.is-close {
+  color: #2d806c;
+}
+
 .chat-stage {
   --chat-side-space: max(0px, calc((100% - 720px) / 2));
   --chat-column-width: min(720px, 100%);

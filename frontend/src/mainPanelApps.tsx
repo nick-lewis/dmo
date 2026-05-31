@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 export type RuntimeInteractive = {
   config: Record<string, unknown>;
@@ -79,6 +79,20 @@ function numberConfigValue(
   fallback: number,
 ) {
   const value = config[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function numberStateValue(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: number,
+) {
+  const value = state[key];
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
     const parsed = Number.parseFloat(value);
@@ -228,6 +242,200 @@ function DeliveryDataInteractive({
   );
 }
 
+function TimingChallengeInteractive({
+  host,
+  interactive,
+  state,
+}: MainPanelAppProps) {
+  const targetMs = numberConfigValue(interactive.config, "targetMs", 3200);
+  const toleranceMs = numberConfigValue(interactive.config, "toleranceMs", 450);
+  const markedContextKey =
+    stringConfigValue(interactive.config, "markedContextKey", "marked_ms").trim() ||
+    "marked_ms";
+  const accuracyContextKey =
+    stringConfigValue(
+      interactive.config,
+      "accuracyContextKey",
+      "marked_accuracy_ms",
+    ).trim() || "marked_accuracy_ms";
+  const initialElapsedMs = Math.max(0, numberStateValue(state, "elapsedMs", 0));
+  const initialMarkedMs = numberStateValue(state, "markedMs", Number.NaN);
+  const [elapsedMs, setElapsedMs] = useState(initialElapsedMs);
+  const [markedMs, setMarkedMs] = useState(
+    Number.isFinite(initialMarkedMs) ? initialMarkedMs : 0,
+  );
+  const [hasMark, setHasMark] = useState(Number.isFinite(initialMarkedMs));
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const appTitle = interactive.title || "Timing challenge";
+  const view = interactive.mode === "review" ? "review" : "timer";
+  const maxMs = Math.max(targetMs + toleranceMs * 2, targetMs + 1000);
+  const elapsedRatio = Math.min(1, elapsedMs / maxMs);
+  const targetRatio = Math.min(1, targetMs / maxMs);
+  const markedRatio = Math.min(1, markedMs / maxMs);
+  const deltaMs = hasMark ? Math.round(markedMs - targetMs) : 0;
+  const absoluteDeltaMs = Math.abs(deltaMs);
+  const isClose = hasMark && absoluteDeltaMs <= toleranceMs;
+  const prompt =
+    interactive.prompt ||
+    "Start the timer, mark the target moment, then submit the marked time.";
+
+  useEffect(() => {
+    if (startedAt === null) return;
+
+    const timer = window.setInterval(() => {
+      setElapsedMs(Date.now() - startedAt);
+    }, 50);
+
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+
+  function persistState(nextState: Record<string, unknown>) {
+    host.setState({
+      ...state,
+      ...nextState,
+    });
+  }
+
+  function startTimer() {
+    const nextStartedAt = Date.now() - elapsedMs;
+    setStartedAt(nextStartedAt);
+    persistState({ elapsedMs, running: true });
+  }
+
+  function pauseTimer() {
+    setStartedAt(null);
+    persistState({ elapsedMs, running: false });
+  }
+
+  function resetTimer() {
+    setStartedAt(null);
+    setElapsedMs(0);
+    setMarkedMs(0);
+    setHasMark(false);
+    persistState({ elapsedMs: 0, markedMs: null, running: false });
+  }
+
+  function markMoment() {
+    const mark = Math.round(elapsedMs);
+    setMarkedMs(mark);
+    setHasMark(true);
+    persistState({
+      elapsedMs: mark,
+      markedMs: mark,
+      running: startedAt !== null,
+    });
+  }
+
+  function submitTiming() {
+    const mark = Math.round(markedMs);
+    const accuracy = Math.abs(mark - targetMs);
+    const nextState = {
+      ...state,
+      completedAt: new Date().toISOString(),
+      elapsedMs: Math.round(elapsedMs),
+      markedMs: mark,
+      running: false,
+    };
+    setStartedAt(null);
+    host.emitActions(
+      [
+        {
+          key: markedContextKey,
+          type: "set_context",
+          value: mark,
+        },
+        {
+          key: accuracyContextKey,
+          type: "set_context",
+          value: accuracy,
+        },
+        {
+          key: "timing_within_tolerance",
+          type: "set_context",
+          value: accuracy <= toleranceMs,
+        },
+        {
+          triggersEvent: interactive.triggersEvent,
+          type: "goto_event",
+        },
+      ],
+      nextState,
+    );
+  }
+
+  return (
+    <div className="interactive-workspace">
+      <div className="interactive-shell timing-interactive">
+        <div className="interactive-header">
+          <span>{view}</span>
+          <strong>{appTitle}</strong>
+        </div>
+        <p>{prompt}</p>
+
+        <div className="timing-readout" aria-label="Timing challenge">
+          <strong>{(elapsedMs / 1000).toFixed(2)}s</strong>
+          <span>target {(targetMs / 1000).toFixed(2)}s</span>
+        </div>
+
+        <div className="timing-track" aria-hidden="true">
+          <i style={{ width: `${elapsedRatio * 100}%` }} />
+          <span
+            className="timing-target"
+            style={{ left: `${targetRatio * 100}%` }}
+          />
+          {hasMark ? (
+            <span
+              className="timing-mark"
+              style={{ left: `${markedRatio * 100}%` }}
+            />
+          ) : null}
+        </div>
+
+        <div className="timing-status-row">
+          <span>{hasMark ? `Marked ${(markedMs / 1000).toFixed(2)}s` : "---"}</span>
+          <strong className={isClose ? "is-close" : ""}>
+            {hasMark ? `${deltaMs > 0 ? "+" : ""}${deltaMs}ms` : "not marked"}
+          </strong>
+        </div>
+
+        <div className="interactive-button-row">
+          <button
+            className="interactive-secondary-action"
+            onClick={startedAt === null ? startTimer : pauseTimer}
+            type="button"
+          >
+            {startedAt === null ? "Start" : "Pause"}
+          </button>
+          <button
+            className="interactive-secondary-action"
+            onClick={resetTimer}
+            type="button"
+          >
+            Reset
+          </button>
+          <button
+            className="interactive-primary-action"
+            onClick={markMoment}
+            type="button"
+          >
+            Mark moment
+          </button>
+          {interactive.triggersEvent ? (
+            <button
+              className="interactive-primary-action"
+              disabled={!hasMark}
+              onClick={submitTiming}
+              type="button"
+            >
+              Submit
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
   {
     Component: DeliveryDataInteractive,
@@ -257,6 +465,46 @@ export const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
     views: [
       { id: "table", label: "Table" },
       { id: "graph", label: "Graph" },
+    ],
+  },
+  {
+    Component: TimingChallengeInteractive,
+    configFields: [
+      {
+        defaultValue: 3200,
+        id: "targetMs",
+        inputMode: "numeric",
+        label: "TARGET MS",
+        placeholder: "3200",
+        type: "number",
+      },
+      {
+        defaultValue: 450,
+        id: "toleranceMs",
+        inputMode: "numeric",
+        label: "TOLERANCE",
+        placeholder: "450",
+        type: "number",
+      },
+      {
+        defaultValue: "marked_ms",
+        id: "markedContextKey",
+        label: "SAVE AS",
+        placeholder: "marked_ms",
+      },
+    ],
+    defaultConfig: {
+      accuracyContextKey: "marked_accuracy_ms",
+      markedContextKey: "marked_ms",
+      targetMs: 3200,
+      toleranceMs: 450,
+    },
+    defaultView: "timer",
+    id: "timing_challenge",
+    label: "Timing challenge",
+    views: [
+      { id: "timer", label: "Timer" },
+      { id: "review", label: "Review" },
     ],
   },
 ];
