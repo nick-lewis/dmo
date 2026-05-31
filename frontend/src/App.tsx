@@ -6548,6 +6548,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [isSavingExperience, setIsSavingExperience] = useState(false);
   const [isSavingTutor, setIsSavingTutor] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isScriptAudioPlaying, setIsScriptAudioPlaying] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [turnAnchorMessageId, setTurnAnchorMessageId] = useState<string | null>(
     null,
@@ -6995,6 +6996,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   useEffect(() => {
     scriptAudioQueueRef.current = Promise.resolve();
     playedScriptMessageIdsRef.current.clear();
+    setIsScriptAudioPlaying(false);
     scriptAudioRef.current?.pause();
     scriptAudioRef.current = null;
   }, [selectedModel, selectedVoice, session?.id]);
@@ -7389,7 +7391,14 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     scriptAudioQueueRef.current = scriptAudioQueueRef.current
       .catch(() => undefined)
-      .then(() => playScriptMessages(activeSession, scriptMessages));
+      .then(async () => {
+        setIsScriptAudioPlaying(true);
+        try {
+          await playScriptMessages(activeSession, scriptMessages);
+        } finally {
+          setIsScriptAudioPlaying(false);
+        }
+      });
   }
 
   async function selectExperience(experienceId: string) {
@@ -8002,6 +8011,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                 avatarPath={tutorForm.avatarPath}
                 error={chatError}
                 isSending={isSendingMessage}
+                isTurnLocked={
+                  isSendingMessage ||
+                  isScriptAudioPlaying ||
+                  realtimeStatus === "streaming"
+                }
                 messages={messages}
                 onChooseRuntimeButton={runRuntimeButton}
                 onSendMessage={sendChatMessage}
@@ -8845,6 +8859,7 @@ type ChatPanelContentProps = {
   avatarPath: string;
   error: string;
   isSending: boolean;
+  isTurnLocked: boolean;
   messages: ChatMessage[];
   onChooseRuntimeButton: (button: RuntimeButton) => void;
   onSendMessage: (content: string) => Promise<void>;
@@ -8861,6 +8876,7 @@ function ChatPanelContent({
   avatarPath,
   error,
   isSending,
+  isTurnLocked,
   messages,
   onChooseRuntimeButton,
   onSendMessage,
@@ -8917,10 +8933,13 @@ function ChatPanelContent({
     }
   }
 
-  const isInputDisabled = !session || status === "loading";
-  const isSendDisabled = isInputDisabled || isSending || !draft.trim();
+  const isInputDisabled = !session || status === "loading" || isTurnLocked;
+  const isSendDisabled = isInputDisabled || !draft.trim();
+  const inputPlaceholder = isTurnLocked
+    ? `${assistantDisplayName} is responding...`
+    : `Message ${assistantDisplayName}...`;
   const sendButtonLabel =
-    realtimeStatus === "streaming" || isSending
+    realtimeStatus === "streaming" || isSending || isTurnLocked
       ? "dLU is responding"
       : "Send message";
 
@@ -8989,7 +9008,7 @@ function ChatPanelContent({
             aria-label={`Message ${assistantDisplayName}`}
             disabled={isInputDisabled}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={`Message ${assistantDisplayName}...`}
+            placeholder={inputPlaceholder}
             type="text"
             value={draft}
           />
