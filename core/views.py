@@ -2474,14 +2474,16 @@ def dev_login(request):
 
     username = email.split("@", 1)[0] or "dev-user"
     User = get_user_model()
-    user, _ = User.objects.get_or_create(
-        username=username,
-        defaults={
-            "email": email,
-            "first_name": "Nicky",
-            "last_name": "",
-        },
-    )
+    user = User.objects.filter(email__iexact=email).order_by("id").first()
+    if not user:
+        user, _ = User.objects.get_or_create(
+            username=username,
+            defaults={
+                "email": email,
+                "first_name": "Nicky",
+                "last_name": "",
+            },
+        )
     update_fields = []
     if user.email != email:
         user.email = email
