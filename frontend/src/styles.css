@@ -2754,6 +2754,10 @@ button {
   border-bottom: 0;
 }
 
+.runtime-inspector-link-row code {
+  color: rgba(31, 37, 41, 0.62);
+}
+
 .runtime-inspector-row span {
   min-width: 0;
   overflow: hidden;
@@ -2802,6 +2806,19 @@ button {
   color: rgba(31, 37, 41, 0.56);
   font-size: 0.7rem;
   font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-action-detail {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(31, 37, 41, 0.42);
+  font-family: var(--mono-font);
+  font-size: 0.62rem;
+  font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;

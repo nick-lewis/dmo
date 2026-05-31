@@ -1647,6 +1647,15 @@ function runtimeDebugEntries(value: unknown): RuntimeDebugTraceEntry[] {
   });
 }
 
+function runtimeTraceDetailsText(details: Record<string, unknown>) {
+  const entries = Object.entries(details);
+  if (!entries.length) return "";
+
+  return entries
+    .map(([key, value]) => `${key}: ${compactRuntimeValue(value)}`)
+    .join(" | ");
+}
+
 function runtimeTraceTime(value: string) {
   if (!value) return "---";
   const date = new Date(value);
@@ -10501,6 +10510,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             chatEnabled={runtimeChatEnabled}
             currentEvent={currentRuntimeEvent}
             currentEventSlug={currentRuntimeEventSlug}
+            experience={selectedExperience}
             highlights={runtimeHighlights}
             interactive={runtimeInteractive}
             interactiveState={runtimeInteractiveState}
@@ -10524,6 +10534,7 @@ function RuntimeInspectorPanel({
   chatEnabled,
   currentEvent,
   currentEventSlug,
+  experience,
   highlights,
   interactive,
   interactiveState,
@@ -10540,6 +10551,7 @@ function RuntimeInspectorPanel({
   chatEnabled: boolean;
   currentEvent: ExperienceEvent | null;
   currentEventSlug: string;
+  experience: Experience | null;
   highlights: Record<string, RuntimeHighlight>;
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
@@ -10581,6 +10593,31 @@ function RuntimeInspectorPanel({
   );
   const currentEventLabel =
     currentEvent?.title || currentEventSlug || (session ? "Start" : "---");
+  const events = experience?.events ?? [];
+  const eventStats =
+    currentEvent && events.length ? eventTransitionStats(events, currentEvent) : null;
+  const outgoingLinks = currentEvent
+    ? eventOutgoingLinks(currentEvent).slice(0, 8)
+    : [];
+  const enabledStepCount =
+    currentEvent?.steps.filter((step) => step.enabled).length ?? 0;
+  const enabledToolCount =
+    currentEvent?.chatTools.filter((tool) => tool.enabled).length ?? 0;
+  const enabledCheckCount =
+    currentEvent?.conversationChecks.filter((check) => check.enabled).length ?? 0;
+  const enabledClassifierGroupCount =
+    currentEvent?.classifierGroups.filter((group) => group.enabled).length ?? 0;
+  const enabledClassifierCount =
+    currentEvent?.classifierGroups.reduce(
+      (total, group) =>
+        total +
+        group.classifiers.filter(
+          (classifier) => group.enabled && classifier.enabled,
+        ).length,
+      0,
+    ) ?? 0;
+  const runtimeDebugUpdatedAt =
+    typeof runtimeDebug.updatedAt === "string" ? runtimeDebug.updatedAt : "";
 
   return (
     <div className="runtime-inspector-scroll">
@@ -10603,7 +10640,60 @@ function RuntimeInspectorPanel({
             <span>Chat</span>
             <strong>{chatEnabled ? "on" : "off"}</strong>
           </div>
+          <div className="runtime-inspector-kv">
+            <span>Trace</span>
+            <strong>{runtimeTraceTime(runtimeDebugUpdatedAt)}</strong>
+          </div>
         </div>
+
+        <section className="runtime-inspector-section">
+          <h2>Current event</h2>
+          {currentEvent ? (
+            <div className="runtime-inspector-list">
+              <div className="runtime-inspector-row">
+                <span>On entry</span>
+                <code>
+                  {enabledStepCount}/{currentEvent.steps.length}
+                </code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Conversation</span>
+                <code>
+                  {enabledToolCount} FC / {enabledCheckCount} checks /{" "}
+                  {enabledClassifierCount} classifiers
+                </code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Classifier groups</span>
+                <code>
+                  {enabledClassifierGroupCount}/{currentEvent.classifierGroups.length}
+                </code>
+              </div>
+              {eventStats ? (
+                <div className="runtime-inspector-row">
+                  <span>Routing</span>
+                  <code>
+                    {eventStats.incomingCount} in / {eventStats.outgoingCount} out
+                    {eventStats.unresolvedCount
+                      ? ` / ${eventStats.unresolvedCount} missing`
+                      : ""}
+                  </code>
+                </div>
+              ) : null}
+              {outgoingLinks.map((link, index) => (
+                <div
+                  className="runtime-inspector-row runtime-inspector-link-row"
+                  key={`${link.kind}-${link.slug}-${index}`}
+                >
+                  <span>{link.kind}</span>
+                  <code>{eventTitleForTrigger(events, link.slug) || link.slug}</code>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
 
         <section className="runtime-inspector-section">
           <h2>Context</h2>
@@ -10632,6 +10722,14 @@ function RuntimeInspectorPanel({
               <div className="runtime-inspector-row">
                 <span>View</span>
                 <code>{interactive.mode || "---"}</code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Target</span>
+                <code>{interactive.triggersEvent || "---"}</code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Title</span>
+                <code>{interactive.title || "---"}</code>
               </div>
               {interactiveStateEntries.map(([key, value]) => (
                 <div className="runtime-inspector-row" key={key}>
@@ -10735,14 +10833,22 @@ function RuntimeInspectorPanel({
           {transitionEntries.length ? (
             <div className="runtime-action-log">
               {transitionEntries.map((entry, index) => (
-                <div
-                  className="runtime-action-row"
-                  key={`${entry.at}-${entry.type}-${index}`}
-                >
-                  <span>{runtimeTraceTime(entry.at)}</span>
-                  <strong>{entry.type}</strong>
-                  <p>{entry.summary}</p>
-                </div>
+                (() => {
+                  const detailsText = runtimeTraceDetailsText(entry.details);
+                  return (
+                    <div
+                      className="runtime-action-row"
+                      key={`${entry.at}-${entry.type}-${index}`}
+                    >
+                      <span>{runtimeTraceTime(entry.at)}</span>
+                      <strong>{entry.type}</strong>
+                      <p>{entry.summary}</p>
+                      {detailsText ? (
+                        <code className="runtime-action-detail">{detailsText}</code>
+                      ) : null}
+                    </div>
+                  );
+                })()
               ))}
             </div>
           ) : (
@@ -10755,14 +10861,22 @@ function RuntimeInspectorPanel({
           {serverActionEntries.length ? (
             <div className="runtime-action-log">
               {serverActionEntries.map((entry, index) => (
-                <div
-                  className="runtime-action-row"
-                  key={`${entry.at}-${entry.type}-${index}`}
-                >
-                  <span>{runtimeTraceTime(entry.at)}</span>
-                  <strong>{entry.type}</strong>
-                  <p>{entry.summary}</p>
-                </div>
+                (() => {
+                  const detailsText = runtimeTraceDetailsText(entry.details);
+                  return (
+                    <div
+                      className="runtime-action-row"
+                      key={`${entry.at}-${entry.type}-${index}`}
+                    >
+                      <span>{runtimeTraceTime(entry.at)}</span>
+                      <strong>{entry.type}</strong>
+                      <p>{entry.summary}</p>
+                      {detailsText ? (
+                        <code className="runtime-action-detail">{detailsText}</code>
+                      ) : null}
+                    </div>
+                  );
+                })()
               ))}
             </div>
           ) : (
