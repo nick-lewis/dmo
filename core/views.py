@@ -3401,6 +3401,28 @@ def duplicate_experience(request, experience_id):
     return JsonResponse({"experience": serialize_experience(duplicate)}, status=201)
 
 
+@require_GET
+def export_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    payload = {
+        "exportedAt": timezone.now().isoformat(),
+        "format": "dlu.experience",
+        "version": 1,
+        "experience": serialize_experience(experience),
+    }
+    filename = f"{slugify(experience.title) or 'experience'}.dlu-experience.json"
+    response = JsonResponse(payload, json_dumps_params={"indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
 @require_http_methods(["GET", "POST"])
 def experience_script_audio(request, experience_id):
     auth_response = auth_required_response(request)
