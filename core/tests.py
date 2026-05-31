@@ -263,7 +263,9 @@ class InteractiveRuntimeActionTests(TestCase):
                         "text": (
                             "Hello [show_image: test-images/dLU-left.png] "
                             "there [overlay: guide, test-images/dLU-right.png] "
-                            "friend [overlay_off: guide]."
+                            "friend [add_note: Remember the mark] "
+                            "[play_sound: sounds/chime.mp3, 0.4] "
+                            "[overlay_off: guide]."
                         ),
                     },
                     "enabled": True,
@@ -280,12 +282,15 @@ class InteractiveRuntimeActionTests(TestCase):
         ]
         self.assertEqual(
             [action["type"] for action in cue_actions],
-            ["show_image", "overlay", "overlay_off"],
+            ["show_image", "overlay", "add_note", "play_sound", "overlay_off"],
         )
         self.assertEqual(cue_actions[0]["imagePath"], "test-images/dLU-left.png")
         self.assertEqual(cue_actions[1]["overlayId"], "guide")
         self.assertEqual(cue_actions[1]["imagePath"], "test-images/dLU-right.png")
-        self.assertEqual(cue_actions[2]["overlayId"], "guide")
+        self.assertEqual(cue_actions[2]["text"], "Remember the mark")
+        self.assertEqual(cue_actions[3]["soundPath"], "sounds/chime.mp3")
+        self.assertEqual(cue_actions[3]["volume"], "0.4")
+        self.assertEqual(cue_actions[4]["overlayId"], "guide")
 
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
@@ -300,6 +305,11 @@ class InteractiveRuntimeActionTests(TestCase):
                     "overlayId": "guide",
                     "type": "overlay",
                 },
+                {
+                    "noteId": "note-1",
+                    "text": "Remember the marked time.",
+                    "type": "add_note",
+                },
             ],
         )
 
@@ -309,12 +319,30 @@ class InteractiveRuntimeActionTests(TestCase):
             ui_runtime["overlays"]["guide"],
             {"id": "guide", "imagePath": "test-images/dLU-right.png"},
         )
+        self.assertEqual(
+            ui_runtime["notes"],
+            [
+                {
+                    "id": "note-1",
+                    "source": "",
+                    "text": "Remember the marked time.",
+                }
+            ],
+        )
 
         state = apply_runtime_actions_to_state(
             state,
-            [{"overlayId": "guide", "type": "overlay_off"}],
+            [
+                {"overlayId": "guide", "type": "overlay_off"},
+                {
+                    "noteId": "note-1",
+                    "text": "Remember the marked time.",
+                    "type": "add_note",
+                },
+            ],
         )
         self.assertEqual(state["uiRuntime"]["overlays"], {})
+        self.assertEqual(len(state["uiRuntime"]["notes"]), 1)
 
     def test_editor_rejects_unregistered_main_panel_app_action(self):
         event = ExperienceEvent.objects.create(

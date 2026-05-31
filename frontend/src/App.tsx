@@ -106,6 +106,16 @@ const scriptMarkerOptions = [
     title: "Clear one timed overlay, or leave blank to clear all overlays.",
   },
   {
+    label: "Note",
+    marker: "[add_note: Remember this moment]",
+    title: "Add a timed runtime note while the script is spoken.",
+  },
+  {
+    label: "Sound",
+    marker: "[play_sound: sounds/chime.mp3, 0.5]",
+    title: "Play a timed sound effect while the script is spoken.",
+  },
+  {
     label: "Highlight",
     marker: "[highlight_on: .runtime-notes-toggle, rgba(59, 130, 246, 0.6)]",
     title: "Insert a timed highlight at the cursor.",
@@ -442,6 +452,7 @@ type InteractiveRuntimePayload = SessionPayload & {
 type RuntimeUiState = {
   avatarPath?: string;
   interactive?: Record<string, unknown>;
+  notes?: RuntimeNote[];
   notesVisible: boolean;
   overlays?: Record<string, RuntimeOverlay>;
 };
@@ -454,6 +465,12 @@ type RuntimeHighlight = {
 type RuntimeOverlay = {
   id: string;
   imagePath: string;
+};
+
+type RuntimeNote = {
+  id: string;
+  source?: string;
+  text: string;
 };
 
 type RuntimeUiTrigger = {
@@ -1670,6 +1687,12 @@ function runtimeActionText(action: Record<string, unknown>) {
   if (type === "overlay_off") {
     return compactRuntimeValue(action.overlayId, "all overlays");
   }
+  if (type === "add_note") {
+    return compactRuntimeValue(action.text, "note");
+  }
+  if (type === "play_sound") {
+    return compactRuntimeValue(action.soundPath, "sound");
+  }
   if (type === "interactive") {
     return `mount ${compactRuntimeValue(
       action.interactiveId,
@@ -1800,6 +1823,29 @@ function runtimeOverlaysFromRecord(value: unknown): Record<string, RuntimeOverla
     next[id] = { id, imagePath };
   }
   return next;
+}
+
+function runtimeNotesFromValue(value: unknown): RuntimeNote[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item, index): RuntimeNote[] => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const note = item as Record<string, unknown>;
+    const text = typeof note.text === "string" ? note.text.trim() : "";
+    if (!text) return [];
+
+    const id =
+      typeof note.id === "string" && note.id.trim()
+        ? note.id.trim()
+        : `note-${index}-${text}`;
+    return [
+      {
+        id,
+        source: typeof note.source === "string" ? note.source : "",
+        text,
+      },
+    ];
+  });
 }
 
 function runtimeInteractiveFromRecord(value: unknown): RuntimeInteractive | null {
@@ -8557,6 +8603,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const scriptAudioSkipRef = useRef<(() => void) | null>(null);
   const scriptTextSkipRef = useRef<(() => void) | null>(null);
+  const runtimeSoundEffectsRef = useRef(new Set<HTMLAudioElement>());
   const interactiveSaveTimerRef = useRef<number | null>(null);
   const interactiveSaveVersionRef = useRef(0);
   const suppressSlideControlResetRef = useRef(false);
@@ -8624,6 +8671,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     null,
   );
   const [notesVisible, setNotesVisible] = useState(false);
+  const [runtimeNotes, setRuntimeNotes] = useState<RuntimeNote[]>([]);
   const [runtimeChatEnabled, setRuntimeChatEnabled] = useState(true);
   const [runtimeAvatarPath, setRuntimeAvatarPath] = useState("");
   const [runtimeHighlights, setRuntimeHighlights] = useState<
@@ -8664,10 +8712,45 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     return {
       avatarPath: runtimeAvatarPath,
       interactive: runtimeInteractiveState,
+      notes: runtimeNotes,
       notesVisible,
       overlays: runtimeOverlays,
       ...overrides,
     };
+  }
+
+  function stopRuntimeSoundEffects() {
+    runtimeSoundEffectsRef.current.forEach((audio) => {
+      audio.pause();
+      audio.src = "";
+    });
+    runtimeSoundEffectsRef.current.clear();
+  }
+
+  function playRuntimeSoundEffect(action: Record<string, unknown>) {
+    const soundPath =
+      typeof action.soundPath === "string" ? action.soundPath.trim() : "";
+    if (!soundPath) return;
+
+    const rawVolume =
+      typeof action.volume === "number"
+        ? action.volume
+        : Number.parseFloat(
+            typeof action.volume === "string" ? action.volume : "",
+          );
+    const audio = new Audio(publicAsset(soundPath));
+    audio.preload = "auto";
+    audio.volume = Number.isFinite(rawVolume) ? clamp(rawVolume, 0, 1) : 1;
+    runtimeSoundEffectsRef.current.add(audio);
+
+    const cleanup = () => {
+      audio.removeEventListener("ended", cleanup);
+      audio.removeEventListener("error", cleanup);
+      runtimeSoundEffectsRef.current.delete(audio);
+    };
+    audio.addEventListener("ended", cleanup, { once: true });
+    audio.addEventListener("error", cleanup, { once: true });
+    void audio.play().catch(cleanup);
   }
 
   function clearInteractiveSaveTimer() {
@@ -8910,6 +8993,28 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           return next;
         });
       }
+
+      if (action.type === "add_note") {
+        const text = typeof action.text === "string" ? action.text.trim() : "";
+        if (!text) continue;
+
+        const noteId =
+          typeof action.noteId === "string" && action.noteId.trim()
+            ? action.noteId.trim()
+            : `note-${typeof action.source === "string" ? action.source : ""}-${text}`;
+        setRuntimeNotes((current) => [
+          ...current.filter((note) => note.id !== noteId),
+          {
+            id: noteId,
+            source: typeof action.source === "string" ? action.source : "",
+            text,
+          },
+        ].slice(-80));
+      }
+
+      if (action.type === "play_sound") {
+        playRuntimeSoundEffect(action);
+      }
     }
 
     setRuntimeButtons((current) => {
@@ -9005,6 +9110,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const chatEnabledValue = uiRuntime.chatEnabled;
     const avatarPathValue = uiRuntime.avatarPath;
     const overlaysValue = uiRuntime.overlays;
+    const notesValue = uiRuntime.notes;
     const nextHighlights: Record<string, RuntimeHighlight> = {};
     const nextButtons: RuntimeButton[] = [];
 
@@ -9071,6 +9177,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       typeof chatEnabledValue === "boolean" ? chatEnabledValue : true,
     );
     setRuntimeHighlights(nextHighlights);
+    setRuntimeNotes(runtimeNotesFromValue(notesValue));
     setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
 
@@ -9241,7 +9348,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   useEffect(() => {
     clearInteractiveSaveTimer();
+    stopRuntimeSoundEffects();
     setNotesVisible(false);
+    setRuntimeNotes([]);
     setRuntimeActionLog([]);
     setResolvedSlide(null);
     setSlideError("");
@@ -9361,6 +9470,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       realtimeConnectionRef.current?.close();
       scriptTextSkipRef.current?.();
       scriptAudioSkipRef.current?.();
+      stopRuntimeSoundEffects();
       scriptAudioRef.current?.pause();
       scriptAudioRef.current = null;
     };
@@ -9374,6 +9484,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       event.preventDefault();
       scriptTextSkipRef.current?.();
       scriptAudioSkipRef.current?.();
+      stopRuntimeSoundEffects();
     }
 
     window.addEventListener("keydown", skipCurrentScriptMessage);
@@ -9396,6 +9507,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setIsScriptAudioPlaying(false);
     scriptTextSkipRef.current?.();
     scriptAudioSkipRef.current?.();
+    stopRuntimeSoundEffects();
     scriptAudioRef.current?.pause();
     scriptAudioRef.current = null;
   }, [selectedModel, selectedVoice, session?.id]);
@@ -10681,6 +10793,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                   }}
                   kind={panel.kind}
                   runtime={{
+                    notes: runtimeNotes,
                     notesVisible,
                     onToggleNotes: toggleRuntimeNotes,
                   }}
@@ -10857,6 +10970,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             interactive={runtimeInteractive}
             interactiveState={runtimeInteractiveState}
             messages={messages}
+            notes={runtimeNotes}
             overlays={Object.values(runtimeOverlays)}
             runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}
@@ -10883,6 +10997,7 @@ function RuntimeInspectorPanel({
   interactive,
   interactiveState,
   messages,
+  notes,
   overlays,
   runtimeDebug,
   runtimeContext,
@@ -10902,6 +11017,7 @@ function RuntimeInspectorPanel({
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
   messages: ChatMessage[];
+  notes: RuntimeNote[];
   overlays: RuntimeOverlay[];
   runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
@@ -10915,6 +11031,7 @@ function RuntimeInspectorPanel({
   );
   const interactiveStateEntries = Object.entries(interactiveState);
   const highlightEntries = Object.values(highlights);
+  const noteEntries = notes.slice(-12).reverse();
   const serverActionEntries = runtimeDebugEntries(runtimeDebug.recentActions).slice(
     0,
     18,
@@ -11137,6 +11254,22 @@ function RuntimeInspectorPanel({
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Notes</h2>
+          {noteEntries.length ? (
+            <div className="runtime-inspector-list">
+              {noteEntries.map((note) => (
+                <div className="runtime-inspector-row" key={note.id}>
+                  <span>{note.source || note.id}</span>
+                  <code>{note.text}</code>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
         </section>
 
         <section className="runtime-inspector-section">
@@ -11530,6 +11663,45 @@ function ScriptActionEditor({
       );
     }
 
+    if (marker.type === "add_note") {
+      return (
+        <div className="script-marker-controls note-marker-controls">
+          <span className="event-detail-label">NOTE</span>
+          <input
+            aria-label="Timed runtime note"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="Remember this moment"
+            type="text"
+            value={marker.argList.join(", ")}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "play_sound") {
+      return (
+        <div className="script-marker-controls sound-marker-controls">
+          <span className="event-detail-label">SOUND</span>
+          <input
+            aria-label="Timed sound path"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="sounds/chime.mp3"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+          <span className="event-detail-label">VOL</span>
+          <input
+            aria-label="Timed sound volume"
+            inputMode="decimal"
+            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
+            placeholder="1"
+            type="text"
+            value={marker.argList[1] ?? ""}
+          />
+        </div>
+      );
+    }
+
     if (marker.type === "highlight_on" || marker.type === "highlight") {
       return (
         <div className="script-marker-controls highlight-marker-controls">
@@ -11725,6 +11897,7 @@ function LeftPanelContent({
   experience: ExperienceControlsProps;
   kind: LeftPanelKind;
   runtime: {
+    notes: RuntimeNote[];
     notesVisible: boolean;
     onToggleNotes: () => void;
   };
@@ -11753,6 +11926,15 @@ function LeftPanelContent({
         >
           {runtime.notesVisible ? "Notes open" : "Open notes"}
         </button>
+        {runtime.notes.length ? (
+          <div className="runtime-note-list" aria-label="Runtime notes">
+            {runtime.notes.slice(-4).reverse().map((note) => (
+              <div className="runtime-note-item" key={note.id}>
+                {note.text}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </RuntimePlaceholderPanel>
     );
   }

@@ -413,6 +413,32 @@ def resolve_script_marker_action(marker, config, runtime_context):
             "type": "overlay_off",
         }
 
+    if marker_type == "add_note":
+        note_text = render_context_template(", ".join(args), runtime_context).strip()
+        if not note_text:
+            return None
+        note_id = hashlib.sha1(
+            f"{marker.get('wordIndex', 0)}:{note_text}".encode("utf-8")
+        ).hexdigest()[:16]
+        return {
+            "noteId": note_id,
+            "text": note_text,
+            "type": "add_note",
+        }
+
+    if marker_type == "play_sound":
+        sound_path = render_context_template(
+            args[0] if args else "",
+            runtime_context,
+        ).strip()
+        if not sound_path:
+            return None
+        return {
+            "soundPath": sound_path,
+            "type": "play_sound",
+            "volume": str(args[1] if len(args) > 1 else "").strip(),
+        }
+
     if marker_type == "highlight":
         selector = str(args[0] if args else "").strip()
         if not selector:
@@ -2638,6 +2664,16 @@ def runtime_action_summary(action):
         return str(action.get("detail", "slide unavailable"))
     if action_type in {"highlight_on", "highlight_off"}:
         return str(action.get("selector", "selector"))
+    if action_type == "show_image":
+        return str(action.get("imagePath", "image") or "image")
+    if action_type == "overlay":
+        return f"{action.get('overlayId', 'default') or 'default'} -> {action.get('imagePath', 'image') or 'image'}"
+    if action_type == "overlay_off":
+        return str(action.get("overlayId", "") or "all overlays")
+    if action_type == "add_note":
+        return str(action.get("text", "note") or "note")[:180]
+    if action_type == "play_sound":
+        return str(action.get("soundPath", "sound") or "sound")
     if action_type in {"event_skipped", "classifier_skipped", "classifier_group_skipped", "skipped"}:
         return str(action.get("reason", "skipped"))
     return action_type
@@ -2653,21 +2689,26 @@ def runtime_action_debug_details(action):
         "contextKey",
         "detail",
         "eventId",
+        "imagePath",
         "interactiveId",
         "key",
         "label",
         "enabled",
         "list",
         "mode",
+        "noteId",
+        "overlayId",
         "reason",
         "result",
         "resultContextKey",
         "savedValues",
         "selector",
         "slideRef",
+        "soundPath",
         "source",
         "stateKey",
         "stepId",
+        "text",
         "toolName",
         "triggersEvent",
         "value",
@@ -2824,6 +2865,8 @@ def apply_runtime_actions_to_state(
     avatar_path = str(ui_runtime.get("avatarPath", "") or "")
     overlays_value = ui_runtime.get("overlays")
     overlays = dict(overlays_value) if isinstance(overlays_value, dict) else {}
+    notes_value = ui_runtime.get("notes")
+    notes = list(notes_value) if isinstance(notes_value, list) else []
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -2935,6 +2978,30 @@ def apply_runtime_actions_to_state(
                 overlays = {}
             continue
 
+        if action_type == "add_note":
+            text = str(action.get("text", "") or "").strip()
+            if text:
+                note_id = (
+                    str(action.get("noteId", "") or "").strip()
+                    or hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+                )
+                notes = [
+                    note
+                    for note in notes
+                    if not (
+                        isinstance(note, dict)
+                        and str(note.get("id", "") or "") == note_id
+                    )
+                ]
+                notes.append(
+                    {
+                        "id": note_id,
+                        "source": str(action.get("source", "") or ""),
+                        "text": text,
+                    }
+                )
+            continue
+
         if action_type == "button_choice":
             step_id = str(action.get("stepId", ""))
             buttons = [button for button in buttons if button.get("stepId") != step_id]
@@ -2982,6 +3049,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
+    ui_runtime["notes"] = notes[-80:]
     ui_runtime["overlays"] = overlays
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
@@ -3024,6 +3092,7 @@ def hydrate_initial_script_runtime_state(session):
         or ui_runtime.get("slideError")
         or ui_runtime.get("avatarPath")
         or ui_runtime.get("overlays")
+        or ui_runtime.get("notes")
     ):
         return
 

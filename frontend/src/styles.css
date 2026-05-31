@@ -1800,6 +1800,14 @@ button {
   grid-template-columns: auto minmax(76px, 0.42fr) auto minmax(150px, 1fr);
 }
 
+.script-marker-controls.note-marker-controls {
+  grid-template-columns: auto minmax(160px, 1fr);
+}
+
+.script-marker-controls.sound-marker-controls {
+  grid-template-columns: auto minmax(150px, 1fr) auto minmax(58px, 0.28fr);
+}
+
 .script-marker-controls input,
 .script-marker-controls select {
   width: 100%;
@@ -3094,6 +3102,27 @@ button {
   border-color: color-mix(in srgb, var(--accent-4) 30%, var(--panel-soft-border));
   color: color-mix(in srgb, var(--accent-4) 80%, var(--page-ink));
   background: color-mix(in srgb, var(--accent-4) 12%, transparent);
+}
+
+.runtime-note-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.runtime-note-item {
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid rgba(31, 37, 41, 0.08);
+  border-radius: 7px;
+  color: rgba(31, 37, 41, 0.68);
+  background: rgba(255, 255, 255, 0.34);
+  font-size: 0.72rem;
+  font-weight: 680;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .runtime-highlight {
