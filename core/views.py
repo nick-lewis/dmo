@@ -360,7 +360,7 @@ def resolve_script_marker_action(marker, config, runtime_context):
     marker_type = marker.get("markerType")
     args = marker.get("args") or []
 
-    if marker_type == "gslide":
+    if marker_type in {"gslide", "slide"}:
         deck_url = render_context_template(
             config.get("deckUrl", ""),
             runtime_context,
@@ -3285,6 +3285,8 @@ def runtime_action_summary(action):
         return str(action.get("text", "note") or "note")[:180]
     if action_type == "play_sound":
         return str(action.get("soundPath", "sound") or "sound")
+    if action_type == "pause":
+        return f"{action.get('durationMs', '0')}ms"
     if action_type in {"event_skipped", "classifier_skipped", "classifier_group_skipped", "skipped"}:
         return str(action.get("reason", "skipped"))
     return action_type
@@ -3300,6 +3302,7 @@ def runtime_action_debug_details(action):
         "classifierName",
         "contextKey",
         "detail",
+        "durationMs",
         "eventId",
         "handled",
         "handlerActionCount",

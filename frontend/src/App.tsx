@@ -1706,6 +1706,15 @@ function runtimeValueTypeLabel(value: unknown) {
 
 function runtimeActionText(action: Record<string, unknown>) {
   const type = typeof action.type === "string" ? action.type : "action";
+  if (type === "pause") {
+    const durationMs =
+      typeof action.durationMs === "number" || typeof action.durationMs === "string"
+        ? Number(action.durationMs)
+        : 0;
+    return Number.isFinite(durationMs) && durationMs > 0
+      ? `${Math.round(durationMs)}ms`
+      : "pause";
+  }
   if (type === "conversation_check_result") {
     const result = action.result ? "matched" : "missed";
     const reason = compactRuntimeValue(action.reason, "");
@@ -2058,6 +2067,18 @@ function scriptCueEffectiveTime(
 
 function scriptCueNeedsTiming(cue: ScriptCue) {
   return cue.progress > scriptImmediateCueProgress && typeof cue.time !== "number";
+}
+
+function scriptCuePauseDurationMs(action: Record<string, unknown>) {
+  if (action.type !== "pause") return 0;
+
+  const rawDuration = action.durationMs;
+  const durationMs =
+    typeof rawDuration === "number" || typeof rawDuration === "string"
+      ? Number(rawDuration)
+      : 0;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return 0;
+  return Math.round(clamp(durationMs, 0, 30000));
 }
 
 function scriptCueImageUrls(cues: ScriptCue[]) {
@@ -10731,6 +10752,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       scriptAudioRef.current = audio;
       let isDone = false;
       let cueIndex = 0;
+      let pauseTimeout = 0;
       let timingFrame = 0;
 
       const currentAudioDuration = () =>
@@ -10751,6 +10773,22 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           if (!runAll && currentTime + 0.015 < cueTime) break;
 
           cueIndex += 1;
+          const pauseDurationMs = scriptCuePauseDurationMs(cue.action);
+          if (pauseDurationMs > 0) {
+            if (!runAll) {
+              applyRuntimeActions([cue.action]);
+              audio.pause();
+              window.cancelAnimationFrame(timingFrame);
+              window.clearTimeout(pauseTimeout);
+              pauseTimeout = window.setTimeout(() => {
+                pauseTimeout = 0;
+                if (isDone) return;
+                void audio.play().catch(() => handleError());
+              }, pauseDurationMs);
+              break;
+            }
+            continue;
+          }
           applyRuntimeActions([cue.action]);
         }
       };
@@ -10762,6 +10800,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       };
 
       const cleanup = () => {
+        window.clearTimeout(pauseTimeout);
         window.cancelAnimationFrame(timingFrame);
         audio.removeEventListener("ended", handleEnded);
         audio.removeEventListener("error", handleError);

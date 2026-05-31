@@ -454,6 +454,9 @@ class InteractiveRuntimeActionTests(TestCase):
                             "there [overlay: guide, test-images/dLU-right.png] "
                             "friend [add_note: Remember the mark] "
                             "[play_sound: sounds/chime.mp3, 0.4] "
+                            "[pause: 500] "
+                            "[chat_off] "
+                            "[chat_on] "
                             "[overlay_off: guide]."
                         ),
                     },
@@ -471,7 +474,16 @@ class InteractiveRuntimeActionTests(TestCase):
         ]
         self.assertEqual(
             [action["type"] for action in cue_actions],
-            ["show_image", "overlay", "add_note", "play_sound", "overlay_off"],
+            [
+                "show_image",
+                "overlay",
+                "add_note",
+                "play_sound",
+                "pause",
+                "chat_availability",
+                "chat_availability",
+                "overlay_off",
+            ],
         )
         self.assertEqual(cue_actions[0]["imagePath"], "test-images/dLU-left.png")
         self.assertEqual(cue_actions[1]["overlayId"], "guide")
@@ -479,7 +491,10 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(cue_actions[2]["text"], "Remember the mark")
         self.assertEqual(cue_actions[3]["soundPath"], "sounds/chime.mp3")
         self.assertEqual(cue_actions[3]["volume"], "0.4")
-        self.assertEqual(cue_actions[4]["overlayId"], "guide")
+        self.assertEqual(cue_actions[4]["durationMs"], "500")
+        self.assertFalse(cue_actions[5]["enabled"])
+        self.assertTrue(cue_actions[6]["enabled"])
+        self.assertEqual(cue_actions[7]["overlayId"], "guide")
 
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
@@ -592,6 +607,37 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(cue_action["type"], "interactive_error")
         self.assertEqual(cue_action["interactiveId"], "missing_app")
         self.assertEqual(cue_action["detail"], "Main-panel app is not registered.")
+
+    def test_legacy_slide_marker_alias_records_slide_error_without_deck(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "id": "script-with-slide-alias",
+                    "actionType": EventActionStep.ActionType.SCRIPT,
+                    "config": {"text": "Look [slide: 2] here."},
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(actions[0]["type"], "chat_message")
+        cue_action = messages[0].metadata["scriptCues"][0]["action"]
+        self.assertEqual(cue_action["type"], "slide_error")
+        self.assertEqual(cue_action["slideRef"], "2")
 
     def test_backend_registered_apps_match_frontend_registry(self):
         registry_path = (
