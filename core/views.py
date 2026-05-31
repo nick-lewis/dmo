@@ -3295,11 +3295,15 @@ def runtime_action_debug_details(action):
         "actionType",
         "arguments",
         "appended",
+        "checkTitle",
         "classifierGroupTitle",
         "classifierName",
         "contextKey",
         "detail",
         "eventId",
+        "handled",
+        "handlerActionCount",
+        "handlerMessageCount",
         "imagePath",
         "interactiveId",
         "key",
@@ -6299,10 +6303,15 @@ def run_session_conversation_checks(request, session_id):
 
         check_action = {
             "checkId": str(check.id),
+            "checkTitle": check.title,
             "eventId": str(current_event.id),
+            "handlerActionCount": len(check.handler_actions or []),
+            "handlerMessageCount": 0,
+            "handled": False,
             "reason": reason,
             "result": result,
             "resultContextKey": check.result_context_key,
+            "triggersEvent": check.triggers_event,
             "type": "conversation_check_result",
         }
         evaluated_checks.append((check, check_action, result))
@@ -6349,6 +6358,7 @@ def run_session_conversation_checks(request, session_id):
                 continue
 
             handler_next_event_slug = ""
+            handler_messages = []
             if check.handler_actions:
                 handler_actions, handler_messages, handler_next_event_slug = (
                     run_action_sequence(
@@ -6390,6 +6400,9 @@ def run_session_conversation_checks(request, session_id):
                     messages.extend(event_messages)
 
             handled = bool(next_event_slug or handler_messages)
+            check_action["handled"] = handled
+            check_action["handlerMessageCount"] = len(handler_messages)
+            check_action["triggersEvent"] = next_event_slug
             if handled:
                 break
 

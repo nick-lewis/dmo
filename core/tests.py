@@ -1356,11 +1356,22 @@ class ConversationRuntimeTests(TestCase):
         payload = response.json()
         self.assertFalse(payload["handled"])
         self.assertEqual(payload["ranEvents"], [])
+        self.assertEqual(payload["checks"][0]["checkTitle"], "Track confidence")
+        self.assertFalse(payload["checks"][0]["handled"])
+        self.assertEqual(payload["checks"][0]["handlerActionCount"], 1)
+        self.assertEqual(payload["checks"][0]["handlerMessageCount"], 0)
 
         session.refresh_from_db()
         self.assertEqual(session.runtime_state["currentEventSlug"], "fruit-chat")
         self.assertEqual(session.runtime_context["confidence_detected"], "true")
         self.assertEqual(session.runtime_context["last_confidence_check"], "matched")
+        check_trace = next(
+            entry
+            for entry in session.runtime_state["runtimeDebug"]["recentActions"]
+            if entry["type"] == "conversation_check_result"
+        )
+        self.assertFalse(check_trace["details"]["handled"])
+        self.assertEqual(check_trace["details"]["handlerActionCount"], 1)
         self.assertTrue(
             any(
                 action.get("type") == "set_context"
@@ -1368,6 +1379,46 @@ class ConversationRuntimeTests(TestCase):
                 for action in payload["actions"]
             )
         )
+
+    def test_positive_conversation_check_without_handler_continues_chat(self):
+        EventConversationCheck.objects.create(
+            event=self.chat_event,
+            title="Notice confidence",
+            instructions="Detect confidence estimate.",
+            result_context_key="confidence_detected",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        SessionMessage.objects.create(
+            session=session,
+            role=SessionMessage.Role.USER,
+            content="Maybe 80 percent confident.",
+            sequence=1,
+        )
+        self.client.force_login(self.user)
+
+        with patch(
+            "core.views.evaluate_conversation_check",
+            return_value=({"result": True, "reason": "confidence supplied"}, ""),
+        ):
+            response = self.client.post(
+                f"/api/sessions/{session.id}/conversation-checks/run/",
+                data=json.dumps({"uiState": {}}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["handled"])
+        self.assertEqual(payload["checks"][0]["handlerActionCount"], 0)
+        self.assertEqual(payload["checks"][0]["handlerMessageCount"], 0)
+        self.assertEqual(payload["checks"][0]["triggersEvent"], "")
+
+        session.refresh_from_db()
+        self.assertEqual(session.runtime_context["confidence_detected"], "true")
 
     def test_classifier_group_runs_classifiers_in_parallel(self):
         group = EventClassifierGroup.objects.create(
