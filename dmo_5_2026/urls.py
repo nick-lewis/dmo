@@ -21,6 +21,7 @@ from core.views import (
     current_session,
     current_user,
     dev_login,
+    delete_experience_snapshot,
     duplicate_experience,
     export_experience,
     export_experience_snapshot,
@@ -93,6 +94,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/snapshots/<uuid:snapshot_id>/export/",
         export_experience_snapshot,
         name="export-experience-snapshot",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/snapshots/<uuid:snapshot_id>/",
+        delete_experience_snapshot,
+        name="delete-experience-snapshot",
     ),
     path(
         "api/experiences/<uuid:experience_id>/snapshots/<uuid:snapshot_id>/restore/",

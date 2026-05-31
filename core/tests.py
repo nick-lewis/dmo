@@ -2221,6 +2221,33 @@ class ExperienceContentMaturityTests(TestCase):
         source.refresh_from_db()
         self.assertEqual(source.description, "Changed after snapshot.")
 
+    def test_snapshot_delete_removes_only_requested_snapshot(self):
+        source = self.create_rich_experience()
+        first_snapshot = ExperienceSnapshot.objects.create(
+            experience=source,
+            user=self.user,
+            title="Delete me",
+            payload=experience_export_payload(source),
+        )
+        keep_snapshot = ExperienceSnapshot.objects.create(
+            experience=source,
+            user=self.user,
+            title="Keep me",
+            payload=experience_export_payload(source),
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.delete(
+            f"/api/experiences/{source.id}/snapshots/{first_snapshot.id}/"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ExperienceSnapshot.objects.filter(id=first_snapshot.id).exists())
+        self.assertTrue(ExperienceSnapshot.objects.filter(id=keep_snapshot.id).exists())
+        snapshots = response.json()["snapshots"]
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]["id"], str(keep_snapshot.id))
+
     def test_other_user_cannot_access_experience_snapshots(self):
         source = self.create_rich_experience()
         snapshot = ExperienceSnapshot.objects.create(
@@ -2235,6 +2262,9 @@ class ExperienceContentMaturityTests(TestCase):
         export_response = self.client.get(
             f"/api/experiences/{source.id}/snapshots/{snapshot.id}/export/"
         )
+        delete_response = self.client.delete(
+            f"/api/experiences/{source.id}/snapshots/{snapshot.id}/"
+        )
         restore_response = self.client.post(
             f"/api/experiences/{source.id}/snapshots/{snapshot.id}/restore/",
             data=json.dumps({}),
@@ -2243,6 +2273,7 @@ class ExperienceContentMaturityTests(TestCase):
 
         self.assertEqual(list_response.status_code, 404)
         self.assertEqual(export_response.status_code, 404)
+        self.assertEqual(delete_response.status_code, 404)
         self.assertEqual(restore_response.status_code, 404)
 
     def test_import_normalizes_legacy_realtime_model_alias(self):

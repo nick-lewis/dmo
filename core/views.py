@@ -5026,6 +5026,35 @@ def export_experience_snapshot(request, experience_id, snapshot_id):
     return response
 
 
+@require_http_methods(["DELETE"])
+def delete_experience_snapshot(request, experience_id, snapshot_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    snapshot = ExperienceSnapshot.objects.filter(
+        id=snapshot_id,
+        experience_id=experience_id,
+        user=request.user,
+    ).first()
+    if not snapshot:
+        return JsonResponse({"detail": "Snapshot not found."}, status=404)
+
+    snapshot.delete()
+    snapshots = ExperienceSnapshot.objects.filter(
+        experience_id=experience_id,
+        user=request.user,
+    )
+    return JsonResponse(
+        {
+            "snapshots": [
+                serialize_experience_snapshot(snapshot)
+                for snapshot in snapshots
+            ]
+        }
+    )
+
+
 @require_POST
 def restore_experience_snapshot(request, experience_id, snapshot_id):
     auth_response = auth_required_response(request)

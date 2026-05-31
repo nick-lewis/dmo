@@ -3535,6 +3535,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [snapshotError, setSnapshotError] = useState("");
   const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
   const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
+  const [deletingSnapshotId, setDeletingSnapshotId] = useState("");
   const [exportingSnapshotId, setExportingSnapshotId] = useState("");
   const [restoringSnapshotId, setRestoringSnapshotId] = useState("");
   const [experienceValidationStatus, setExperienceValidationStatus] = useState<
@@ -6893,6 +6894,33 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function deleteExperienceSnapshot(snapshot: ExperienceSnapshot) {
+    if (!experience) return;
+
+    const didConfirm = window.confirm(`Delete snapshot "${snapshot.title}"?`);
+    if (!didConfirm) return;
+
+    setDeletingSnapshotId(snapshot.id);
+    setSnapshotError("");
+    try {
+      const payload = await apiFetch<ExperienceSnapshotsPayload>(
+        `/api/experiences/${experience.id}/snapshots/${snapshot.id}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      setExperienceSnapshots(payload.snapshots);
+    } catch (snapshotDeleteError) {
+      setSnapshotError(
+        snapshotDeleteError instanceof Error
+          ? snapshotDeleteError.message
+          : "Could not delete snapshot.",
+      );
+    } finally {
+      setDeletingSnapshotId("");
+    }
+  }
+
   async function restoreExperienceSnapshot(snapshot: ExperienceSnapshot) {
     if (!experience) return;
 
@@ -7521,11 +7549,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
             <section className="editor-section snapshot-section">
               <ExperienceSnapshotsPanel
+                deletingId={deletingSnapshotId}
                 error={snapshotError}
                 exportingId={exportingSnapshotId}
                 isCreating={isCreatingSnapshot}
                 isLoading={isLoadingSnapshots}
                 onCreate={() => void createExperienceSnapshot()}
+                onDelete={(snapshot) => void deleteExperienceSnapshot(snapshot)}
                 onExport={(snapshot) => void exportExperienceSnapshot(snapshot)}
                 onRefresh={() => void loadExperienceSnapshots(experience.id)}
                 onRestore={(snapshot) => void restoreExperienceSnapshot(snapshot)}
@@ -13841,22 +13871,26 @@ function snapshotCreatedAtText(value: string) {
 }
 
 function ExperienceSnapshotsPanel({
+  deletingId,
   error,
   exportingId,
   isCreating,
   isLoading,
   onCreate,
+  onDelete,
   onExport,
   onRefresh,
   onRestore,
   restoringId,
   snapshots,
 }: {
+  deletingId: string;
   error: string;
   exportingId: string;
   isCreating: boolean;
   isLoading: boolean;
   onCreate: () => void;
+  onDelete: (snapshot: ExperienceSnapshot) => void;
   onExport: (snapshot: ExperienceSnapshot) => void;
   onRefresh: () => void;
   onRestore: (snapshot: ExperienceSnapshot) => void;
@@ -13950,6 +13984,16 @@ function ExperienceSnapshotsPanel({
                   type="button"
                 >
                   {restoringId === snapshot.id ? "Restoring..." : "Restore as copy"}
+                </button>
+                <button
+                  aria-label={`Delete snapshot ${snapshot.title}`}
+                  className="event-icon-button"
+                  disabled={deletingId === snapshot.id}
+                  onClick={() => onDelete(snapshot)}
+                  title="Delete this snapshot."
+                  type="button"
+                >
+                  <TrashIcon />
                 </button>
               </div>
             </div>
