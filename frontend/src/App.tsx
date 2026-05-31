@@ -6627,6 +6627,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const scriptAudioSkipRef = useRef<(() => void) | null>(null);
   const scriptTextSkipRef = useRef<(() => void) | null>(null);
+  const suppressSlideControlResetRef = useRef(false);
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [workspaceWidth, setWorkspaceWidth] = useState(
@@ -6753,6 +6754,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           presentationId: slide.presentationId,
           slideRef: slide.slideRef,
         });
+        suppressSlideControlResetRef.current = true;
         setSlideDeckUrl(slide.deckUrl);
         setSlideError("");
         setSlideRef(slide.slideRef);
@@ -6931,6 +6933,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         presentationId: nextSlide.presentationId,
         slideRef: nextSlide.slideRef,
       });
+      suppressSlideControlResetRef.current = true;
       setSlideDeckUrl(nextSlide.deckUrl);
       setSlideError("");
       setSlideRef(nextSlide.slideRef);
@@ -7092,6 +7095,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   }, [runtimeHighlights]);
 
   useEffect(() => {
+    if (suppressSlideControlResetRef.current) {
+      suppressSlideControlResetRef.current = false;
+      return;
+    }
+
     setResolvedSlide(null);
     setSlideError("");
     setSlideStatus("empty");
