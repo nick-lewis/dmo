@@ -31,6 +31,23 @@ Open:
 
 The Compose database uses a named volume called `postgres_data`, so normal container restarts do not erase data.
 
+For Codex/dev-agent runs, use the repeatable helper:
+
+```powershell
+.\scripts\codex-up.ps1
+```
+
+Useful options:
+
+```powershell
+.\scripts\codex-up.ps1 -Build
+.\scripts\codex-up.ps1 -Restart
+.\scripts\codex-up.ps1 -CheckOnly
+```
+
+The helper starts the Docker stack when needed, waits for Django and Vite to
+respond, and prints the local URLs plus the dev sign-in route.
+
 ## Google Sign-In
 
 DMO uses Django auth plus `django-allauth` for Google sign-in. By default, only
