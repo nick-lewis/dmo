@@ -1473,6 +1473,29 @@ function actionSequenceOutgoingLinks(
 ) {
   const links: EventOutgoingLink[] = [];
   for (const step of steps) {
+    if (step.actionType === "script") {
+      const markers = parseScriptMarkerInstances(
+        stringConfigValue(step.config, "text"),
+      );
+      const fallbackDestination = stringConfigValue(
+        step.config,
+        "triggersEvent",
+      ).trim();
+      markers.forEach((marker) => {
+        if (marker.type !== "interactive") return;
+        const markerDestination = (marker.argList[2] ?? "").trim();
+        const triggersEvent = markerDestination || fallbackDestination;
+        if (!triggersEvent) return;
+        links.push({
+          kind: "App submit",
+          slug: triggersEvent,
+          source: `${sourcePrefix}: ${step.label || "Say"} / ${
+            marker.detail || marker.marker
+          }`,
+        });
+      });
+    }
+
     if (
       step.actionType !== "set_ui_trigger" &&
       step.actionType !== "goto_event" &&
