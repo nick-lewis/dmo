@@ -105,8 +105,6 @@ REALTIME_VOICES_BY_MODEL = {
     for model, voices in MODEL_OPTIONS.get("realtimeVoicesByModel", {}).items()
     if isinstance(voices, list) and str(model or "").strip()
 }
-REALTIME_CONTEXT_MESSAGE_LIMIT = 24
-REALTIME_CONTEXT_CHAR_LIMIT = 8000
 DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
@@ -2125,7 +2123,7 @@ def build_realtime_instructions(session, exclude_message_id=None):
             event_context.append(f"Event chat instructions:\n{chat_instructions}")
         if session.runtime_context:
             context_json = json.dumps(session.runtime_context, ensure_ascii=True)
-            event_context.append(f"Runtime context: {context_json[:2000]}")
+            event_context.append(f"Runtime context: {context_json}")
         instruction_parts.append("\n".join(event_context))
     if current_tools:
         tool_names = ", ".join(
@@ -2145,24 +2143,18 @@ def build_realtime_instructions(session, exclude_message_id=None):
     if exclude_message_id:
         messages_query = messages_query.exclude(id=exclude_message_id)
 
-    messages = list(messages_query.order_by("-sequence")[:REALTIME_CONTEXT_MESSAGE_LIMIT])
-    messages.reverse()
+    messages = list(messages_query.order_by("sequence", "created_at"))
     if not messages:
         return instructions
 
     transcript_lines = []
-    total_chars = 0
     for message in messages:
         speaker = "User" if message.role == SessionMessage.Role.USER else "dLU"
         content = " ".join(message.content.split())
         if not content:
             continue
 
-        line = f"{speaker}: {content}"
-        total_chars += len(line)
-        if total_chars > REALTIME_CONTEXT_CHAR_LIMIT:
-            break
-        transcript_lines.append(line)
+        transcript_lines.append(f"{speaker}: {content}")
 
     if not transcript_lines:
         return instructions
@@ -4307,13 +4299,12 @@ def set_runtime_current_event(state, event):
     return state
 
 
-def conversation_check_transcript(session, limit=16):
+def conversation_check_transcript(session):
     messages = list(
         session.messages.filter(
             role__in=[SessionMessage.Role.USER, SessionMessage.Role.ASSISTANT]
-        ).order_by("-sequence")[:limit]
+        ).order_by("sequence", "created_at")
     )
-    messages.reverse()
     return "\n".join(
         f"{message.role}: {message.content.strip()}" for message in messages
     )
@@ -4404,7 +4395,7 @@ def evaluate_event_classifier(
                 "Do not infer from older turns unless the classifier explicitly "
                 "asks for conversation history."
             ),
-            f"Runtime context:\n{json.dumps(runtime_context or {}, ensure_ascii=True)[:3000]}",
+            f"Runtime context:\n{json.dumps(runtime_context or {}, ensure_ascii=True)}",
             f"Recent conversation:\n{transcript}",
         ]
     )
@@ -4601,7 +4592,7 @@ def evaluate_conversation_check(session, check):
             f"Current event: {current_event.title if current_event else ''}",
             f"Instructions:\n{check.instructions.strip()}",
             "Return JSON only with keys: result (boolean), reason (short string).",
-            f"Runtime context:\n{json.dumps(session.runtime_context or {}, ensure_ascii=True)[:2000]}",
+            f"Runtime context:\n{json.dumps(session.runtime_context or {}, ensure_ascii=True)}",
             f"Recent conversation:\n{conversation_check_transcript(session)}",
         ]
     )

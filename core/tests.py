@@ -35,6 +35,7 @@ from .views import (
     cached_script_audio_payload,
     classification_model_choices,
     collect_experience_script_audio_items,
+    conversation_check_transcript,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
     experience_export_payload,
@@ -1834,6 +1835,54 @@ class ConversationRuntimeTests(TestCase):
         self.assertIn('"learner_goal": "name fruits"', instructions)
         self.assertIn("Available function-call routes:", instructions)
         self.assertIn("student_done", instructions)
+
+    def test_realtime_instructions_include_full_session_history_and_context(self):
+        self.chat_event.chat_instructions = "Use the whole context."
+        self.chat_event.save(update_fields=["chat_instructions"])
+        long_context_value = "ctx-" + ("x" * 2600) + "-tail"
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_context={"long_context": long_context_value},
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        for index in range(30):
+            SessionMessage.objects.create(
+                session=session,
+                role=(
+                    SessionMessage.Role.USER
+                    if index % 2 == 0
+                    else SessionMessage.Role.ASSISTANT
+                ),
+                content=f"message-{index:02d}",
+                sequence=index + 1,
+            )
+
+        instructions = build_realtime_instructions(session)
+
+        self.assertIn("ctx-", instructions)
+        self.assertIn("-tail", instructions)
+        self.assertIn("User: message-00", instructions)
+        self.assertIn("dLU: message-29", instructions)
+
+    def test_conversation_check_transcript_uses_full_session_history(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        for index in range(22):
+            SessionMessage.objects.create(
+                session=session,
+                role=SessionMessage.Role.USER,
+                content=f"check-message-{index:02d}",
+                sequence=index + 1,
+            )
+
+        transcript = conversation_check_transcript(session)
+
+        self.assertIn("user: check-message-00", transcript)
+        self.assertIn("user: check-message-21", transcript)
 
     @override_settings(OPENAI_API_KEY="test-key")
     def test_realtime_client_secret_records_prompt_debug(self):
