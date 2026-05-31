@@ -766,6 +766,259 @@ def serialize_experience(experience):
     }
 
 
+def validation_template_is_dynamic(value):
+    return "{{" in str(value or "")
+
+
+def validation_config_value(config, key):
+    if not isinstance(config, dict):
+        return ""
+    return str(config.get(key, "") or "").strip()
+
+
+def validation_route_record(event, kind, target, source, source_item_id="", dynamic=False):
+    return {
+        "dynamic": bool(dynamic),
+        "kind": kind,
+        "source": source,
+        "sourceEventId": str(event.id),
+        "sourceEventSlug": event.slug,
+        "sourceEventTitle": event.title,
+        "sourceItemId": str(source_item_id or ""),
+        "target": str(target or "").strip(),
+    }
+
+
+def validation_app_issue(event, interactive_id, source, source_item_id=""):
+    if not interactive_id or validation_template_is_dynamic(interactive_id):
+        return None
+
+    detail = interactive_id_error(interactive_id)
+    if not detail:
+        return None
+
+    return {
+        "detail": detail,
+        "interactiveId": interactive_id,
+        "source": source,
+        "sourceEventId": str(event.id),
+        "sourceEventSlug": event.slug,
+        "sourceEventTitle": event.title,
+        "sourceItemId": str(source_item_id or ""),
+    }
+
+
+def validation_routes_from_action_sequence(event, actions, source_prefix):
+    routes = []
+    app_issues = []
+    action_type_labels = dict(EventActionStep.ActionType.choices)
+    for action in actions or []:
+        if not isinstance(action, dict):
+            continue
+
+        action_type = str(action.get("actionType", "") or "").strip()
+        config = action.get("config") if isinstance(action.get("config"), dict) else {}
+        label = str(action.get("label", "") or "").strip() or action_type or "action"
+        source_item_id = str(action.get("id", "") or "")
+        source = f"{source_prefix}: {label}"
+
+        if action_type == EventActionStep.ActionType.SCRIPT:
+            _, markers = parse_script_markers(config.get("text", ""))
+            fallback_target = validation_config_value(config, "triggersEvent")
+            fallback_target_is_dynamic = validation_template_is_dynamic(fallback_target)
+            fallback_app_id = validation_config_value(config, "interactiveId")
+
+            for marker in markers:
+                marker_type = marker.get("markerType")
+                if marker_type not in {"interactive", "interactive_update"}:
+                    continue
+
+                args = marker.get("args") or []
+                marker_text = f"{source} / [{marker_type}]"
+                interactive_id = (
+                    str(args[0]).strip()
+                    if args
+                    else fallback_app_id
+                ) or "delivery_data"
+                issue = validation_app_issue(
+                    event,
+                    interactive_id,
+                    marker_text,
+                    source_item_id,
+                )
+                if issue:
+                    app_issues.append(issue)
+
+                target = str(args[2]).strip() if len(args) > 2 else fallback_target
+                if not target:
+                    continue
+
+                routes.append(
+                    validation_route_record(
+                        event,
+                        "App submit" if marker_type == "interactive" else "App update submit",
+                        target,
+                        marker_text,
+                        source_item_id,
+                        validation_template_is_dynamic(target)
+                        or (len(args) <= 2 and fallback_target_is_dynamic),
+                    )
+                )
+
+        if action_type in {
+            EventActionStep.ActionType.INTERACTIVE,
+            EventActionStep.ActionType.INTERACTIVE_UPDATE,
+        }:
+            interactive_id = validation_config_value(config, "interactiveId") or "delivery_data"
+            issue = validation_app_issue(event, interactive_id, source, source_item_id)
+            if issue:
+                app_issues.append(issue)
+
+        if action_type not in {
+            EventActionStep.ActionType.SET_UI_TRIGGER,
+            EventActionStep.ActionType.GOTO_EVENT,
+            EventActionStep.ActionType.BUTTON_CHOICE,
+            EventActionStep.ActionType.INTERACTIVE,
+            EventActionStep.ActionType.INTERACTIVE_UPDATE,
+        }:
+            continue
+
+        target = validation_config_value(config, "triggersEvent")
+        if not target:
+            continue
+
+        routes.append(
+            validation_route_record(
+                event,
+                action_type_labels.get(action_type, action_type),
+                target,
+                source,
+                source_item_id,
+                validation_template_is_dynamic(target),
+            )
+        )
+
+    return routes, app_issues
+
+
+def experience_validation_summary(experience):
+    events = list(experience.events.order_by("sort_order", "created_at"))
+    event_lookup = {}
+    for event in events:
+        event_lookup[event.slug] = event
+        event_lookup[str(event.id)] = event
+
+    routes = []
+    app_issues = []
+    for event in events:
+        action_steps = [
+            {
+                "actionType": step.action_type,
+                "config": step.config,
+                "id": str(step.id),
+                "label": step.label,
+            }
+            for step in event.steps.order_by("sort_order", "created_at")
+        ]
+        step_routes, step_app_issues = validation_routes_from_action_sequence(
+            event,
+            action_steps,
+            "On entry",
+        )
+        routes.extend(step_routes)
+        app_issues.extend(step_app_issues)
+
+        for tool in event.chat_tools.order_by("sort_order", "created_at"):
+            if tool.triggers_event:
+                routes.append(
+                    validation_route_record(
+                        event,
+                        "FC route",
+                        tool.triggers_event,
+                        tool.description or tool.name,
+                        tool.id,
+                    )
+                )
+            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
+                event,
+                tool.handler_actions,
+                f"FC route {tool.name}",
+            )
+            routes.extend(handler_routes)
+            app_issues.extend(handler_app_issues)
+
+        for check in event.conversation_checks.order_by("sort_order", "created_at"):
+            if check.triggers_event:
+                routes.append(
+                    validation_route_record(
+                        event,
+                        "Check",
+                        check.triggers_event,
+                        check.title or "Conversation check",
+                        check.id,
+                    )
+                )
+            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
+                event,
+                check.handler_actions,
+                f"Check {check.title}",
+            )
+            routes.extend(handler_routes)
+            app_issues.extend(handler_app_issues)
+
+        for group in event.classifier_groups.order_by("sort_order", "created_at"):
+            if group.triggers_event:
+                routes.append(
+                    validation_route_record(
+                        event,
+                        "Classifiers",
+                        group.triggers_event,
+                        group.title or "Classifier group",
+                        group.id,
+                    )
+                )
+            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
+                event,
+                group.handler_actions,
+                f"Classifiers {group.title}",
+            )
+            routes.extend(handler_routes)
+            app_issues.extend(handler_app_issues)
+
+    unresolved_routes = [
+        route
+        for route in routes
+        if route["target"]
+        and not route["dynamic"]
+        and route["target"] not in event_lookup
+    ]
+    incoming_targets = {
+        route["target"]
+        for route in routes
+        if route["target"] and not route["dynamic"] and route["target"] in event_lookup
+    }
+    orphaned_events = [
+        {
+            "id": str(event.id),
+            "isStart": event.is_start,
+            "slug": event.slug,
+            "title": event.title,
+        }
+        for event in events
+        if not event.is_start and event.slug not in incoming_targets and str(event.id) not in incoming_targets
+    ]
+
+    return {
+        "appIssues": app_issues,
+        "dynamicRouteCount": len([route for route in routes if route["dynamic"]]),
+        "eventCount": len(events),
+        "orphanedEvents": orphaned_events,
+        "routeCount": len(routes),
+        "routes": routes,
+        "unresolvedRoutes": unresolved_routes,
+    }
+
+
 def auth_required_response(request):
     if request.user.is_authenticated:
         return None
@@ -4406,6 +4659,21 @@ def update_experience(request, experience_id):
 
     experience.save()
     return JsonResponse({"experience": serialize_experience(experience)})
+
+
+@require_GET
+def experience_validation(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    ensure_tutor_settings(experience)
+    ensure_start_event(experience)
+    return JsonResponse({"validation": experience_validation_summary(experience)})
 
 
 @require_POST

@@ -24,6 +24,7 @@ from core.views import (
     duplicate_experience,
     export_experience,
     experience_events,
+    experience_validation,
     experience_script_audio,
     experiences,
     frontend_index,
@@ -76,6 +77,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/export/",
         export_experience,
         name="export-experience",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/validation/",
+        experience_validation,
+        name="experience-validation",
     ),
     path(
         "api/experiences/<uuid:experience_id>/events/",

@@ -1634,3 +1634,76 @@ class ExperienceContentMaturityTests(TestCase):
             Experience.objects.filter(user=self.other_user).count(),
             initial_count,
         )
+
+    def test_validation_endpoint_reports_routes_orphans_and_app_issues(self):
+        source = self.create_rich_experience()
+        start = source.events.get(slug="start")
+        ExperienceEvent.objects.create(
+            experience=source,
+            title="Orphan",
+            slug="orphan",
+            description="No routes point here.",
+            sort_order=2,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.GOTO_EVENT,
+            label="Missing route",
+            config={"triggersEvent": "missing-target"},
+            sort_order=2,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SET_UI_TRIGGER,
+            label="Dynamic route",
+            config={"triggersEvent": "{{ next_event }}"},
+            sort_order=3,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Missing app script",
+            config={"text": "Try this. [interactive: missing_app, table, done]"},
+            sort_order=4,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(f"/api/experiences/{source.id}/validation/")
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["validation"]
+        self.assertEqual(validation["eventCount"], 3)
+        self.assertGreaterEqual(validation["routeCount"], 8)
+        self.assertEqual(validation["dynamicRouteCount"], 1)
+        self.assertIn(
+            "missing-target",
+            [route["target"] for route in validation["unresolvedRoutes"]],
+        )
+        self.assertNotIn(
+            "{{ next_event }}",
+            [route["target"] for route in validation["unresolvedRoutes"]],
+        )
+        self.assertIn(
+            "orphan",
+            [event["slug"] for event in validation["orphanedEvents"]],
+        )
+        self.assertIn(
+            "missing_app",
+            [issue["interactiveId"] for issue in validation["appIssues"]],
+        )
+        self.assertIn(
+            "done",
+            [
+                route["target"]
+                for route in validation["routes"]
+                if route["kind"] == "App submit"
+            ],
+        )
+
+    def test_validation_endpoint_is_scoped_to_owner(self):
+        source = self.create_rich_experience()
+        self.client.force_login(self.other_user)
+
+        response = self.client.get(f"/api/experiences/{source.id}/validation/")
+
+        self.assertEqual(response.status_code, 404)
