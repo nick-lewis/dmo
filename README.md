@@ -77,7 +77,7 @@ minted by Django. Set your API key in `.env`:
 ```powershell
 OPENAI_API_KEY=your-openai-api-key
 DLU_REALTIME_DEFAULT_MODEL=gpt-realtime-mini
-DLU_REALTIME_DEFAULT_VOICE=marin
+DLU_REALTIME_DEFAULT_VOICE=ash
 ```
 
 The temporary header controls let you switch between `gpt-realtime-mini`,

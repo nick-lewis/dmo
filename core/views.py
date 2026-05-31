@@ -59,7 +59,6 @@ OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_s
 REALTIME_MODELS = {
     "gpt-realtime-2",
     "gpt-realtime-1.5",
-    "gpt-realtime",
     "gpt-realtime-mini",
 }
 CLASSIFICATION_MODELS = {
