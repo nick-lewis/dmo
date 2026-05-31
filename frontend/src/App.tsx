@@ -473,6 +473,12 @@ type MainPanelAppDefinition = {
   views: Array<{ id: string; label: string }>;
 };
 
+type DeliveryDataRow = {
+  distance: number;
+  minutes: number;
+  order: string;
+};
+
 const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
   {
     Component: DeliveryDataInteractive,
@@ -834,6 +840,20 @@ function stringConfigValue(
 ) {
   const value = config[key];
   return typeof value === "string" ? value : fallback;
+}
+
+function numberConfigValue(
+  config: Record<string, unknown>,
+  key: string,
+  fallback: number,
+) {
+  const value = config[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
 
 function conditionDraftFromStep(step: ActionSequenceStep): StepConditionDraft {
@@ -11013,25 +11033,59 @@ function InteractiveWorkspace({
   );
 }
 
+const defaultDeliveryRows: DeliveryDataRow[] = [
+  { distance: 1.2, minutes: 7, order: "A-184" },
+  { distance: 2.1, minutes: 12, order: "B-302" },
+  { distance: 3.4, minutes: 18, order: "C-119" },
+  { distance: 4.8, minutes: 27, order: "D-447" },
+];
+
+function deliveryRowsFromConfig(config: Record<string, unknown>) {
+  const rawRows = config.rows;
+  if (!Array.isArray(rawRows)) return defaultDeliveryRows;
+
+  const rows = rawRows.flatMap((rawRow): DeliveryDataRow[] => {
+    if (!rawRow || typeof rawRow !== "object" || Array.isArray(rawRow)) {
+      return [];
+    }
+    const row = rawRow as Record<string, unknown>;
+    const order = stringConfigValue(row, "order").trim();
+    const distance = numberConfigValue(row, "distance", Number.NaN);
+    const minutes = numberConfigValue(row, "minutes", Number.NaN);
+    if (!order || !Number.isFinite(distance) || !Number.isFinite(minutes)) {
+      return [];
+    }
+    return [{ distance, minutes, order }];
+  });
+
+  return rows.length ? rows.slice(0, 12) : defaultDeliveryRows;
+}
+
 function DeliveryDataInteractive({
   host,
   interactive,
   state,
 }: MainPanelAppProps) {
-  const rows = [
-    { distance: 1.2, minutes: 7, order: "A-184" },
-    { distance: 2.1, minutes: 12, order: "B-302" },
-    { distance: 3.4, minutes: 18, order: "C-119" },
-    { distance: 4.8, minutes: 27, order: "D-447" },
-  ];
+  const rows = deliveryRowsFromConfig(interactive.config);
   const estimate =
     typeof state.estimate === "string" ? state.estimate : String(state.estimate ?? "");
   const mode = interactive.mode || "table";
   const view = mode === "graph" ? "graph" : "table";
   const maxMinutes = Math.max(...rows.map((row) => row.minutes));
   const appTitle = interactive.title || "Delivery data";
+  const targetDistance = numberConfigValue(
+    interactive.config,
+    "targetDistance",
+    3.9,
+  );
+  const estimateContextKey = stringConfigValue(
+    interactive.config,
+    "estimateContextKey",
+    "delivery_estimate",
+  ).trim() || "delivery_estimate";
   const appPrompt =
-    interactive.prompt || "Estimate the delivery time for a 3.9 mile order.";
+    interactive.prompt ||
+    `Estimate the delivery time for a ${targetDistance.toFixed(1)} mile order.`;
 
   return (
     <div className="interactive-workspace">
@@ -11099,7 +11153,7 @@ function DeliveryDataInteractive({
                   estimate: estimate.trim(),
                 };
                 host.submit(nextState, {
-                  delivery_estimate: estimate.trim(),
+                  [estimateContextKey]: estimate.trim(),
                 });
               }}
               type="button"
