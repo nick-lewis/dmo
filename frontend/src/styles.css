@@ -1033,6 +1033,33 @@ button {
   stroke-width: 1.4;
 }
 
+.event-graph-summary {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 9px 0;
+}
+
+.event-graph-summary span,
+.event-graph-summary strong {
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 13%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted-ink) 84%, var(--page-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, transparent);
+  font-size: 0.62rem;
+  font-weight: 780;
+}
+
+.event-graph-summary strong {
+  border-color: color-mix(in srgb, var(--accent-5) 30%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-5) 66%, var(--page-ink));
+}
+
 .event-graph-nodes {
   position: relative;
   z-index: 1;

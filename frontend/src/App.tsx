@@ -10786,6 +10786,20 @@ function EventGraphView({
     indexBySlug.set(event.slug, index);
     indexBySlug.set(event.id, index);
   });
+  const statsByEventId = new Map(
+    sortedEvents.map((event) => [event.id, eventTransitionStats(events, event)]),
+  );
+  const orphanCount = sortedEvents.filter(
+    (event) => statsByEventId.get(event.id)?.isUnlinked,
+  ).length;
+  const unresolvedRouteCount = sortedEvents.reduce(
+    (total, event) => total + (statsByEventId.get(event.id)?.unresolvedCount ?? 0),
+    0,
+  );
+  const routeCount = sortedEvents.reduce(
+    (total, event) => total + (statsByEventId.get(event.id)?.outgoingCount ?? 0),
+    0,
+  );
   const selectedEvent =
     sortedEvents.find((event) => event.id === selectedEventId) ?? sortedEvents[0];
   const rowHeight = 44;
@@ -10841,9 +10855,20 @@ function EventGraphView({
           );
         })}
       </svg>
+      <div className="event-graph-summary">
+        <span>{sortedEvents.length} events</span>
+        <span>{routeCount} routes</span>
+        {orphanCount ? <strong>{orphanCount} orphaned</strong> : <span>0 orphaned</span>}
+        {unresolvedRouteCount ? (
+          <strong>{unresolvedRouteCount} unresolved</strong>
+        ) : (
+          <span>0 unresolved</span>
+        )}
+      </div>
       <div className="event-graph-nodes">
         {sortedEvents.map((event) => {
-          const stats = eventTransitionStats(events, event);
+          const stats =
+            statsByEventId.get(event.id) ?? eventTransitionStats(events, event);
           return (
             <button
               className={[
@@ -10861,6 +10886,7 @@ function EventGraphView({
               <small>
                 {event.isStart ? "start" : `${stats.incomingCount} in`} /{" "}
                 {stats.outgoingCount} out
+                {stats.unresolvedCount ? ` / ${stats.unresolvedCount} unresolved` : ""}
               </small>
             </button>
           );
