@@ -467,6 +467,8 @@ type ConversationCheckPayload = SessionPayload & {
 
 type InteractiveRuntimePayload = SessionPayload & {
   actions: Array<Record<string, unknown>>;
+  ranEvents?: ExperienceEvent[];
+  ranMessages?: ChatMessage[];
 };
 
 type RuntimeUiState = {
@@ -9729,6 +9731,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       setSession(payload.session);
       setMessages(payload.messages);
       applyRuntimeActions(payload.actions);
+      if (payload.ranMessages?.[0]) {
+        setTurnAnchorMessageId(payload.ranMessages[0].id);
+      }
+      queueScriptMessages(payload.session, payload.ranMessages);
       return true;
     } catch (error) {
       if (interactiveSaveVersionRef.current !== version) return false;
