@@ -177,6 +177,96 @@ class InteractiveRuntimeActionTests(TestCase):
             any(action.get("type") == "chat_message" for action in payload["actions"])
         )
 
+    def test_interactive_endpoint_rejects_unregistered_app_id(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={
+                "uiRuntime": {
+                    "interactive": {
+                        "config": {},
+                        "interactiveId": "delivery_data",
+                    },
+                    "interactiveState": {},
+                },
+            },
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/interactive/",
+            data=json.dumps(
+                {
+                    "interactiveId": "custom_form_that_is_not_registered",
+                    "state": {},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Main-panel app is not registered.")
+
+    def test_editor_rejects_unregistered_main_panel_app_action(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/{event.id}/steps/",
+            data=json.dumps(
+                {
+                    "actionType": EventActionStep.ActionType.INTERACTIVE,
+                    "config": {
+                        "interactiveId": "custom_form_that_is_not_registered",
+                        "mode": "default",
+                    },
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Main-panel app is not registered.")
+
+    def test_unregistered_script_marker_records_runtime_error_action(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "id": "script-with-missing-app",
+                    "actionType": EventActionStep.ActionType.SCRIPT,
+                    "config": {
+                        "text": "Now try this. [interactive: missing_app, default]"
+                    },
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(actions[0]["type"], "chat_message")
+        cue_action = messages[0].metadata["scriptCues"][0]["action"]
+        self.assertEqual(cue_action["type"], "interactive_error")
+        self.assertEqual(cue_action["interactiveId"], "missing_app")
+        self.assertEqual(cue_action["detail"], "Main-panel app is not registered.")
+
 
 class RuntimeContextActionTests(TestCase):
     def setUp(self):

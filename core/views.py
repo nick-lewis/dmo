@@ -111,6 +111,10 @@ DEFAULT_CLASSIFIER_RESULT_SCHEMA = {
     "required": ["mentioned", "context"],
     "additionalProperties": False,
 }
+REGISTERED_MAIN_PANEL_APP_IDS = {
+    "delivery_data",
+    "timing_challenge",
+}
 SCRIPT_MARKER_PATTERN = re.compile(
     (
         r"\[(show_image|slide|gslide|interactive|interactive_update|"
@@ -129,6 +133,22 @@ def normalize_script_speech(text):
 
 def normalized_interactive_config(value):
     return value if isinstance(value, dict) else {}
+
+
+def normalize_interactive_id(value):
+    return str(value or "").strip()
+
+
+def interactive_id_error(interactive_id):
+    if not interactive_id:
+        return "Interactive id is required."
+    if len(interactive_id) > 80:
+        return "Interactive id is too long."
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", interactive_id):
+        return "Interactive id can only contain letters, numbers, dashes, and underscores."
+    if interactive_id not in REGISTERED_MAIN_PANEL_APP_IDS:
+        return "Main-panel app is not registered."
+    return ""
 
 
 def script_word_count(text):
@@ -247,8 +267,16 @@ def build_interactive_action(
         config.get("interactiveId") or config.get("name") or "delivery_data",
         runtime_context,
     ).strip()
-    if not interactive_id:
-        return None
+    id_error = interactive_id_error(interactive_id)
+    if id_error:
+        return {
+            "detail": id_error,
+            "eventId": str(event_id),
+            "interactiveId": interactive_id,
+            "stepId": step_id,
+            "type": "interactive_error",
+            **metadata,
+        }
 
     action = {
         "config": normalized_interactive_config(config.get("config")),
@@ -2174,13 +2202,10 @@ def validate_action_config(action_type, value):
         EventActionStep.ActionType.INTERACTIVE,
         EventActionStep.ActionType.INTERACTIVE_UPDATE,
     }:
-        interactive_id = str(value.get("interactiveId", "")).strip()
-        if not interactive_id:
-            return None, "Interactive id is required."
-        if len(interactive_id) > 80:
-            return None, "Interactive id is too long."
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", interactive_id):
-            return None, "Interactive id can only contain letters, numbers, dashes, and underscores."
+        interactive_id = normalize_interactive_id(value.get("interactiveId", ""))
+        id_error = interactive_id_error(interactive_id)
+        if id_error:
+            return None, id_error
 
         title = str(value.get("title", "")).strip()
         mode = str(value.get("mode", "")).strip()
@@ -2509,6 +2534,8 @@ def runtime_action_summary(action):
         return f"{action.get('interactiveId', 'app')} {action.get('mode', '')}".strip()
     if action_type == "interactive_state":
         return f"{action.get('interactiveId', 'app')} state saved"
+    if action_type == "interactive_error":
+        return f"{action.get('interactiveId', 'app')}: {action.get('detail', 'not registered')}"
     if action_type == "interactive_clear":
         return "clear main-panel app"
     if action_type == "chat_availability":
@@ -2532,6 +2559,7 @@ def runtime_action_debug_details(action):
         "classifierGroupTitle",
         "classifierName",
         "contextKey",
+        "detail",
         "eventId",
         "interactiveId",
         "key",
@@ -4825,10 +4853,9 @@ def update_session_interactive(request, session_id):
         return JsonResponse({"detail": "Invalid JSON."}, status=400)
 
     interactive_id = str(data.get("interactiveId", "")).strip()
-    if not interactive_id:
-        return JsonResponse({"detail": "Main-panel app is required."}, status=400)
-    if len(interactive_id) > 80 or not re.fullmatch(r"[A-Za-z0-9_-]+", interactive_id):
-        return JsonResponse({"detail": "Main-panel app id is invalid."}, status=400)
+    id_error = interactive_id_error(interactive_id)
+    if id_error:
+        return JsonResponse({"detail": id_error}, status=400)
 
     next_state = normalized_interactive_config(data.get("state"))
     if len(json.dumps(next_state, ensure_ascii=True)) > 12000:

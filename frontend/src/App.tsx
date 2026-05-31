@@ -1600,6 +1600,12 @@ function runtimeActionText(action: Record<string, unknown>) {
   if (type === "interactive_state") {
     return `${compactRuntimeValue(action.interactiveId, "app")} state saved`;
   }
+  if (type === "interactive_error") {
+    return `${compactRuntimeValue(action.interactiveId, "app")}: ${compactRuntimeValue(
+      action.detail,
+      "not registered",
+    )}`;
+  }
   if (type === "interactive_clear") {
     return "clear main-panel app";
   }
@@ -8576,6 +8582,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (action.type === "interactive_state") {
         const state = recordFromUnknown(action.state);
         setRuntimeInteractiveState(state);
+      }
+
+      if (action.type === "interactive_error") {
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
+        setResolvedSlide(null);
+        setSlideError(
+          typeof action.detail === "string"
+            ? action.detail
+            : "Main-panel app is not registered.",
+        );
+        setSlideStatus("error");
       }
 
       if (action.type === "interactive_update") {
