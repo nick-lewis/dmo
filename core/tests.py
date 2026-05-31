@@ -29,6 +29,7 @@ from .views import (
     cached_script_audio_payload,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
+    run_action_sequence,
     serialize_experience,
 )
 
@@ -175,6 +176,90 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertTrue(
             any(action.get("type") == "chat_message" for action in payload["actions"])
         )
+
+
+class RuntimeContextActionTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="runtime-context-action-test",
+            email="runtime-context-action-test@example.com",
+            password="test-password",
+        )
+        self.experience = Experience.objects.create(
+            user=self.user,
+            title="Runtime context action test",
+            slug="runtime-context-action-test",
+        )
+        self.event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+
+    def test_action_sequence_uses_shared_context_action_rules(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_context={
+                "fruits": ["apple"],
+                "scalar_value": "first",
+            },
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            self.event,
+            [
+                {
+                    "id": "set-estimate",
+                    "actionType": EventActionStep.ActionType.SET_CONTEXT,
+                    "config": {"key": " delivery_estimate ", "value": 22},
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+                {
+                    "id": "append-new",
+                    "actionType": EventActionStep.ActionType.APPEND_CONTEXT_LIST,
+                    "config": {"key": "fruits", "value": "banana"},
+                    "enabled": True,
+                    "sortOrder": 1,
+                },
+                {
+                    "id": "append-duplicate",
+                    "actionType": EventActionStep.ActionType.APPEND_CONTEXT_LIST,
+                    "config": {"key": "fruits", "value": "apple"},
+                    "enabled": True,
+                    "sortOrder": 2,
+                },
+                {
+                    "id": "append-to-scalar",
+                    "actionType": EventActionStep.ActionType.APPEND_CONTEXT_LIST,
+                    "config": {"key": "scalar_value", "value": "second"},
+                    "enabled": True,
+                    "sortOrder": 3,
+                },
+            ],
+        )
+
+        self.assertEqual(messages, [])
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(session.runtime_context["delivery_estimate"], 22)
+        self.assertEqual(session.runtime_context["fruits"], ["apple", "banana"])
+        self.assertEqual(session.runtime_context["scalar_value"], ["first", "second"])
+
+        set_action = actions[0]
+        append_actions = [
+            action
+            for action in actions
+            if action.get("type") == "append_context_list"
+        ]
+        self.assertEqual(set_action["key"], "delivery_estimate")
+        self.assertEqual(
+            [action["appended"] for action in append_actions],
+            [True, False, True],
+        )
+        self.assertEqual(append_actions[-1]["list"], ["first", "second"])
 
 
 class ScriptAudioCachePayloadTests(TestCase):

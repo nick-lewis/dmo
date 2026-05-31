@@ -2619,40 +2619,56 @@ def runtime_context_action_key(action):
     return key
 
 
+def apply_runtime_context_action(runtime_context, action):
+    next_context = dict(runtime_context or {})
+    if not isinstance(action, dict):
+        return next_context, None
+
+    action_type = str(action.get("type", "") or "")
+    key = runtime_context_action_key(action)
+    if not key:
+        return next_context, None
+
+    applied_action = dict(action)
+    applied_action["key"] = key
+
+    if action_type == "set_context":
+        next_context[key] = action.get("value")
+        applied_action["value"] = next_context[key]
+        return next_context, applied_action
+
+    if action_type == "append_context_list":
+        current_value = next_context.get(key)
+        if isinstance(current_value, list):
+            next_values = list(current_value)
+        elif current_value in (None, ""):
+            next_values = []
+        else:
+            next_values = [current_value]
+
+        next_value = action.get("value")
+        appended = False
+        if not any(values_match(item, next_value) for item in next_values):
+            next_values.append(next_value)
+            appended = True
+        next_context[key] = next_values
+        applied_action["appended"] = appended
+        applied_action["list"] = next_values
+        applied_action["value"] = next_value
+        return next_context, applied_action
+
+    return next_context, None
+
+
 def apply_runtime_actions_to_context(runtime_context, actions):
     next_context = dict(runtime_context or {})
     for action in actions:
-        if not isinstance(action, dict):
-            continue
-
-        action_type = str(action.get("type", "") or "")
-        key = runtime_context_action_key(action)
-        if not key:
-            continue
-
-        if action_type == "set_context":
-            action["key"] = key
-            next_context[key] = action.get("value")
-            continue
-
-        if action_type == "append_context_list":
-            current_value = next_context.get(key)
-            if isinstance(current_value, list):
-                next_values = list(current_value)
-            elif current_value in (None, ""):
-                next_values = []
-            else:
-                next_values = [current_value]
-
-            next_value = action.get("value")
-            appended = False
-            if not any(values_match(item, next_value) for item in next_values):
-                next_values.append(next_value)
-                appended = True
-            next_context[key] = next_values
-            action["appended"] = appended
-            action["key"] = key
-            action["list"] = next_values
+        next_context, applied_action = apply_runtime_context_action(
+            next_context,
+            action,
+        )
+        if applied_action is not None:
+            action.update(applied_action)
 
     return next_context
 
@@ -2979,49 +2995,40 @@ def run_action_sequence(
             key = str(config.get("key", "")).strip()
             if not key:
                 continue
-            runtime_context[key] = config.get("value")
-            actions.append(
-                {
-                    "type": "set_context",
-                    "eventId": str(event.id),
-                    "stepId": step_id,
-                    "key": key,
-                    "value": runtime_context[key],
-                    **metadata,
-                }
+            action = {
+                "type": "set_context",
+                "eventId": str(event.id),
+                "stepId": step_id,
+                "key": key,
+                "value": config.get("value"),
+                **metadata,
+            }
+            runtime_context, applied_action = apply_runtime_context_action(
+                runtime_context,
+                action,
             )
+            if applied_action:
+                actions.append(applied_action)
             continue
 
         if action_type == EventActionStep.ActionType.APPEND_CONTEXT_LIST:
             key = str(config.get("key", "")).strip()
             if not key:
                 continue
-            current_value = runtime_context.get(key)
-            if isinstance(current_value, list):
-                next_values = list(current_value)
-            elif current_value in (None, ""):
-                next_values = []
-            else:
-                next_values = [current_value]
-
-            next_value = config.get("value")
-            appended = False
-            if not any(values_match(item, next_value) for item in next_values):
-                next_values.append(next_value)
-                appended = True
-            runtime_context[key] = next_values
-            actions.append(
-                {
-                    "type": "append_context_list",
-                    "appended": appended,
-                    "eventId": str(event.id),
-                    "key": key,
-                    "list": next_values,
-                    "stepId": step_id,
-                    "value": next_value,
-                    **metadata,
-                }
+            action = {
+                "type": "append_context_list",
+                "eventId": str(event.id),
+                "key": key,
+                "stepId": step_id,
+                "value": config.get("value"),
+                **metadata,
+            }
+            runtime_context, applied_action = apply_runtime_context_action(
+                runtime_context,
+                action,
             )
+            if applied_action:
+                actions.append(applied_action)
             continue
 
         if action_type == EventActionStep.ActionType.GET_UI_STATE:
