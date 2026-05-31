@@ -80,6 +80,7 @@ const eventActionOptions = [
   { id: "highlight_off", label: "Clear highlight" },
   { id: "interactive", label: "Main panel app" },
   { id: "interactive_update", label: "Update app" },
+  { id: "interactive_clear", label: "Clear app" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -227,6 +228,7 @@ type EventActionStep = {
     | "highlight_off"
     | "interactive"
     | "interactive_update"
+    | "interactive_clear"
     | "set_ui_trigger"
     | "goto_event"
     | "button_choice";
@@ -1247,6 +1249,9 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
       title: "",
     };
   }
+  if (actionType === "interactive_clear") {
+    return {};
+  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
@@ -1292,6 +1297,7 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") return "Clear highlight";
   if (actionType === "interactive") return "Show main-panel app";
   if (actionType === "interactive_update") return "Update app";
+  if (actionType === "interactive_clear") return "Clear main-panel app";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -1388,6 +1394,9 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_update") {
     return "Send an update to the mounted app";
   }
+  if (actionType === "interactive_clear") {
+    return "Clear the current main-panel app";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -1420,7 +1429,8 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
     actionType === "highlight_on" ||
     actionType === "highlight_off" ||
     actionType === "interactive" ||
-    actionType === "interactive_update"
+    actionType === "interactive_update" ||
+    actionType === "interactive_clear"
   ) {
     return "ui";
   }
@@ -2099,6 +2109,9 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     ]
       .filter(Boolean)
       .join(" ");
+  }
+  if (step.actionType === "interactive_clear") {
+    return "Clear main-panel app";
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");

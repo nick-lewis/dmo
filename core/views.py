@@ -2537,6 +2537,9 @@ def validate_action_config(action_type, value):
             payload["triggersEvent"] = triggers_event
         return payload, ""
 
+    if action_type == EventActionStep.ActionType.INTERACTIVE_CLEAR:
+        return {}, ""
+
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
@@ -3513,6 +3516,17 @@ def run_action_sequence(
             )
             if action:
                 actions.append(action)
+            continue
+
+        if action_type == EventActionStep.ActionType.INTERACTIVE_CLEAR:
+            actions.append(
+                {
+                    "type": "interactive_clear",
+                    "eventId": str(event.id),
+                    "stepId": step_id,
+                    **metadata,
+                }
+            )
             continue
 
         if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:

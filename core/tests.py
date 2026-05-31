@@ -338,6 +338,53 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(interactive["mode"], "graph")
         self.assertEqual(interactive["triggersEvent"], "second-destination")
 
+    def test_interactive_clear_action_can_run_in_action_sequence(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "actionType": EventActionStep.ActionType.INTERACTIVE,
+                    "config": {
+                        "config": {},
+                        "interactiveId": "delivery_data",
+                        "mode": "table",
+                        "title": "Delivery data",
+                    },
+                    "enabled": True,
+                    "id": "mount",
+                    "sortOrder": 0,
+                },
+                {
+                    "actionType": EventActionStep.ActionType.INTERACTIVE_CLEAR,
+                    "config": {},
+                    "enabled": True,
+                    "id": "clear",
+                    "sortOrder": 1,
+                },
+            ],
+        )
+
+        self.assertEqual(messages, [])
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(
+            [action["type"] for action in actions],
+            ["interactive", "interactive_clear"],
+        )
+        state = apply_runtime_actions_to_state({}, actions)
+        self.assertIsNone(state["uiRuntime"]["interactive"])
+        self.assertEqual(state["uiRuntime"]["interactiveState"], {})
+
     def test_script_image_and_overlay_markers_emit_runtime_cues(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,

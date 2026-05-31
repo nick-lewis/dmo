@@ -108,6 +108,7 @@ class EventActionStep(models.Model):
         HIGHLIGHT_OFF = "highlight_off", "Highlight off"
         INTERACTIVE = "interactive", "Interactive"
         INTERACTIVE_UPDATE = "interactive_update", "Update interactive"
+        INTERACTIVE_CLEAR = "interactive_clear", "Clear interactive"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
         GOTO_EVENT = "goto_event", "Go to event"
         BUTTON_CHOICE = "button_choice", "Button choice"
