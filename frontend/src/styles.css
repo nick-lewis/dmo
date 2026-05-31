@@ -3258,8 +3258,7 @@ button {
   gap: 10px;
 }
 
-.interactive-response-row label,
-.generic-interactive textarea {
+.interactive-response-row label {
   display: grid;
   gap: 4px;
   min-width: min(260px, 100%);
@@ -3268,8 +3267,7 @@ button {
   font-weight: 820;
 }
 
-.interactive-response-row input,
-.generic-interactive textarea {
+.interactive-response-row input {
   min-height: 36px;
   padding: 6px 9px;
   border: 1px solid rgba(72, 101, 113, 0.22);
@@ -3278,12 +3276,6 @@ button {
   background: #ffffff;
   font-size: 0.88rem;
   font-weight: 720;
-}
-
-.generic-interactive textarea {
-  width: min(680px, 100%);
-  min-height: 112px;
-  resize: vertical;
 }
 
 .interactive-primary-action {

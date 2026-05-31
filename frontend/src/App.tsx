@@ -12285,34 +12285,12 @@ function InteractiveWorkspace({
 
   return (
     <div className="interactive-workspace">
-      <div className="interactive-shell generic-interactive">
+      <div className="interactive-shell unavailable-interactive">
         <div className="interactive-header">
-          <span>{interactive.interactiveId}</span>
-          <strong>{interactive.title}</strong>
+          <span>{interactive.interactiveId || "app"}</span>
+          <strong>App unavailable</strong>
         </div>
-        {interactive.prompt ? <p>{interactive.prompt}</p> : null}
-        <textarea
-          aria-label={`${interactive.title} response`}
-          onChange={(event) =>
-            host.setState({ ...state, response: event.target.value })
-          }
-          placeholder="---"
-          value={typeof state.response === "string" ? state.response : ""}
-        />
-        {interactive.triggersEvent ? (
-          <button
-            className="interactive-primary-action"
-            onClick={() =>
-              host.submit({
-                ...state,
-                completedAt: new Date().toISOString(),
-              })
-            }
-            type="button"
-          >
-            Done
-          </button>
-        ) : null}
+        <p>This main-panel app is not registered in the app code.</p>
       </div>
     </div>
   );
