@@ -10120,6 +10120,8 @@ function TutorControls({
       : sampleStatus === "loading"
         ? "Loading voice sample"
         : "Play voice sample";
+  const actionOffsetHelp =
+    "Shifts every timed action inside scripted speech. Negative values fire actions earlier; positive values fire them later.";
   const closeAvatarPickerOnBlur = (event: FocusEvent<HTMLDivElement>) => {
     const nextFocus = event.relatedTarget as Node | null;
     if (!nextFocus || !event.currentTarget.contains(nextFocus)) {
@@ -10268,9 +10270,10 @@ function TutorControls({
           </select>
         </label>
 
-        <label className="control-field offset-field">
-          <span>Action offset</span>
+        <label className="control-field offset-field" title={actionOffsetHelp}>
+          <span title={actionOffsetHelp}>Action offset</span>
           <input
+            aria-label="Script action timing offset in milliseconds"
             max={3000}
             min={-3000}
             onChange={(event) => {
@@ -10280,6 +10283,7 @@ function TutorControls({
               );
             }}
             step={10}
+            title={actionOffsetHelp}
             type="number"
             value={tutor.scriptActionOffsetMs}
           />
