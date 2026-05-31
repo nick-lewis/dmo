@@ -3122,6 +3122,17 @@ button {
   color: rgba(31, 37, 41, 0.62);
 }
 
+.runtime-inspector-route-source {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(31, 37, 41, 0.42);
+  font-size: 0.58rem;
+  font-weight: 690;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .runtime-inspector-row code.runtime-inspector-value {
   display: inline-flex;
   align-items: center;

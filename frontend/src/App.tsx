@@ -11611,10 +11611,21 @@ function RuntimeInspectorPanel({
                   key={`${link.kind}-${link.slug}-${index}`}
                 >
                   <span>{link.kind}</span>
-                  <code>
+                  <code
+                    title={[
+                      eventTitleForTrigger(events, link.slug) || link.slug,
+                      link.source ? `from ${link.source}` : "",
+                      link.condition ? `if ${link.condition}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" / ")}
+                  >
                     {eventTitleForTrigger(events, link.slug) || link.slug}
                     {link.condition ? ` if ${link.condition}` : ""}
                   </code>
+                  <small className="runtime-inspector-route-source">
+                    {link.source}
+                  </small>
                 </div>
               ))}
             </div>
