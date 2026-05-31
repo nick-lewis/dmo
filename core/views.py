@@ -2586,6 +2586,54 @@ def append_runtime_debug_trace(state, actions):
     return state
 
 
+def runtime_context_action_key(action):
+    raw_key = action.get("key", "")
+    if not isinstance(raw_key, str):
+        return ""
+    key = raw_key.strip()
+    if not key or len(key) > 120:
+        return ""
+    return key
+
+
+def apply_runtime_actions_to_context(runtime_context, actions):
+    next_context = dict(runtime_context or {})
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+
+        action_type = str(action.get("type", "") or "")
+        key = runtime_context_action_key(action)
+        if not key:
+            continue
+
+        if action_type == "set_context":
+            action["key"] = key
+            next_context[key] = action.get("value")
+            continue
+
+        if action_type == "append_context_list":
+            current_value = next_context.get(key)
+            if isinstance(current_value, list):
+                next_values = list(current_value)
+            elif current_value in (None, ""):
+                next_values = []
+            else:
+                next_values = [current_value]
+
+            next_value = action.get("value")
+            appended = False
+            if not any(values_match(item, next_value) for item in next_values):
+                next_values.append(next_value)
+                appended = True
+            next_context[key] = next_values
+            action["appended"] = appended
+            action["key"] = key
+            action["list"] = next_values
+
+    return next_context
+
+
 def apply_runtime_actions_to_state(
     state,
     actions,
@@ -4788,7 +4836,6 @@ def update_session_interactive(request, session_id):
                 status=409,
             )
 
-        runtime_context = dict(session.runtime_context or {})
         actions = [
             {
                 "interactiveId": interactive_id,
@@ -4799,7 +4846,6 @@ def update_session_interactive(request, session_id):
 
         for key, value in context_values.items():
             context_key = key.strip()
-            runtime_context[context_key] = value
             actions.append(
                 {
                     "key": context_key,
@@ -4809,6 +4855,10 @@ def update_session_interactive(request, session_id):
             )
 
         actions.extend(emitted_actions)
+        runtime_context = apply_runtime_actions_to_context(
+            session.runtime_context,
+            actions,
+        )
         state = apply_runtime_actions_to_state(state, actions)
         session.runtime_context = runtime_context
         session.runtime_state = state
