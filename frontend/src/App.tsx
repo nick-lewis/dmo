@@ -402,6 +402,9 @@ type MessageAudioPayload = {
   messageId: string;
   realtimeModel: RealtimeModelId;
   scriptCues?: ScriptCue[];
+  scriptWords?: ScriptWord[];
+  timingModel?: string;
+  timingWarning?: string;
   ttsModel: string;
   voice: RealtimeVoiceId;
 };
@@ -409,6 +412,14 @@ type MessageAudioPayload = {
 type ScriptCue = {
   action: Record<string, unknown>;
   progress: number;
+  time?: number;
+  wordIndex?: number;
+};
+
+type ScriptWord = {
+  end: number;
+  start: number;
+  word: string;
 };
 
 type StoredPanelLayout = {
@@ -562,6 +573,46 @@ function scriptStreamIndexAt(text: string, progress: number) {
   }
 
   return rawIndex;
+}
+
+type ScriptWordRevealPoint = {
+  index: number;
+  time: number;
+};
+
+function scriptWordRevealPoints(text: string, words: ScriptWord[]) {
+  const textWords = [...text.matchAll(/\S+/g)];
+  const pointCount = Math.min(textWords.length, words.length);
+  const points: ScriptWordRevealPoint[] = [];
+
+  for (let index = 0; index < pointCount; index += 1) {
+    const match = textWords[index];
+    const matchIndex = match.index ?? 0;
+    points.push({
+      index: matchIndex + match[0].length,
+      time: words[index].start,
+    });
+  }
+
+  if (points.length && points[points.length - 1].index < text.length) {
+    points.push({
+      index: text.length,
+      time: words[Math.min(pointCount, words.length) - 1]?.end ?? 0,
+    });
+  }
+
+  return points;
+}
+
+function scriptStreamIndexAtAudioTime(points: ScriptWordRevealPoint[], time: number) {
+  if (!points.length) return 0;
+
+  let nextIndex = 0;
+  for (const point of points) {
+    if (time + 0.015 < point.time) break;
+    nextIndex = point.index;
+  }
+  return nextIndex;
 }
 
 function spokenScriptText(text: string) {
@@ -1246,7 +1297,7 @@ function scriptCuesFromValue(value: unknown): ScriptCue[] {
   if (!Array.isArray(value)) return [];
 
   return value
-    .map((item) => {
+    .map((item): ScriptCue | null => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return null;
 
       const cue = item as Record<string, unknown>;
@@ -1254,13 +1305,73 @@ function scriptCuesFromValue(value: unknown): ScriptCue[] {
       if (!action || typeof action !== "object" || Array.isArray(action)) return null;
 
       const rawProgress = Number(cue.progress);
-      return {
+      const rawTime = Number(cue.time);
+      const rawWordIndex = Number(cue.wordIndex);
+      const parsedCue: ScriptCue = {
         action: action as Record<string, unknown>,
         progress: Number.isFinite(rawProgress) ? clamp(rawProgress, 0, 1) : 0,
       };
+      if (Number.isFinite(rawTime) && rawTime >= 0) {
+        parsedCue.time = rawTime;
+      }
+      if (Number.isFinite(rawWordIndex) && rawWordIndex >= 0) {
+        parsedCue.wordIndex = Math.floor(rawWordIndex);
+      }
+      return parsedCue;
     })
     .filter((cue): cue is ScriptCue => Boolean(cue))
-    .sort((left, right) => left.progress - right.progress);
+    .sort((left, right) => {
+      const leftSort =
+        typeof left.time === "number" ? left.time : left.progress * 100000;
+      const rightSort =
+        typeof right.time === "number" ? right.time : right.progress * 100000;
+      return leftSort - rightSort;
+    });
+}
+
+function scriptWordsFromValue(value: unknown): ScriptWord[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+
+      const word = item as Record<string, unknown>;
+      const text = typeof word.word === "string" ? word.word.trim() : "";
+      const start = Number(word.start);
+      const end = Number(word.end);
+      if (!text || !Number.isFinite(start) || !Number.isFinite(end)) return null;
+
+      return {
+        end: Math.max(start, end),
+        start: Math.max(0, start),
+        word: text,
+      };
+    })
+    .filter((word): word is ScriptWord => Boolean(word))
+    .sort((left, right) => left.start - right.start);
+}
+
+function scriptCueTime(cue: ScriptCue, fallbackDurationSeconds: number) {
+  if (typeof cue.time === "number" && Number.isFinite(cue.time)) {
+    return cue.time;
+  }
+  return fallbackDurationSeconds * cue.progress;
+}
+
+function scriptCueNeedsTiming(cue: ScriptCue) {
+  return cue.progress > scriptImmediateCueProgress && typeof cue.time !== "number";
+}
+
+function scriptCueImageUrls(cues: ScriptCue[]) {
+  const urls = new Set<string>();
+  cues.forEach((cue) => {
+    const action = cue.action;
+    if (action.type !== "gslide") return;
+    const imageUrl = typeof action.imageUrl === "string" ? action.imageUrl : "";
+    if (imageUrl) urls.add(imageUrl);
+  });
+  return [...urls];
 }
 
 function scriptCuesFromMessage(
@@ -1299,6 +1410,10 @@ function cachedScriptAudioFromMessage(
       typeof audio.messageId === "string" ? audio.messageId : message.id,
     realtimeModel: realtimeModel as RealtimeModelId,
     scriptCues: scriptCuesFromMessage(message),
+    scriptWords: scriptWordsFromValue(audio.scriptWords),
+    timingModel: typeof audio.timingModel === "string" ? audio.timingModel : "",
+    timingWarning:
+      typeof audio.timingWarning === "string" ? audio.timingWarning : "",
     ttsModel: typeof audio.ttsModel === "string" ? audio.ttsModel : "",
     voice: voice as RealtimeVoiceId,
   };
@@ -6783,7 +6898,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
         setResolvedSlide({
           cached: slide.cached,
-          imageUrl: `${slide.imageUrl}?v=${Date.now()}`,
+          imageUrl: slide.imageUrl,
           pageId: slide.pageId,
           presentationId: slide.presentationId,
           slideRef: slide.slideRef,
@@ -7592,9 +7707,48 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     });
   }
 
-  function streamScriptMessageText(message: ChatMessage, durationMs: number) {
+  function preloadScriptCueAssets(cues: ScriptCue[]) {
+    const urls = scriptCueImageUrls(cues);
+    if (!urls.length) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      let remaining = urls.length;
+      let isDone = false;
+      let timeoutId = 0;
+
+      const finishOne = () => {
+        remaining -= 1;
+        if (remaining <= 0 && !isDone) {
+          isDone = true;
+          window.clearTimeout(timeoutId);
+          resolve();
+        }
+      };
+      timeoutId = window.setTimeout(() => {
+        if (isDone) return;
+        isDone = true;
+        resolve();
+      }, 1800);
+
+      urls.forEach((url) => {
+        const image = new Image();
+        image.onload = finishOne;
+        image.onerror = finishOne;
+        image.src = url;
+      });
+    });
+  }
+
+  function streamScriptMessageText(
+    message: ChatMessage,
+    durationMs: number,
+    audio?: HTMLAudioElement,
+    words: ScriptWord[] = [],
+  ) {
     const fullText = message.content;
     if (!fullText.trim()) return Promise.resolve();
+    const revealPoints =
+      audio && words.length ? scriptWordRevealPoints(fullText, words) : [];
 
     setMessages((current) =>
       current.map((currentMessage) =>
@@ -7614,6 +7768,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     return new Promise<void>((resolve) => {
       let timeoutId = 0;
+      let frameId = 0;
       let isDone = false;
       const startedAt = performance.now();
 
@@ -7621,6 +7776,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (isDone) return;
         isDone = true;
         window.clearTimeout(timeoutId);
+        window.cancelAnimationFrame(frameId);
         if (scriptTextSkipRef.current === finish) {
           scriptTextSkipRef.current = null;
         }
@@ -7645,9 +7801,17 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       const tick = () => {
         if (isDone) return;
 
-        const elapsed = performance.now() - startedAt;
-        const progress = Math.min(1, elapsed / durationMs);
-        const nextIndex = scriptStreamIndexAt(fullText, progress);
+        let progress = 0;
+        let nextIndex = 0;
+
+        if (audio && revealPoints.length) {
+          nextIndex = scriptStreamIndexAtAudioTime(revealPoints, audio.currentTime);
+          progress = nextIndex >= fullText.length || audio.ended ? 1 : 0;
+        } else {
+          const elapsed = performance.now() - startedAt;
+          progress = Math.min(1, elapsed / durationMs);
+          nextIndex = scriptStreamIndexAt(fullText, progress);
+        }
 
         setMessages((current) =>
           current.map((currentMessage) =>
@@ -7670,7 +7834,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           return;
         }
 
-        timeoutId = window.setTimeout(tick, 40);
+        if (audio && revealPoints.length) {
+          frameId = window.requestAnimationFrame(tick);
+        } else {
+          timeoutId = window.setTimeout(tick, 40);
+        }
       };
 
       scriptTextSkipRef.current = finish;
@@ -7688,19 +7856,23 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       let isDone = false;
       let cueIndex = 0;
       let timingFrame = 0;
-      const cueList = [...cues].sort((left, right) => left.progress - right.progress);
 
       const currentAudioDuration = () =>
         Number.isFinite(audio.duration) && audio.duration > 0
           ? audio.duration
           : fallbackDurationSeconds;
+      const cueList = [...cues].sort(
+        (left, right) =>
+          scriptCueTime(left, currentAudioDuration()) -
+          scriptCueTime(right, currentAudioDuration()),
+      );
 
       const runDueCues = (currentTime: number, runAll = false) => {
         const audioDuration = currentAudioDuration();
         while (cueIndex < cueList.length) {
           const cue = cueList[cueIndex];
-          const cueTime = audioDuration * cue.progress;
-          if (!runAll && currentTime + 0.05 < cueTime) break;
+          const cueTime = scriptCueTime(cue, audioDuration);
+          if (!runAll && currentTime + 0.015 < cueTime) break;
 
           cueIndex += 1;
           applyRuntimeActions([cue.action]);
@@ -7774,6 +7946,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     audioUrl: string,
     cueValue?: unknown,
     durationSeconds?: number | null,
+    wordValue?: unknown,
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
@@ -7783,13 +7956,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     );
     const fallbackDurationSeconds = durationMs / 1000;
 
-    void waitForAudioMetadata(audio);
+    const allCues = scriptCuesFromMessage(message, cueValue);
+    const words = scriptWordsFromValue(wordValue);
+    await Promise.all([
+      waitForAudioMetadata(audio),
+      preloadScriptCueAssets(allCues),
+    ]);
 
-    const cues = scriptCuesFromMessage(message, cueValue).filter(
+    const cues = allCues.filter(
       (cue) => cue.progress > scriptImmediateCueProgress,
     );
     await Promise.all([
-      streamScriptMessageText(message, durationMs),
+      streamScriptMessageText(message, durationMs, audio, words),
       playPreparedScriptAudio(audio, cues, fallbackDurationSeconds),
     ]);
   }
@@ -7826,10 +8004,20 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
       try {
         let payload = cachedScriptAudioFromMessage(message);
+        const messageCues = scriptCuesFromMessage(message);
+        const needsAlignedTiming =
+          !payload?.scriptWords?.length ||
+          (messageCues.some(scriptCueNeedsTiming) &&
+            !payload.scriptCues?.every(
+              (cue) =>
+                cue.progress <= scriptImmediateCueProgress ||
+                typeof cue.time === "number",
+            ));
         if (
           !payload ||
           payload.realtimeModel !== selectedModel ||
-          payload.voice !== selectedVoice
+          payload.voice !== selectedVoice ||
+          needsAlignedTiming
         ) {
           payload = await apiFetch<MessageAudioPayload>(
             `/api/sessions/${activeSession.id}/messages/${message.id}/audio/`,
@@ -7842,11 +8030,15 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             },
           );
         }
+        if (payload.timingWarning) {
+          setChatError(payload.timingWarning);
+        }
         await playScriptMessage(
           message,
           payload.audioUrl,
           payload.scriptCues,
           payload.durationSeconds,
+          payload.scriptWords,
         );
       } catch (error) {
         scriptTextSkipRef.current?.();

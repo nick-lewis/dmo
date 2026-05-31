@@ -20,10 +20,12 @@ import requests
 
 from .audio_cache import (
     AudioGenerationError,
+    AudioTimingError,
     OPENAI_CHAT_COMPLETIONS_URL,
     audio_duration_seconds,
     compute_script_audio_cache_key,
     get_or_create_script_audio,
+    get_or_create_script_audio_words,
     get_or_create_voice_sample,
     openai_error_message,
     script_audio_audio_path,
@@ -109,10 +111,15 @@ SCRIPT_MARKER_PATTERN = re.compile(
     ),
     re.IGNORECASE,
 )
+SCRIPT_WORD_PATTERN = re.compile(r"\S+")
 
 
 def normalize_script_speech(text):
     return " ".join(str(text or "").split())
+
+
+def script_word_count(text):
+    return len(SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text)))
 
 
 def parse_script_marker_args(args_text):
@@ -149,11 +156,13 @@ def parse_script_markers(script_text):
 
     for match in SCRIPT_MARKER_PATTERN.finditer(script_text or ""):
         parts.append(script_text[last_end : match.start()])
+        spoken_so_far = normalize_script_speech("".join(parts))
         markers.append(
             {
                 "args": parse_script_marker_args(match.group(2)),
-                "charIndex": len(normalize_script_speech("".join(parts))),
+                "charIndex": len(spoken_so_far),
                 "markerType": match.group(1).lower(),
+                "wordIndex": script_word_count(spoken_so_far),
             }
         )
         last_end = match.end()
@@ -164,6 +173,50 @@ def parse_script_markers(script_text):
     for marker in markers:
         marker["progress"] = min(1, max(0, marker["charIndex"] / total_chars))
     return spoken_text, markers
+
+
+def script_cue_time_from_words(cue, words):
+    if not words:
+        return None
+
+    if "wordIndex" in cue:
+        try:
+            word_index = int(cue.get("wordIndex", 0) or 0)
+        except (TypeError, ValueError):
+            word_index = None
+    else:
+        word_index = None
+
+    if word_index is None:
+        try:
+            progress = float(cue.get("progress", 0) or 0)
+        except (TypeError, ValueError):
+            progress = 0
+        duration = float(words[-1].get("end", 0) or 0)
+        return round(max(0.0, duration * min(1.0, max(0.0, progress))), 3)
+
+    if word_index <= 0:
+        return 0.0
+    if word_index >= len(words):
+        return round(float(words[-1].get("end", 0) or 0), 3)
+    return round(float(words[word_index].get("start", 0) or 0), 3)
+
+
+def script_cues_with_word_times(cues, words):
+    if not isinstance(cues, list):
+        return []
+
+    timed_cues = []
+    for cue in cues:
+        if not isinstance(cue, dict):
+            continue
+
+        next_cue = dict(cue)
+        cue_time = script_cue_time_from_words(next_cue, words)
+        if cue_time is not None:
+            next_cue["time"] = cue_time
+        timed_cues.append(next_cue)
+    return timed_cues
 
 
 def resolve_script_marker_action(marker, config, runtime_context):
@@ -1834,6 +1887,7 @@ def run_action_sequence(
                     {
                         "action": action,
                         "progress": marker.get("progress", 0),
+                        "wordIndex": marker.get("wordIndex", 0),
                     }
                 )
             if not text:
@@ -4192,14 +4246,53 @@ def create_message_audio(request, session_id, message_id):
     except AudioGenerationError as error:
         return JsonResponse({"detail": error.message}, status=error.status_code)
 
+    duration_seconds = audio_duration_seconds(recording.audio_path)
+    script_words = []
+    script_cues = metadata.get("scriptCues", [])
+    timing_warning = ""
+    try:
+        script_words = get_or_create_script_audio_words(
+            api_key=settings.OPENAI_API_KEY,
+            alignment_model=settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+            audio_path=recording.audio_path,
+            cache_key=recording.cache_key,
+            safety_identifier=hash_safety_identifier(request.user),
+            script=script,
+        )
+        script_cues = script_cues_with_word_times(script_cues, script_words)
+        next_metadata = dict(metadata)
+        next_metadata["scriptCues"] = script_cues
+        script_audio = dict(next_metadata.get("scriptAudio") or {})
+        script_audio.update(
+            {
+                "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
+                "cached": recording.cached,
+                "durationSeconds": duration_seconds,
+                "messageId": str(message.id),
+                "realtimeModel": realtime_model,
+                "scriptWords": script_words,
+                "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+                "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+                "voice": voice,
+            }
+        )
+        next_metadata["scriptAudio"] = script_audio
+        message.metadata = next_metadata
+        message.save(update_fields=["metadata"])
+    except AudioTimingError as error:
+        timing_warning = error.message
+
     return JsonResponse(
         {
             "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
             "cached": recording.cached,
-            "durationSeconds": audio_duration_seconds(recording.audio_path),
+            "durationSeconds": duration_seconds,
             "messageId": str(message.id),
             "realtimeModel": realtime_model,
-            "scriptCues": metadata.get("scriptCues", []),
+            "scriptCues": script_cues,
+            "scriptWords": script_words,
+            "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+            "timingWarning": timing_warning,
             "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
             "voice": voice,
         }

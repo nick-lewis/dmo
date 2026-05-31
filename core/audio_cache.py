@@ -10,11 +10,20 @@ from django.conf import settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
+OPENAI_AUDIO_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v2"
 SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v1"
+SCRIPT_AUDIO_TIMING_VERSION = "script-audio-timing-v1"
 
 
 class AudioGenerationError(Exception):
+    def __init__(self, message, status_code=502):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+class AudioTimingError(Exception):
     def __init__(self, message, status_code=502):
         super().__init__(message)
         self.message = message
@@ -62,6 +71,18 @@ def script_audio_audio_path(cache_key):
 
 def script_audio_metadata_path(cache_key):
     return script_audio_cache_dir() / f"{cache_key}.json"
+
+
+def safe_cache_part(value):
+    return "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in str(value or "")
+    ).strip("_") or "default"
+
+
+def script_audio_words_path(cache_key, alignment_model):
+    model_part = safe_cache_part(alignment_model)
+    return script_audio_cache_dir() / f"{cache_key}.{model_part}.words.json"
 
 
 def wav_data_size(audio_path):
@@ -191,6 +212,15 @@ def openai_headers(api_key, safety_identifier):
     return headers
 
 
+def openai_auth_headers(api_key, safety_identifier):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+    if safety_identifier:
+        headers["OpenAI-Safety-Identifier"] = safety_identifier
+    return headers
+
+
 def build_exact_speech_instructions(voice_instructions):
     base = (
         "Read the provided script exactly as written. Do not add greetings, "
@@ -279,6 +309,114 @@ def generate_speech_audio(
     if not response.content:
         raise AudioGenerationError("OpenAI returned an empty audio file.")
     return response.content
+
+
+def normalize_transcription_words(value):
+    if not isinstance(value, list):
+        return []
+
+    words = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        word = str(item.get("word", "")).strip()
+        if not word:
+            continue
+
+        try:
+            start = float(item.get("start", 0) or 0)
+            end = float(item.get("end", start) or start)
+        except (TypeError, ValueError):
+            continue
+
+        start = max(0.0, start)
+        end = max(start, end)
+        words.append(
+            {
+                "word": word,
+                "start": round(start, 3),
+                "end": round(end, 3),
+            }
+        )
+
+    return words
+
+
+def transcribe_script_audio_words(
+    *,
+    api_key,
+    alignment_model,
+    audio_path,
+    safety_identifier,
+    script,
+):
+    try:
+        with audio_path.open("rb") as audio_file:
+            response = requests.post(
+                OPENAI_AUDIO_TRANSCRIPTIONS_URL,
+                headers=openai_auth_headers(api_key, safety_identifier),
+                files={"file": (audio_path.name, audio_file, "audio/wav")},
+                data=[
+                    ("model", alignment_model),
+                    ("response_format", "verbose_json"),
+                    ("timestamp_granularities[]", "word"),
+                    ("language", "en"),
+                    ("prompt", script[:1200]),
+                ],
+                timeout=120,
+            )
+    except (OSError, requests.RequestException) as error:
+        raise AudioTimingError("Could not reach OpenAI to align script audio.") from error
+
+    if response.status_code >= 400:
+        raise AudioTimingError(
+            openai_error_message(response, "OpenAI could not align script audio."),
+            502 if response.status_code in {401, 403} or response.status_code >= 500 else response.status_code,
+        )
+
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise AudioTimingError("OpenAI returned unreadable script audio timing.") from error
+
+    words = normalize_transcription_words(payload.get("words"))
+    if not words:
+        raise AudioTimingError("OpenAI returned no word timings for script audio.")
+    return words
+
+
+def get_or_create_script_audio_words(
+    *,
+    api_key,
+    alignment_model,
+    audio_path,
+    cache_key,
+    safety_identifier,
+    script,
+):
+    alignment_model = (alignment_model or "whisper-1").strip() or "whisper-1"
+    words_path = script_audio_words_path(cache_key, alignment_model)
+
+    if words_path.exists():
+        try:
+            words = normalize_transcription_words(
+                json.loads(words_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError):
+            words = []
+        if words:
+            return words
+
+    words = transcribe_script_audio_words(
+        api_key=api_key,
+        alignment_model=alignment_model,
+        audio_path=audio_path,
+        safety_identifier=safety_identifier,
+        script=script,
+    )
+    words_path.write_text(json.dumps(words, indent=2), encoding="utf-8")
+    return words
 
 
 def get_or_create_voice_sample(

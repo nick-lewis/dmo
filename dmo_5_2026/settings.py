@@ -272,6 +272,9 @@ DLU_SCRIPT_AUDIO_TTS_MODEL = (
     os.environ.get("DLU_SCRIPT_AUDIO_TTS_MODEL", "").strip()
     or DLU_VOICE_SAMPLE_TTS_MODEL
 )
+DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL = (
+    os.environ.get("DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL", "").strip() or "whisper-1"
+)
 DLU_CLASSIFICATION_DEFAULT_MODEL = (
     os.environ.get("DLU_CLASSIFICATION_DEFAULT_MODEL", "").strip()
     or os.environ.get("DLU_CONVERSATION_CHECK_MODEL", "").strip()
