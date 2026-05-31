@@ -6389,7 +6389,7 @@ def run_session_conversation_checks(request, session_id):
                     actions.extend(step_actions)
                     messages.extend(event_messages)
 
-            handled = bool(check.handler_actions or next_event_slug)
+            handled = bool(next_event_slug or handler_messages)
             if handled:
                 break
 

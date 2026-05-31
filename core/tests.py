@@ -1311,6 +1311,64 @@ class ConversationRuntimeTests(TestCase):
             )
         )
 
+    def test_conversation_check_context_only_handler_does_not_block_chat(self):
+        EventConversationCheck.objects.create(
+            event=self.chat_event,
+            title="Track confidence",
+            instructions="Detect whether the learner gave a confidence estimate.",
+            result_context_key="confidence_detected",
+            handler_actions=[
+                {
+                    "id": "save-confidence-state",
+                    "actionType": "set_context",
+                    "label": "Save confidence state",
+                    "config": {"key": "last_confidence_check", "value": "matched"},
+                    "condition": {},
+                    "enabled": True,
+                    "sortOrder": 0,
+                }
+            ],
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        SessionMessage.objects.create(
+            session=session,
+            role=SessionMessage.Role.USER,
+            content="I am about 80 percent sure.",
+            sequence=1,
+        )
+        self.client.force_login(self.user)
+
+        with patch(
+            "core.views.evaluate_conversation_check",
+            return_value=({"result": True, "reason": "confidence supplied"}, ""),
+        ):
+            response = self.client.post(
+                f"/api/sessions/{session.id}/conversation-checks/run/",
+                data=json.dumps({"uiState": {}}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["handled"])
+        self.assertEqual(payload["ranEvents"], [])
+
+        session.refresh_from_db()
+        self.assertEqual(session.runtime_state["currentEventSlug"], "fruit-chat")
+        self.assertEqual(session.runtime_context["confidence_detected"], "true")
+        self.assertEqual(session.runtime_context["last_confidence_check"], "matched")
+        self.assertTrue(
+            any(
+                action.get("type") == "set_context"
+                and action.get("key") == "last_confidence_check"
+                for action in payload["actions"]
+            )
+        )
+
     def test_classifier_group_runs_classifiers_in_parallel(self):
         group = EventClassifierGroup.objects.create(
             event=self.chat_event,
