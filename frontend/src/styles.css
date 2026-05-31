@@ -43,6 +43,7 @@ button {
   --page-bg-2: #ffffff;
   --page-ink: #17212b;
   --muted-ink: #697683;
+  --placeholder-ink: rgba(105, 118, 131, 0.28);
   --panel-bg: rgba(255, 255, 255, 0.72);
   --panel-bg-strong: #ffffff;
   --panel-border: rgba(44, 58, 75, 0.16);
@@ -80,6 +81,7 @@ button {
   --page-bg-2: #191d24;
   --page-ink: #f3f5f7;
   --muted-ink: #9ba5b1;
+  --placeholder-ink: rgba(155, 165, 177, 0.38);
   --panel-bg: #181c22;
   --panel-bg-strong: #202630;
   --panel-border: rgba(238, 243, 248, 0.14);
@@ -135,6 +137,7 @@ button {
   --page-bg-2: #ffffff;
   --page-ink: #15252d;
   --muted-ink: #60747c;
+  --placeholder-ink: rgba(96, 116, 124, 0.26);
   --panel-bg: rgba(255, 255, 255, 0.86);
   --panel-bg-strong: var(--dl-white);
   --panel-border: rgba(35, 123, 148, 0.2);
@@ -155,6 +158,7 @@ button {
   --page-bg-2: #ffffff;
   --page-ink: #1f2529;
   --muted-ink: #6c7478;
+  --placeholder-ink: rgba(108, 116, 120, 0.26);
   --panel-bg: rgba(255, 255, 255, 0.78);
   --panel-bg-strong: #ffffff;
   --panel-border: color-mix(in srgb, var(--dl-secondary) 18%, rgba(44, 58, 75, 0.14));
@@ -642,10 +646,10 @@ button {
   grid-template-columns:
     minmax(86px, auto)
     minmax(118px, 0.72fr)
-    minmax(88px, 0.48fr)
-    minmax(108px, 0.58fr)
-    minmax(96px, 0.52fr)
-    minmax(230px, 1.42fr);
+    minmax(98px, 0.5fr)
+    minmax(88px, 0.46fr)
+    minmax(214px, 1.36fr)
+    minmax(142px, 0.64fr);
   align-items: start;
 }
 
@@ -1265,7 +1269,7 @@ button {
 
 .event-detail-label,
 .event-inline-operator {
-  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  color: color-mix(in srgb, var(--muted-ink) 48%, transparent);
   font-size: 0.66rem;
   font-weight: 860;
 }
@@ -2884,6 +2888,12 @@ button {
 .composer-row input:disabled {
   cursor: default;
   opacity: 0.62;
+}
+
+.panel-study input::placeholder,
+.panel-study textarea::placeholder {
+  color: var(--placeholder-ink) !important;
+  opacity: 1 !important;
 }
 
 .composer-row button {

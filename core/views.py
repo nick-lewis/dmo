@@ -57,6 +57,7 @@ REALTIME_MODELS = {
 }
 CLASSIFICATION_MODELS = {
     "gpt-5.5",
+    "gpt-5.5-pro",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
@@ -1880,6 +1881,18 @@ def classifier_has_positive_result(payload):
     return False
 
 
+def classifier_chat_payload(model, messages, max_completion_tokens, response_format):
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_completion_tokens": max_completion_tokens,
+        "response_format": response_format,
+    }
+    if not str(model).strip().endswith("-pro"):
+        payload["reasoning_effort"] = "none"
+    return payload
+
+
 def evaluate_event_classifier(
     user,
     current_event,
@@ -1924,9 +1937,9 @@ def evaluate_event_classifier(
                 "Content-Type": "application/json",
                 "OpenAI-Safety-Identifier": hash_safety_identifier(user),
             },
-            json={
-                "model": model,
-                "messages": [
+            json=classifier_chat_payload(
+                model,
+                [
                     {
                         "role": "system",
                         "content": (
@@ -1936,8 +1949,8 @@ def evaluate_event_classifier(
                     },
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": 320,
-                "response_format": {
+                320,
+                {
                     "type": "json_schema",
                     "json_schema": {
                         "name": classifier_schema_name(classifier.name),
@@ -1945,7 +1958,7 @@ def evaluate_event_classifier(
                         "strict": True,
                     },
                 },
-            },
+            ),
             timeout=45,
         )
     except requests.RequestException:
@@ -2111,9 +2124,9 @@ def evaluate_conversation_check(session, check):
                 "Content-Type": "application/json",
                 "OpenAI-Safety-Identifier": hash_safety_identifier(session.user),
             },
-            json={
-                "model": model,
-                "messages": [
+            json=classifier_chat_payload(
+                model,
+                [
                     {
                         "role": "system",
                         "content": (
@@ -2123,9 +2136,9 @@ def evaluate_conversation_check(session, check):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": 180,
-                "response_format": {"type": "json_object"},
-            },
+                180,
+                {"type": "json_object"},
+            ),
             timeout=45,
         )
     except requests.RequestException:

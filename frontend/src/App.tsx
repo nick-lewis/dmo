@@ -26,6 +26,7 @@ const classificationModelOptions = [
   { id: "gpt-5.4-nano", label: "5.4 nano" },
   { id: "gpt-5.4", label: "5.4" },
   { id: "gpt-5.5", label: "5.5" },
+  { id: "gpt-5.5-pro", label: "5.5 pro" },
 ] as const;
 
 type ClassificationModelId = string;
@@ -1225,13 +1226,13 @@ function eventConditionSummary(condition: StepConditionDraft) {
   if (condition.type !== "context_equals") return "";
 
   const key = condition.key.trim() || "context";
-  const value = condition.value.trim() || "value";
+  const value = condition.value.trim() || "expected";
   return `${key} == ${value}`;
 }
 
 function conditionValueSummary(value: unknown): string {
   if (typeof value === "boolean") return value ? "true" : "false";
-  return compactRuntimeValue(value, "value");
+  return compactRuntimeValue(value, "expected");
 }
 
 function conditionRecordSummary(condition: Record<string, unknown>): string {
@@ -2184,7 +2185,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const [eventSearch, setEventSearch] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
-  const [expandedStepId, setExpandedStepId] = useState("");
+  const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
     useState(false);
@@ -2209,6 +2210,48 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const conversationItemAddBlockRef = useRef<HTMLDivElement | null>(null);
   const conversationAddBlockRef = useRef<HTMLDivElement | null>(null);
   const conversationCheckAddBlockRef = useRef<HTMLDivElement | null>(null);
+
+  function isExpandedItem(id: string) {
+    return expandedItemIds.includes(id);
+  }
+
+  function openExpandedItem(id: string) {
+    setExpandedItemIds((current) =>
+      current.includes(id) ? current : [...current, id],
+    );
+  }
+
+  function closeExpandedItems(ids: string[]) {
+    setExpandedItemIds((current) =>
+      current.filter((expandedId) => !ids.includes(expandedId)),
+    );
+  }
+
+  function closeExpandedItem(id: string) {
+    closeExpandedItems([id]);
+  }
+
+  function resetExpandedItems() {
+    setExpandedItemIds([]);
+  }
+
+  function toggleExpandedItem(id: string) {
+    setExpandedItemIds((current) =>
+      current.includes(id)
+        ? current.filter((expandedId) => expandedId !== id)
+        : [...current, id],
+    );
+  }
+
+  function toggleExpandedParent(parentId: string, childIds: string[] = []) {
+    const expandedIds = [parentId, ...childIds];
+    const isOpen = expandedIds.some((id) => isExpandedItem(id));
+    if (isOpen) {
+      closeExpandedItems(expandedIds);
+      return;
+    }
+    openExpandedItem(parentId);
+  }
 
   function applyExperience(nextExperience: Experience) {
     const selectedEvent = getSelectedExperienceEvent(
@@ -3226,7 +3269,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       ],
     }));
-    setExpandedStepId(actionId);
+    openExpandedItem(actionId);
     setConversationAddMenuToolId("");
   }
 
@@ -3336,7 +3379,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       ],
     }));
-    setExpandedStepId(actionId);
+    openExpandedItem(actionId);
     setConversationAddMenuCheckId("");
   }
 
@@ -3480,7 +3523,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       ],
     }));
-    setExpandedStepId(actionId);
+    openExpandedItem(actionId);
     setConversationAddMenuCheckId("");
   }
 
@@ -3511,7 +3554,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const nextEvent = getSelectedExperienceEvent(experience, nextEventId);
     setSelectedEventId(nextEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(nextEvent));
-    setExpandedStepId("");
+    resetExpandedItems();
     setDraggingStepId("");
     setIsEventAddMenuOpen(false);
     setIsConversationAddMenuOpen(false);
@@ -3543,7 +3586,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
-      setExpandedStepId("");
+      resetExpandedItems();
       setDraggingStepId("");
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
@@ -3590,7 +3633,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         nextSortedSteps.find((step) => !existingStepIds.has(step.id)) ??
         nextSortedSteps[nextSortedSteps.length - 1];
       if (newStep) {
-        setExpandedStepId(newStep.id);
+        openExpandedItem(newStep.id);
       }
       setIsEventAddMenuOpen(false);
     } catch (createError) {
@@ -3672,7 +3715,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         payload.event.conversationChecks ?? [],
       ).find((check) => !existingCheckIds.has(check.id));
       if (nextCheck) {
-        setExpandedStepId(nextCheck.id);
+        openExpandedItem(nextCheck.id);
       }
       setIsConversationAddMenuOpen(false);
     } catch (createError) {
@@ -3711,7 +3754,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         payload.event.classifierGroups ?? [],
       ).find((group) => !existingGroupIds.has(group.id));
       if (nextGroup) {
-        setExpandedStepId(nextGroup.id);
+        openExpandedItem(nextGroup.id);
       }
       setIsConversationAddMenuOpen(false);
     } catch (createError) {
@@ -3812,9 +3855,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedEvent(payload.event);
-      if (expandedStepId === checkId) {
-        setExpandedStepId("");
-      }
+      closeExpandedItem(checkId);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -3841,9 +3882,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedEvent(payload.event);
-      if (expandedStepId === groupId) {
-        setExpandedStepId("");
-      }
+      closeExpandedItem(groupId);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -3896,9 +3935,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         },
       );
       applyUpdatedEvent(payload.event);
-      if (expandedStepId === stepId) {
-        setExpandedStepId("");
-      }
+      closeExpandedItem(stepId);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -4177,7 +4214,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               <input
                 aria-label="Condition context value"
                 onChange={(event) => updateCondition({ value: event.target.value })}
-                placeholder="yes"
+                placeholder="expected"
                 type="text"
                 value={step.condition.value}
               />
@@ -4219,7 +4256,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             aria-label="Speech text"
             className="event-script-textarea"
             onChange={(event) => updateConfig("text", event.target.value)}
+            onInput={(event) => resizeTextareaToContent(event.currentTarget)}
             placeholder="What the agent says..."
+            ref={resizeTextareaToContent}
             value={stringConfigValue(step.config, "text")}
           />
         ) : null}
@@ -4235,13 +4274,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               value={stringConfigValue(step.config, "key")}
             />
             <span className="event-inline-operator">=</span>
-            <input
-              aria-label="Context value"
-              onChange={(event) => updateConfig("value", event.target.value)}
-              placeholder="yes"
-              type="text"
-              value={stringConfigValue(step.config, "value")}
-            />
+              <input
+                aria-label="Context value"
+                onChange={(event) => updateConfig("value", event.target.value)}
+                placeholder="yes"
+                type="text"
+                value={stringConfigValue(step.config, "value")}
+              />
           </div>
         ) : null}
 
@@ -4256,13 +4295,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               value={stringConfigValue(step.config, "key")}
             />
             <span className="event-inline-operator">+=</span>
-            <input
-              aria-label="Context list value"
-              onChange={(event) => updateConfig("value", event.target.value)}
-              placeholder="banana"
-              type="text"
-              value={stringConfigValue(step.config, "value")}
-            />
+              <input
+                aria-label="Context list value"
+                onChange={(event) => updateConfig("value", event.target.value)}
+                placeholder="banana"
+                type="text"
+                value={stringConfigValue(step.config, "value")}
+              />
           </div>
         ) : null}
 
@@ -4637,7 +4676,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     <button
                       className="event-route-chip"
                       key={route.id}
-                      onClick={() => setExpandedStepId(route.id)}
+                      onClick={() => openExpandedItem(route.id)}
                       type="button"
                     >
                       <strong>{route.label}</strong>
@@ -4667,7 +4706,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               <div className="event-step-list">
                 {eventDraft.steps.map((step, index) => {
                   const conditionText = eventConditionSummary(step.condition);
-                  const isExpanded = expandedStepId === step.id;
+                  const isExpanded = isExpandedItem(step.id);
                   const toneClass = eventActionToneClass(step.actionType);
                   const triggerEventSlug = stringConfigValue(
                     step.config,
@@ -4709,9 +4748,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <button
                           aria-expanded={isExpanded}
                           className="event-step-summary"
-                          onClick={() =>
-                            setExpandedStepId(isExpanded ? "" : step.id)
-                          }
+                          onClick={() => toggleExpandedItem(step.id)}
                           type="button"
                         >
                           <span className="event-step-kind">
@@ -4727,7 +4764,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             className={`event-if-chip${
                               conditionText ? "" : " is-empty"
                             }`}
-                            onClick={() => setExpandedStepId(step.id)}
+                            onClick={() => openExpandedItem(step.id)}
                             title={
                               conditionText
                                 ? `Condition: ${conditionText}`
@@ -4795,7 +4832,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       value: event.target.value,
                                     })
                                   }
-                                  placeholder="yes"
+                                  placeholder="expected"
                                   type="text"
                                   value={step.condition.value}
                                 />
@@ -4858,7 +4895,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   event.target.value,
                                 )
                               }
+                              onInput={(event) =>
+                                resizeTextareaToContent(event.currentTarget)
+                              }
                               placeholder="What the agent says..."
+                              ref={resizeTextareaToContent}
                               value={stringConfigValue(step.config, "text")}
                             />
                           ) : null}
@@ -5174,10 +5215,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               <div className="event-step-list chat-exit-list">
                 {eventDraft.chatTools.map((tool) => {
                   const isHandlerActionExpanded = tool.handlerActions.some(
-                    (step) => step.id === expandedStepId,
+                    (step) => isExpandedItem(step.id),
                   );
                   const isExpanded =
-                    expandedStepId === tool.id || isHandlerActionExpanded;
+                    isExpandedItem(tool.id) || isHandlerActionExpanded;
                   const targetEventSlug = tool.triggersEvent;
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
@@ -5206,7 +5247,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
                             onClick={() =>
-                              setExpandedStepId(isExpanded ? "" : tool.id)
+                              toggleExpandedParent(
+                                tool.id,
+                                tool.handlerActions.map((step) => step.id),
+                              )
                             }
                             type="button"
                           >
@@ -5430,7 +5474,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     step.condition,
                                   );
                                   const isActionExpanded =
-                                    expandedStepId === step.id;
+                                    isExpandedItem(step.id);
                                   const toneClass = eventActionToneClass(
                                     step.actionType,
                                   );
@@ -5457,9 +5501,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
                                           onClick={() =>
-                                            setExpandedStepId(
-                                              isActionExpanded ? tool.id : step.id,
-                                            )
+                                            toggleExpandedItem(step.id)
                                           }
                                           type="button"
                                         >
@@ -5476,7 +5518,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                             className={`event-if-chip${
                                               conditionText ? "" : " is-empty"
                                             }`}
-                                            onClick={() => setExpandedStepId(step.id)}
+                                            onClick={() => openExpandedItem(step.id)}
                                             title={
                                               conditionText
                                                 ? `Condition: ${conditionText}`
@@ -5521,8 +5563,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 tool.id,
                                                 step.id,
                                               );
-                                              if (expandedStepId === step.id) {
-                                                setExpandedStepId(tool.id);
+                                              if (isExpandedItem(step.id)) {
+                                                closeExpandedItem(step.id);
+                                                openExpandedItem(tool.id);
                                               }
                                             }}
                                             type="button"
@@ -5564,10 +5607,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 })}
                 {eventDraft.conversationChecks.map((check) => {
                   const isHandlerActionExpanded = check.handlerActions.some(
-                    (step) => step.id === expandedStepId,
+                    (step) => isExpandedItem(step.id),
                   );
                   const isExpanded =
-                    expandedStepId === check.id || isHandlerActionExpanded;
+                    isExpandedItem(check.id) || isHandlerActionExpanded;
                   const targetEventSlug = check.triggersEvent;
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
@@ -5597,7 +5640,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
                             onClick={() =>
-                              setExpandedStepId(isExpanded ? "" : check.id)
+                              toggleExpandedParent(
+                                check.id,
+                                check.handlerActions.map((step) => step.id),
+                              )
                             }
                             type="button"
                           >
@@ -5779,7 +5825,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     step.condition,
                                   );
                                   const isActionExpanded =
-                                    expandedStepId === step.id;
+                                    isExpandedItem(step.id);
                                   const toneClass = eventActionToneClass(
                                     step.actionType,
                                   );
@@ -5806,9 +5852,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
                                           onClick={() =>
-                                            setExpandedStepId(
-                                              isActionExpanded ? check.id : step.id,
-                                            )
+                                            toggleExpandedItem(step.id)
                                           }
                                           type="button"
                                         >
@@ -5825,7 +5869,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                             className={`event-if-chip${
                                               conditionText ? "" : " is-empty"
                                             }`}
-                                            onClick={() => setExpandedStepId(step.id)}
+                                            onClick={() => openExpandedItem(step.id)}
                                             title={
                                               conditionText
                                                 ? `Condition: ${conditionText}`
@@ -5870,8 +5914,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 check.id,
                                                 step.id,
                                               );
-                                              if (expandedStepId === step.id) {
-                                                setExpandedStepId(check.id);
+                                              if (isExpandedItem(step.id)) {
+                                                closeExpandedItem(step.id);
+                                                openExpandedItem(check.id);
                                               }
                                             }}
                                             type="button"
@@ -5913,10 +5958,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 })}
                 {eventDraft.classifierGroups.map((group) => {
                   const isHandlerActionExpanded = group.handlerActions.some(
-                    (step) => step.id === expandedStepId,
+                    (step) => isExpandedItem(step.id),
                   );
                   const isExpanded =
-                    expandedStepId === group.id || isHandlerActionExpanded;
+                    isExpandedItem(group.id) || isHandlerActionExpanded;
                   const targetEventSlug = group.triggersEvent;
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
@@ -5946,7 +5991,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
                             onClick={() =>
-                              setExpandedStepId(isExpanded ? "" : group.id)
+                              toggleExpandedParent(
+                                group.id,
+                                group.handlerActions.map((step) => step.id),
+                              )
                             }
                             type="button"
                           >
@@ -6237,7 +6285,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     step.condition,
                                   );
                                   const isActionExpanded =
-                                    expandedStepId === step.id;
+                                    isExpandedItem(step.id);
                                   const toneClass = eventActionToneClass(
                                     step.actionType,
                                   );
@@ -6264,9 +6312,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
                                           onClick={() =>
-                                            setExpandedStepId(
-                                              isActionExpanded ? group.id : step.id,
-                                            )
+                                            toggleExpandedItem(step.id)
                                           }
                                           type="button"
                                         >
@@ -6283,7 +6329,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                             className={`event-if-chip${
                                               conditionText ? "" : " is-empty"
                                             }`}
-                                            onClick={() => setExpandedStepId(step.id)}
+                                            onClick={() => openExpandedItem(step.id)}
                                             title={
                                               conditionText
                                                 ? `Condition: ${conditionText}`
@@ -6328,8 +6374,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 group.id,
                                                 step.id,
                                               );
-                                              if (expandedStepId === step.id) {
-                                                setExpandedStepId(group.id);
+                                              if (isExpandedItem(step.id)) {
+                                                closeExpandedItem(step.id);
+                                                openExpandedItem(group.id);
                                               }
                                             }}
                                             type="button"
@@ -8585,7 +8632,7 @@ function TutorControls({
         </label>
 
         <label className="control-field">
-          <span>Model</span>
+          <span>Chat model</span>
           <select
             onChange={(event) =>
               onModelChange(event.target.value as RealtimeModelId)
@@ -8593,24 +8640,6 @@ function TutorControls({
             value={tutor.realtimeModel}
           >
             {realtimeModelOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="control-field">
-          <span>Classify</span>
-          <select
-            onChange={(event) =>
-              onClassificationModelChange(
-                event.target.value as ClassificationModelId,
-              )
-            }
-            value={tutor.classificationModel}
-          >
-            {classificationChoices.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.label}
               </option>
@@ -8646,6 +8675,24 @@ function TutorControls({
             />
           </label>
         </div>
+
+        <label className="control-field">
+          <span>Classification model</span>
+          <select
+            onChange={(event) =>
+              onClassificationModelChange(
+                event.target.value as ClassificationModelId,
+              )
+            }
+            value={tutor.classificationModel}
+          >
+            {classificationChoices.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {showSaveAction ? (
