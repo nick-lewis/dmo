@@ -3371,6 +3371,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [eventRedoStack, setEventRedoStack] = useState<EventDraft[]>([]);
   const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
+  const [recentCreatedEvent, setRecentCreatedEvent] =
+    useState<ExperienceEvent | null>(null);
   const [recentDeletedEvent, setRecentDeletedEvent] =
     useState<ExperienceEvent | null>(null);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
@@ -3549,6 +3551,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       lastPersistedEvent.current = payload.event;
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
+      setRecentCreatedEvent(null);
       setRecentDeletedEvent(null);
       clearEventUndoHistory();
       resetExpandedItems();
@@ -3567,12 +3570,57 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function removeRecentCreatedEvent() {
+    if (!experience || !recentCreatedEvent || experience.events.length <= 1) return;
+
+    setError("");
+    try {
+      const payload = await apiFetch<{ events: ExperienceEvent[] }>(
+        `/api/experiences/${experience.id}/events/${recentCreatedEvent.id}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      const nextEvents = sortedExperienceEvents(payload.events);
+      const nextSelectedEvent =
+        nextEvents.find((event) => event.isStart) ?? nextEvents[0] ?? null;
+
+      setExperience({
+        ...experience,
+        events: nextEvents,
+      });
+      lastPersistedEvent.current = nextSelectedEvent;
+      setSelectedEventId(nextSelectedEvent?.id ?? "");
+      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
+      setRecentCreatedEvent(null);
+      setRecentDeletedEvent(null);
+      clearEventUndoHistory();
+      resetExpandedItems();
+      setDraggingStepId("");
+      setIsEventAddMenuOpen(false);
+      setIsConversationAddMenuOpen(false);
+      setConversationAddMenuToolId("");
+      setConversationAddMenuCheckId("");
+      void loadScriptAudioItems(experience.id, false);
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Could not undo event creation.",
+      );
+    }
+  }
+
   function undoEditorHistory() {
     if (eventUndoStack.length) {
       undoEventEdit();
       return;
     }
-    void restoreRecentDeletedEvent();
+    if (recentDeletedEvent) {
+      void restoreRecentDeletedEvent();
+      return;
+    }
+    void removeRecentCreatedEvent();
   }
 
   function redoEditorHistory() {
@@ -3592,6 +3640,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setTutorForm(nextExperience.tutor);
     setSelectedEventId(selectedEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(selectedEvent));
+    setRecentCreatedEvent(null);
+    setRecentDeletedEvent(null);
     clearEventUndoHistory();
   }
 
@@ -3731,7 +3781,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     document.addEventListener("keydown", handleEditorHistoryShortcut);
     return () =>
       document.removeEventListener("keydown", handleEditorHistoryShortcut);
-  }, [eventDraft, eventRedoStack, eventUndoStack, recentDeletedEvent]);
+  }, [
+    eventDraft,
+    eventRedoStack,
+    eventUndoStack,
+    recentCreatedEvent,
+    recentDeletedEvent,
+  ]);
 
   useEffect(() => {
     if (!isEventAddMenuOpen) return;
@@ -5386,6 +5442,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
+      setRecentCreatedEvent(payload.event);
       setRecentDeletedEvent(null);
       clearEventUndoHistory();
       resetExpandedItems();
@@ -5436,6 +5493,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       lastPersistedEvent.current = nextSelectedEvent;
       setSelectedEventId(nextSelectedEvent?.id ?? "");
       setEventDraft(eventDraftFromEvent(nextSelectedEvent));
+      setRecentCreatedEvent(null);
       setRecentDeletedEvent(selectedEvent);
       clearEventUndoHistory();
       resetExpandedItems();
@@ -6151,12 +6209,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       })),
     );
   const canUndoEditorHistory =
-    eventUndoStack.length > 0 || Boolean(recentDeletedEvent);
+    eventUndoStack.length > 0 ||
+    Boolean(recentDeletedEvent) ||
+    Boolean(recentCreatedEvent);
   const undoEditorTitle = eventUndoStack.length
     ? `Undo event edit (${eventUndoStack.length} available)`
     : recentDeletedEvent
       ? `Restore deleted event: ${recentDeletedEvent.title || recentDeletedEvent.slug}`
-      : "Nothing to undo";
+      : recentCreatedEvent
+        ? `Remove new event: ${recentCreatedEvent.title || recentCreatedEvent.slug}`
+        : "Nothing to undo";
 
   function renderActionStepDetail(
     step: EventStepDraft,
