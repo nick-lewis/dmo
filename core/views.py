@@ -1584,8 +1584,13 @@ def build_realtime_instructions(session, exclude_message_id=None):
             event_context.append(f"Runtime context: {context_json[:2000]}")
         instruction_parts.append("\n".join(event_context))
     if current_tools:
+        tool_names = ", ".join(
+            str(tool.get("name", "")).strip()
+            for tool in current_tools
+            if str(tool.get("name", "")).strip()
+        )
         instruction_parts.append(
-            "This event has conversation routes available as tools. When the "
+            f"Available function-call routes: {tool_names}. When the "
             "learner's message satisfies one of those route conditions, call "
             "the matching tool instead of announcing that you are changing events."
         )

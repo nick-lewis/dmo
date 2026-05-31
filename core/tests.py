@@ -26,6 +26,7 @@ from .models import (
     TutoringSession,
 )
 from .views import (
+    build_realtime_instructions,
     cached_script_audio_payload,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
@@ -569,6 +570,45 @@ class ConversationRuntimeTests(TestCase):
                 for action in payload["actions"]
             )
         )
+
+    def test_realtime_instructions_include_event_prompt_context_and_tools(self):
+        self.chat_event.chat_instructions = (
+            "Push toward this goal: {{ learner_goal }}. "
+            "Newly mentioned: {{ newly_mentioned }}."
+        )
+        self.chat_event.description = "Learner is testing fruit routing."
+        self.chat_event.save(update_fields=["chat_instructions", "description"])
+        EventChatTool.objects.create(
+            event=self.chat_event,
+            name="student_done",
+            description="The learner says they are done with the fruit task.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "fruit": {"type": "string", "description": "Fruit named."}
+                },
+                "required": ["fruit"],
+            },
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_context={
+                "learner_goal": "name fruits",
+                "newly_mentioned": ["banana"],
+            },
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+
+        instructions = build_realtime_instructions(session)
+
+        self.assertIn("Event chat instructions:", instructions)
+        self.assertIn("Push toward this goal: name fruits.", instructions)
+        self.assertIn("Newly mentioned: banana.", instructions)
+        self.assertIn("Runtime context:", instructions)
+        self.assertIn('"learner_goal": "name fruits"', instructions)
+        self.assertIn("Available function-call routes:", instructions)
+        self.assertIn("student_done", instructions)
 
 
 class ExperienceContentMaturityTests(TestCase):
