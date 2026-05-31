@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
+import mainPanelAppRegistryData from "./mainPanelAppRegistry.json";
+
 export type RuntimeInteractive = {
   config: Record<string, unknown>;
   eventId: string;
@@ -50,6 +52,8 @@ export type MainPanelAppConfigField = {
   placeholder?: string;
   type?: "text" | "number";
 };
+
+type MainPanelAppMetadata = Omit<MainPanelAppDefinition, "Component">;
 
 type DeliveryDataRow = {
   distance: number;
@@ -436,78 +440,20 @@ function TimingChallengeInteractive({
   );
 }
 
-export const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
-  {
-    Component: DeliveryDataInteractive,
-    configFields: [
-      {
-        defaultValue: 3.9,
-        id: "targetDistance",
-        inputMode: "decimal",
-        label: "TARGET MI",
-        placeholder: "3.9",
-        type: "number",
-      },
-      {
-        defaultValue: "delivery_estimate",
-        id: "estimateContextKey",
-        label: "SAVE AS",
-        placeholder: "delivery_estimate",
-      },
-    ],
-    defaultConfig: {
-      estimateContextKey: "delivery_estimate",
-      targetDistance: 3.9,
-    },
-    defaultView: "table",
-    id: "delivery_data",
-    label: "Delivery data",
-    views: [
-      { id: "table", label: "Table" },
-      { id: "graph", label: "Graph" },
-    ],
-  },
-  {
-    Component: TimingChallengeInteractive,
-    configFields: [
-      {
-        defaultValue: 3200,
-        id: "targetMs",
-        inputMode: "numeric",
-        label: "TARGET MS",
-        placeholder: "3200",
-        type: "number",
-      },
-      {
-        defaultValue: 450,
-        id: "toleranceMs",
-        inputMode: "numeric",
-        label: "TOLERANCE",
-        placeholder: "450",
-        type: "number",
-      },
-      {
-        defaultValue: "marked_ms",
-        id: "markedContextKey",
-        label: "SAVE AS",
-        placeholder: "marked_ms",
-      },
-    ],
-    defaultConfig: {
-      accuracyContextKey: "marked_accuracy_ms",
-      markedContextKey: "marked_ms",
-      targetMs: 3200,
-      toleranceMs: 450,
-    },
-    defaultView: "timer",
-    id: "timing_challenge",
-    label: "Timing challenge",
-    views: [
-      { id: "timer", label: "Timer" },
-      { id: "review", label: "Review" },
-    ],
-  },
-];
+const mainPanelAppComponents: Partial<Record<
+  string,
+  (props: MainPanelAppProps) => ReactNode
+>> = {
+  delivery_data: DeliveryDataInteractive,
+  timing_challenge: TimingChallengeInteractive,
+};
+
+export const mainPanelAppDefinitions: MainPanelAppDefinition[] = (
+  mainPanelAppRegistryData as MainPanelAppMetadata[]
+).flatMap((definition) => {
+  const Component = mainPanelAppComponents[definition.id];
+  return Component ? [{ ...definition, Component }] : [];
+});
 
 export const defaultMainPanelApp = mainPanelAppDefinitions[0];
 

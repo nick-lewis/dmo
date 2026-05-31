@@ -31,6 +31,7 @@ from core.views import (
     health,
     import_experience,
     logout_user,
+    main_panel_apps,
     resolve_google_slide,
     reorder_event_action_steps,
     run_session_chat_tool,
@@ -57,6 +58,7 @@ urlpatterns = [
     path("api/health/", health, name="health"),
     path("api/auth/me/", current_user, name="current-user"),
     path("api/auth/logout/", logout_user, name="logout-user"),
+    path("api/main-panel-apps/", main_panel_apps, name="main-panel-apps"),
     path("api/experiences/", experiences, name="experiences"),
     path(
         "api/experiences/import/",

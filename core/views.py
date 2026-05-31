@@ -122,10 +122,9 @@ DEFAULT_CLASSIFIER_RESULT_SCHEMA = {
     "required": ["mentioned", "context"],
     "additionalProperties": False,
 }
-REGISTERED_MAIN_PANEL_APP_IDS = {
-    "delivery_data",
-    "timing_challenge",
-}
+MAIN_PANEL_APP_REGISTRY_PATH = (
+    settings.BASE_DIR / "frontend" / "src" / "mainPanelAppRegistry.json"
+)
 SCRIPT_MARKER_PATTERN = re.compile(
     (
         r"\[(show_image|slide|gslide|interactive|interactive_update|"
@@ -136,6 +135,42 @@ SCRIPT_MARKER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SCRIPT_WORD_PATTERN = re.compile(r"\S+")
+
+
+def load_main_panel_app_registry():
+    try:
+        raw_apps = json.loads(MAIN_PANEL_APP_REGISTRY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(raw_apps, list):
+        return []
+
+    apps = []
+    for raw_app in raw_apps:
+        if not isinstance(raw_app, dict):
+            continue
+        app_id = str(raw_app.get("id", "") or "").strip()
+        if not app_id:
+            continue
+        apps.append(
+            {
+                "configFields": raw_app.get("configFields", []),
+                "defaultConfig": raw_app.get("defaultConfig", {}),
+                "defaultView": str(raw_app.get("defaultView", "") or "").strip(),
+                "id": app_id,
+                "label": str(raw_app.get("label", "") or "").strip() or app_id,
+                "views": raw_app.get("views", []),
+            }
+        )
+    return apps
+
+
+MAIN_PANEL_APP_REGISTRY = load_main_panel_app_registry()
+REGISTERED_MAIN_PANEL_APP_IDS = {
+    app["id"]
+    for app in MAIN_PANEL_APP_REGISTRY
+}
 
 
 def normalize_script_speech(text):
@@ -4428,6 +4463,15 @@ def current_user(request):
         return auth_response
 
     return JsonResponse({"user": serialize_user(request.user)})
+
+
+@require_GET
+def main_panel_apps(request):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    return JsonResponse({"apps": MAIN_PANEL_APP_REGISTRY})
 
 
 @require_POST

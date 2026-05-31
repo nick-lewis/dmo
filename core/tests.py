@@ -1,5 +1,4 @@
 import json
-import re
 import tempfile
 import wave
 from io import StringIO
@@ -40,6 +39,7 @@ from .views import (
     evaluate_classifier_group,
     EXPERIENCE_EXPORT_FORMAT,
     EXPERIENCE_EXPORT_VERSION,
+    MAIN_PANEL_APP_REGISTRY,
     normalize_realtime_voice_choice,
     REGISTERED_MAIN_PANEL_APP_IDS,
     realtime_voice_choices_for_model,
@@ -588,22 +588,28 @@ class InteractiveRuntimeActionTests(TestCase):
 
     def test_backend_registered_apps_match_frontend_registry(self):
         registry_path = (
-            settings.BASE_DIR / "frontend" / "src" / "mainPanelApps.tsx"
+            settings.BASE_DIR / "frontend" / "src" / "mainPanelAppRegistry.json"
         )
-        source = registry_path.read_text(encoding="utf-8")
-        definitions_block = source.split("export const mainPanelAppDefinitions", 1)[1]
-        definitions_block = definitions_block.split(
-            "export const defaultMainPanelApp",
-            1,
-        )[0]
-        frontend_ids = set(
-            re.findall(
-                r'defaultView:\s*"[^"]+",\s*id:\s*"([^"]+)"',
-                definitions_block,
-            )
-        )
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        frontend_ids = {app["id"] for app in registry}
 
         self.assertEqual(REGISTERED_MAIN_PANEL_APP_IDS, frontend_ids)
+        self.assertEqual(
+            {app["id"] for app in MAIN_PANEL_APP_REGISTRY},
+            frontend_ids,
+        )
+
+    def test_main_panel_apps_endpoint_returns_shared_registry(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get("/api/main-panel-apps/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            {app["id"] for app in payload["apps"]},
+            REGISTERED_MAIN_PANEL_APP_IDS,
+        )
 
 
 class EventEditorApiTests(TestCase):
