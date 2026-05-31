@@ -73,7 +73,24 @@ button {
   background:
     linear-gradient(180deg, var(--page-bg-2), transparent 46%),
     var(--page-bg);
+  caret-color: transparent;
   font-family: var(--ui-font);
+}
+
+.panel-study input,
+.panel-study textarea {
+  caret-color: var(--accent);
+}
+
+.panel-study button,
+.panel-study [role="button"],
+.panel-study [role="tab"],
+.panel-study [role="option"],
+.panel-study .event-step-summary,
+.panel-study .event-outline-button,
+.panel-study .chat-message,
+.panel-study .runtime-choice-row {
+  user-select: none;
 }
 
 .panel-study[data-color-theme="graphite"] {

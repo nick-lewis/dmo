@@ -49,6 +49,9 @@ const panelLayoutStorageKey = "dlu.panel-layout.v1";
 const slideSettingsStorageKey = "dlu.slide-settings.v1";
 const experienceSelectionStorageKey = "dlu.selected-experience.v1";
 const experienceAutosaveDelayMs = 700;
+const scriptTextStreamFallbackMs = 7000;
+const scriptTextStreamMinMs = 1400;
+const scriptTextStreamMaxMs = 16000;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -525,6 +528,30 @@ function inlineFieldWidthStyle(
 
 function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => left.sequence - right.sequence);
+}
+
+function scriptStreamDurationMs(text: string, audioDurationSeconds?: number) {
+  if (
+    typeof audioDurationSeconds === "number" &&
+    Number.isFinite(audioDurationSeconds) &&
+    audioDurationSeconds > 0
+  ) {
+    return clamp(audioDurationSeconds * 1000, scriptTextStreamMinMs, scriptTextStreamMaxMs);
+  }
+
+  return clamp(text.length * 42, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
+}
+
+function scriptStreamIndexAt(text: string, progress: number) {
+  if (progress >= 1) return text.length;
+
+  const rawIndex = Math.max(1, Math.floor(text.length * progress));
+  const nextWhitespace = text.slice(rawIndex).search(/\s/);
+  if (nextWhitespace >= 0 && nextWhitespace <= 14) {
+    return Math.min(text.length, rawIndex + nextWhitespace + 1);
+  }
+
+  return rawIndex;
 }
 
 function getStartEvent(experience: Experience | null) {
@@ -6496,6 +6523,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const playedScriptMessageIdsRef = useRef(new Set<string>());
   const scriptAudioRef = useRef<HTMLAudioElement | null>(null);
   const scriptAudioQueueRef = useRef(Promise.resolve());
+  const scriptAudioSkipRef = useRef<(() => void) | null>(null);
+  const scriptTextSkipRef = useRef<(() => void) | null>(null);
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [workspaceWidth, setWorkspaceWidth] = useState(
@@ -6978,9 +7007,25 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   useEffect(() => {
     return () => {
       realtimeConnectionRef.current?.close();
+      scriptTextSkipRef.current?.();
+      scriptAudioSkipRef.current?.();
       scriptAudioRef.current?.pause();
       scriptAudioRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    function skipCurrentScriptMessage(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (!scriptTextSkipRef.current && !scriptAudioSkipRef.current) return;
+
+      event.preventDefault();
+      scriptTextSkipRef.current?.();
+      scriptAudioSkipRef.current?.();
+    }
+
+    window.addEventListener("keydown", skipCurrentScriptMessage);
+    return () => window.removeEventListener("keydown", skipCurrentScriptMessage);
   }, []);
 
   useEffect(() => {
@@ -6997,6 +7042,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     scriptAudioQueueRef.current = Promise.resolve();
     playedScriptMessageIdsRef.current.clear();
     setIsScriptAudioPlaying(false);
+    scriptTextSkipRef.current?.();
+    scriptAudioSkipRef.current?.();
     scriptAudioRef.current?.pause();
     scriptAudioRef.current = null;
   }, [selectedModel, selectedVoice, session?.id]);
@@ -7315,35 +7362,188 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     );
   }
 
-  function playAudioUrl(audioUrl: string) {
+  function waitForAudioMetadata(audio: HTMLAudioElement) {
+    if (audio.readyState >= 1) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        audio.removeEventListener("loadedmetadata", handleReady);
+        audio.removeEventListener("canplay", handleReady);
+      };
+      const handleReady = () => {
+        cleanup();
+        resolve();
+      };
+      const timeoutId = window.setTimeout(handleReady, 700);
+
+      audio.addEventListener("loadedmetadata", handleReady, { once: true });
+      audio.addEventListener("canplay", handleReady, { once: true });
+      audio.load();
+    });
+  }
+
+  function streamScriptMessageText(message: ChatMessage, durationMs: number) {
+    const fullText = message.content;
+    if (!fullText.trim()) return Promise.resolve();
+
+    setMessages((current) =>
+      current.map((currentMessage) =>
+        currentMessage.id === message.id
+          ? {
+              ...currentMessage,
+              content: "",
+              metadata: {
+                ...currentMessage.metadata,
+                scriptHidden: false,
+                streaming: true,
+              },
+            }
+          : currentMessage,
+      ),
+    );
+
+    return new Promise<void>((resolve) => {
+      let timeoutId = 0;
+      let isDone = false;
+      const startedAt = performance.now();
+
+      const finish = () => {
+        if (isDone) return;
+        isDone = true;
+        window.clearTimeout(timeoutId);
+        if (scriptTextSkipRef.current === finish) {
+          scriptTextSkipRef.current = null;
+        }
+        setMessages((current) =>
+          current.map((currentMessage) =>
+            currentMessage.id === message.id
+              ? {
+                  ...currentMessage,
+                  content: fullText,
+                  metadata: {
+                    ...currentMessage.metadata,
+                    scriptHidden: false,
+                    streaming: false,
+                  },
+                }
+              : currentMessage,
+          ),
+        );
+        resolve();
+      };
+
+      const tick = () => {
+        if (isDone) return;
+
+        const elapsed = performance.now() - startedAt;
+        const progress = Math.min(1, elapsed / durationMs);
+        const nextIndex = scriptStreamIndexAt(fullText, progress);
+
+        setMessages((current) =>
+          current.map((currentMessage) =>
+            currentMessage.id === message.id
+              ? {
+                  ...currentMessage,
+                  content: fullText.slice(0, nextIndex),
+                  metadata: {
+                    ...currentMessage.metadata,
+                    scriptHidden: false,
+                    streaming: true,
+                  },
+                }
+              : currentMessage,
+          ),
+        );
+
+        if (progress >= 1) {
+          finish();
+          return;
+        }
+
+        timeoutId = window.setTimeout(tick, 40);
+      };
+
+      scriptTextSkipRef.current = finish;
+      tick();
+    });
+  }
+
+  function playPreparedScriptAudio(audio: HTMLAudioElement) {
     return new Promise<void>((resolve, reject) => {
-      const audio = new Audio(audioUrl);
       scriptAudioRef.current = audio;
-      audio.preload = "auto";
+      let isDone = false;
 
       const cleanup = () => {
         audio.removeEventListener("ended", handleEnded);
         audio.removeEventListener("error", handleError);
+        if (scriptAudioSkipRef.current === handleSkip) {
+          scriptAudioSkipRef.current = null;
+        }
         if (scriptAudioRef.current === audio) {
           scriptAudioRef.current = null;
         }
       };
       const handleEnded = () => {
+        if (isDone) return;
+        isDone = true;
         cleanup();
         resolve();
       };
       const handleError = () => {
+        if (isDone) return;
+        isDone = true;
         cleanup();
         reject(new Error("Could not play the scripted audio recording."));
+      };
+      const handleSkip = () => {
+        if (isDone) return;
+        isDone = true;
+        audio.pause();
+        cleanup();
+        resolve();
       };
 
       audio.addEventListener("ended", handleEnded);
       audio.addEventListener("error", handleError);
+      scriptAudioSkipRef.current = handleSkip;
       void audio.play().catch((error: unknown) => {
+        isDone = true;
         cleanup();
         reject(error instanceof Error ? error : new Error("Audio playback was blocked."));
       });
     });
+  }
+
+  async function playScriptMessage(message: ChatMessage, audioUrl: string) {
+    const audio = new Audio(audioUrl);
+    audio.preload = "auto";
+
+    await waitForAudioMetadata(audio);
+
+    const durationMs = scriptStreamDurationMs(message.content, audio.duration);
+    await Promise.all([
+      streamScriptMessageText(message, durationMs),
+      playPreparedScriptAudio(audio),
+    ]);
+  }
+
+  function revealScriptMessageText(message: ChatMessage) {
+    setMessages((current) =>
+      current.map((currentMessage) =>
+        currentMessage.id === message.id
+          ? {
+              ...currentMessage,
+              content: message.content,
+              metadata: {
+                ...currentMessage.metadata,
+                scriptHidden: false,
+                streaming: false,
+              },
+            }
+          : currentMessage,
+      ),
+    );
   }
 
   async function playScriptMessages(
@@ -7369,8 +7569,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             }),
           },
         );
-        await playAudioUrl(payload.audioUrl);
+        await playScriptMessage(message, payload.audioUrl);
       } catch (error) {
+        scriptTextSkipRef.current?.();
+        revealScriptMessageText(message);
         const detail =
           error instanceof Error
             ? error.message
@@ -7388,6 +7590,23 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   ) {
     const scriptMessages = candidateMessages?.filter(isScriptAudioMessage) ?? [];
     if (!scriptMessages.length) return;
+
+    const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
+    setMessages((current) =>
+      current.map((message) =>
+        scriptMessageIds.has(message.id)
+          ? {
+              ...message,
+              content: "",
+              metadata: {
+                ...message.metadata,
+                scriptHidden: true,
+                streaming: false,
+              },
+            }
+          : message,
+      ),
+    );
 
     scriptAudioQueueRef.current = scriptAudioQueueRef.current
       .catch(() => undefined)
@@ -8958,6 +9177,8 @@ function ChatPanelContent({
             <div className="chat-status error">{error}</div>
           ) : null}
           {messages.map((message) => {
+            if (message.metadata?.scriptHidden) return null;
+
             const tone = message.role === "user" ? "student" : "tutor";
             const author =
               message.role === "user"
