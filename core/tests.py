@@ -227,6 +227,129 @@ class InteractiveRuntimeActionTests(TestCase):
         )
         self.assertEqual(normalized_context_action["source"], "interactive")
 
+    def test_interactive_can_emit_registered_app_mount_and_update_actions(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={
+                "uiRuntime": {
+                    "interactive": {
+                        "config": {},
+                        "interactiveId": "delivery_data",
+                        "mode": "table",
+                        "title": "Delivery data",
+                    },
+                    "interactiveState": {},
+                },
+            },
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/interactive/",
+            data=json.dumps(
+                {
+                    "actions": [
+                        {
+                            "config": {"targetMs": 1500},
+                            "interactiveId": "timing_challenge",
+                            "mode": "timer",
+                            "state": {"markedMs": 0},
+                            "title": "Timing challenge",
+                            "type": "interactive",
+                        },
+                        {
+                            "config": {"toleranceMs": 100},
+                            "interactiveId": "timing_challenge",
+                            "mode": "review",
+                            "state": {"markedMs": 1490},
+                            "title": "Timing review",
+                            "triggersEvent": "done",
+                            "type": "interactive_update",
+                        },
+                    ],
+                    "interactiveId": "delivery_data",
+                    "state": {"estimate": "22"},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        ui_runtime = session.runtime_state["uiRuntime"]
+        interactive = ui_runtime["interactive"]
+        self.assertEqual(interactive["interactiveId"], "timing_challenge")
+        self.assertEqual(interactive["mode"], "review")
+        self.assertEqual(interactive["title"], "Timing review")
+        self.assertEqual(interactive["triggersEvent"], "done")
+        self.assertEqual(interactive["config"]["targetMs"], 1500)
+        self.assertEqual(interactive["config"]["toleranceMs"], 100)
+        self.assertEqual(ui_runtime["interactiveState"], {"markedMs": 1490})
+
+        payload = response.json()
+        emitted_app_actions = [
+            action
+            for action in payload["actions"]
+            if action["type"] in {"interactive", "interactive_update"}
+        ]
+        self.assertEqual(
+            [action["type"] for action in emitted_app_actions],
+            ["interactive", "interactive_update"],
+        )
+        self.assertTrue(
+            all(action["source"] == "interactive" for action in emitted_app_actions)
+        )
+
+    def test_interactive_rejects_emitted_unregistered_app_action(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={
+                "uiRuntime": {
+                    "interactive": {
+                        "config": {},
+                        "interactiveId": "delivery_data",
+                        "mode": "table",
+                        "title": "Delivery data",
+                    },
+                    "interactiveState": {},
+                },
+            },
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/interactive/",
+            data=json.dumps(
+                {
+                    "actions": [
+                        {
+                            "interactiveId": "custom_form_that_is_not_registered",
+                            "mode": "default",
+                            "type": "interactive",
+                        }
+                    ],
+                    "interactiveId": "delivery_data",
+                    "state": {},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        ui_runtime = session.runtime_state["uiRuntime"]
+        self.assertEqual(ui_runtime["interactive"]["interactiveId"], "delivery_data")
+
+        rejected_actions = [
+            action
+            for action in response.json()["actions"]
+            if action["type"] == "interactive_action_rejected"
+        ]
+        self.assertEqual(len(rejected_actions), 1)
+        self.assertEqual(rejected_actions[0]["reason"], "invalid_interactive")
+
     def test_emitted_goto_event_runs_target_event_after_context_actions(self):
         target_event = ExperienceEvent.objects.create(
             experience=self.experience,

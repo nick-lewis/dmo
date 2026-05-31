@@ -2434,6 +2434,73 @@ def normalize_emitted_runtime_action(action):
             "type": "chat_availability",
         }, None
 
+    if action_type in {"interactive", "interactive_update"}:
+        interactive_id = normalize_interactive_id(
+            action.get("interactiveId") or action.get("name")
+        )
+        id_error = interactive_id_error(interactive_id)
+        if id_error:
+            return None, rejected_emitted_runtime_action(action, "invalid_interactive")
+
+        raw_config = action.get("config")
+        if raw_config in (None, ""):
+            config = {}
+        elif isinstance(raw_config, dict):
+            config = normalized_interactive_config(raw_config)
+        else:
+            return None, rejected_emitted_runtime_action(
+                action,
+                "invalid_interactive_config",
+            )
+        if len(json.dumps(config, ensure_ascii=True)) > 8000:
+            return None, rejected_emitted_runtime_action(
+                action,
+                "invalid_interactive_config",
+            )
+
+        triggers_event, event_error = validate_event_slug(
+            action.get("triggersEvent"),
+            label="Completion event",
+            required=False,
+        )
+        if event_error:
+            return None, rejected_emitted_runtime_action(
+                action,
+                "invalid_target_event",
+            )
+
+        normalized = {
+            "config": config,
+            "interactiveId": interactive_id,
+            "mode": runtime_action_string(action.get("mode"), max_length=80),
+            "prompt": runtime_action_string(action.get("prompt"), max_length=1200),
+            "source": "interactive",
+            "title": runtime_action_string(action.get("title"), max_length=160),
+            "type": action_type,
+        }
+        if triggers_event:
+            normalized["triggersEvent"] = triggers_event
+
+        if "state" in action:
+            raw_state = action.get("state")
+            if raw_state in (None, ""):
+                state = {}
+            elif isinstance(raw_state, dict):
+                state = normalized_interactive_config(raw_state)
+            else:
+                return None, rejected_emitted_runtime_action(
+                    action,
+                    "invalid_interactive_state",
+                )
+            if len(json.dumps(state, ensure_ascii=True)) > 12000:
+                return None, rejected_emitted_runtime_action(
+                    action,
+                    "invalid_interactive_state",
+                )
+            normalized["state"] = state
+
+        return normalized, None
+
     if action_type == "interactive_clear":
         return {"source": "interactive", "type": "interactive_clear"}, None
 
