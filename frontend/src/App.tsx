@@ -17,8 +17,9 @@ import {
   type RealtimeStatus,
   type RealtimeToolCall,
   type RealtimeVoiceId,
+  isRealtimeVoiceSupported,
   realtimeModelOptions,
-  realtimeVoiceOptions,
+  realtimeVoiceOptionsForModel,
 } from "./realtime";
 
 const classificationModelOptions = [
@@ -66,6 +67,8 @@ const eventActionOptions = [
   { id: "get_ui_state", label: "Read UI" },
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
+  { id: "interactive", label: "Interactive" },
+  { id: "interactive_update", label: "Update interactive" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -73,7 +76,7 @@ const eventActionOptions = [
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 const scriptMarkerPattern =
-  /\[(show_image|slide|gslide|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
+  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
 const scriptAudioSources = new Set([
   "event-action",
   "conversation-tool-action",
@@ -136,6 +139,8 @@ type EventActionStep = {
     | "get_ui_state"
     | "highlight_on"
     | "highlight_off"
+    | "interactive"
+    | "interactive_update"
     | "set_ui_trigger"
     | "goto_event"
     | "button_choice";
@@ -355,7 +360,19 @@ type ConversationCheckPayload = SessionPayload & {
 };
 
 type RuntimeUiState = {
+  interactive?: Record<string, unknown>;
   notesVisible: boolean;
+};
+
+type RuntimeInteractive = {
+  config: Record<string, unknown>;
+  eventId: string;
+  interactiveId: string;
+  mode: string;
+  prompt: string;
+  stepId: string;
+  title: string;
+  triggersEvent: string;
 };
 
 type RuntimeHighlight = {
@@ -408,6 +425,28 @@ type MessageAudioPayload = {
   timingWarning?: string;
   ttsModel: string;
   voice: RealtimeVoiceId;
+};
+
+type ScriptAudioItem = {
+  audioUrl: string;
+  cached: boolean;
+  cacheKey: string;
+  canGenerate: boolean;
+  durationSeconds: number | null;
+  id: string;
+  preview: string;
+  realtimeModel?: RealtimeModelId;
+  source: string;
+  ttsModel?: string;
+  voice?: RealtimeVoiceId;
+  wordsCached: boolean;
+};
+
+type ScriptAudioPayload = {
+  errors?: string[];
+  generated?: number;
+  scripts: ScriptAudioItem[];
+  totalScripts: number;
 };
 
 type ScriptCue = {
@@ -589,8 +628,12 @@ function scriptWordRevealPoints(text: string, words: ScriptWord[]) {
   for (let index = 0; index < pointCount; index += 1) {
     const match = textWords[index];
     const matchIndex = match.index ?? 0;
+    let revealIndex = matchIndex + match[0].length;
+    while (revealIndex < text.length && /\s/.test(text[revealIndex])) {
+      revealIndex += 1;
+    }
     points.push({
-      index: matchIndex + match[0].length,
+      index: revealIndex,
       time: words[index].start,
     });
   }
@@ -933,6 +976,23 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return { selector: ".runtime-notes-toggle" };
   }
+  if (actionType === "interactive") {
+    return {
+      interactiveId: "delivery_data",
+      mode: "table",
+      prompt: "Review the delivery data and submit an estimate.",
+      title: "Delivery data",
+      triggersEvent: "",
+    };
+  }
+  if (actionType === "interactive_update") {
+    return {
+      interactiveId: "delivery_data",
+      mode: "graph",
+      prompt: "",
+      title: "",
+    };
+  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
@@ -958,7 +1018,8 @@ function defaultStepConfigForEvent(
   if (
     actionType !== "set_ui_trigger" &&
     actionType !== "goto_event" &&
-    actionType !== "button_choice"
+    actionType !== "button_choice" &&
+    actionType !== "interactive"
   ) {
     return config;
   }
@@ -975,6 +1036,8 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "get_ui_state") return "Read UI state";
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
+  if (actionType === "interactive") return "Show interactive";
+  if (actionType === "interactive_update") return "Update interactive";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -1065,6 +1128,12 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return "Remove a highlight from an interface target";
   }
+  if (actionType === "interactive") {
+    return "Show a main-panel interactive";
+  }
+  if (actionType === "interactive_update") {
+    return "Update the current interactive";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -1093,7 +1162,14 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
   ) {
     return "flow";
   }
-  if (actionType === "highlight_on" || actionType === "highlight_off") return "ui";
+  if (
+    actionType === "highlight_on" ||
+    actionType === "highlight_off" ||
+    actionType === "interactive" ||
+    actionType === "interactive_update"
+  ) {
+    return "ui";
+  }
   return "speech";
 }
 
@@ -1110,7 +1186,8 @@ function actionSequenceOutgoingSlugs(steps: ActionSequenceStep[] = []) {
     if (
       step.actionType !== "set_ui_trigger" &&
       step.actionType !== "goto_event" &&
-      step.actionType !== "button_choice"
+      step.actionType !== "button_choice" &&
+      step.actionType !== "interactive"
     ) {
       continue;
     }
@@ -1126,7 +1203,8 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
     if (
       step.actionType !== "set_ui_trigger" &&
       step.actionType !== "goto_event" &&
-      step.actionType !== "button_choice"
+      step.actionType !== "button_choice" &&
+      step.actionType !== "interactive"
     ) {
       continue;
     }
@@ -1260,6 +1338,21 @@ function runtimeActionText(action: Record<string, unknown>) {
   if (type === "highlight_on" || type === "highlight_off") {
     return compactRuntimeValue(action.selector, "selector");
   }
+  if (type === "interactive") {
+    return `${compactRuntimeValue(action.title, "interactive")} ${compactRuntimeValue(
+      action.mode,
+      "default",
+    )}`;
+  }
+  if (type === "interactive_update") {
+    return `${compactRuntimeValue(
+      action.interactiveId,
+      "interactive",
+    )} -> ${compactRuntimeValue(action.mode, "update")}`;
+  }
+  if (type === "interactive_clear") {
+    return "clear interactive";
+  }
   if (type === "gslide") {
     return `slide ${compactRuntimeValue(action.slideRef, "1")}`;
   }
@@ -1291,6 +1384,42 @@ function runtimeSlideFromRecord(value: unknown): (ResolvedSlide & { deckUrl: str
     presentationId:
       typeof slide.presentationId === "string" ? slide.presentationId : "",
     slideRef: typeof slide.slideRef === "string" ? slide.slideRef : "1",
+  };
+}
+
+function recordFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function runtimeInteractiveFromRecord(value: unknown): RuntimeInteractive | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const interactive = value as Record<string, unknown>;
+  const interactiveId =
+    typeof interactive.interactiveId === "string"
+      ? interactive.interactiveId.trim()
+      : "";
+  if (!interactiveId) return null;
+
+  const title =
+    typeof interactive.title === "string" && interactive.title.trim()
+      ? interactive.title.trim()
+      : interactiveId;
+
+  return {
+    config: recordFromUnknown(interactive.config),
+    eventId: typeof interactive.eventId === "string" ? interactive.eventId : "",
+    interactiveId,
+    mode: typeof interactive.mode === "string" ? interactive.mode : "default",
+    prompt: typeof interactive.prompt === "string" ? interactive.prompt : "",
+    stepId: typeof interactive.stepId === "string" ? interactive.stepId : "",
+    title,
+    triggersEvent:
+      typeof interactive.triggersEvent === "string"
+        ? interactive.triggersEvent.trim()
+        : "",
   };
 }
 
@@ -1450,6 +1579,33 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
   if (step.actionType === "highlight_off") {
     return `clear ${stringConfigValue(step.config, "selector", "target")}`;
+  }
+  if (step.actionType === "interactive") {
+    const title = stringConfigValue(step.config, "title");
+    const interactiveId = stringConfigValue(
+      step.config,
+      "interactiveId",
+      "interactive",
+    );
+    const mode = stringConfigValue(step.config, "mode");
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent");
+    const targetEvent = eventTitleForTrigger(events, triggersEvent);
+    return [
+      title || interactiveId || "interactive",
+      mode ? `(${mode})` : "",
+      triggersEvent ? `-> ${targetEvent || triggersEvent}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (step.actionType === "interactive_update") {
+    const interactiveId = stringConfigValue(
+      step.config,
+      "interactiveId",
+      "interactive",
+    );
+    const mode = stringConfigValue(step.config, "mode", "mode");
+    return `${interactiveId || "interactive"} -> ${mode || "mode"}`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -2443,6 +2599,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [draggingStepId, setDraggingStepId] = useState("");
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
+  const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
   const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
     useState(false);
   const [conversationAddMenuToolId, setConversationAddMenuToolId] = useState("");
@@ -2454,6 +2611,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [voiceSampleStatus, setVoiceSampleStatus] =
     useState<VoiceSampleStatus>("idle");
+  const [scriptAudioItems, setScriptAudioItems] = useState<ScriptAudioItem[]>([]);
+  const [scriptAudioStatus, setScriptAudioStatus] = useState<
+    "idle" | "loading" | "generating"
+  >("idle");
+  const [scriptAudioError, setScriptAudioError] = useState("");
   const overviewAutosaveTimer = useRef<number | null>(null);
   const overviewAutosaveVersion = useRef(0);
   const tutorAutosaveTimer = useRef<number | null>(null);
@@ -2461,6 +2623,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const eventAutosaveTimer = useRef<number | null>(null);
   const eventAutosaveVersion = useRef(0);
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  const scriptAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const eventAddBlockRef = useRef<HTMLDivElement | null>(null);
   const conversationItemAddBlockRef = useRef<HTMLDivElement | null>(null);
@@ -2524,6 +2687,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventDraft(eventDraftFromEvent(selectedEvent));
   }
 
+  async function loadScriptAudioItems(targetExperienceId = experience?.id ?? "") {
+    if (!targetExperienceId) return;
+
+    setScriptAudioStatus("loading");
+    setScriptAudioError("");
+    try {
+      const payload = await apiFetch<ScriptAudioPayload>(
+        `/api/experiences/${targetExperienceId}/script-audio/`,
+      );
+      setScriptAudioItems(payload.scripts);
+    } catch (loadError) {
+      setScriptAudioError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load scripted audio.",
+      );
+    } finally {
+      setScriptAudioStatus("idle");
+    }
+  }
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -2547,6 +2731,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         setUser(me.user);
         applyExperience(nextExperience);
         writeSelectedExperienceId(nextExperience.id);
+        void loadScriptAudioItems(nextExperience.id);
         setStatus("ready");
       } catch (loadError) {
         if (isCancelled) return;
@@ -2580,6 +2765,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       }
       voiceSampleAudioRef.current?.pause();
       voiceSampleAudioRef.current = null;
+      scriptAudioPreviewRef.current?.pause();
+      scriptAudioPreviewRef.current = null;
     };
   }, []);
 
@@ -2926,6 +3113,21 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const nextDraft = {
       ...tutorForm,
       [field]: value,
+    };
+
+    setTutorForm(nextDraft);
+    queueTutorAutosave(nextDraft);
+  }
+
+  function updateTutorModelDraft(realtimeModel: RealtimeModelId) {
+    const supportedVoice =
+      isRealtimeVoiceSupported(realtimeModel, tutorForm.voice)
+        ? tutorForm.voice
+        : (realtimeVoiceOptionsForModel(realtimeModel)[0]?.id ?? tutorForm.voice);
+    const nextDraft = {
+      ...tutorForm,
+      realtimeModel,
+      voice: supportedVoice,
     };
 
     setTutorForm(nextDraft);
@@ -4347,6 +4549,65 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function generateScriptAudio(scriptId = "", force = false) {
+    if (!experience) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    setScriptAudioStatus("generating");
+    setScriptAudioError("");
+    try {
+      const payload = await apiFetch<ScriptAudioPayload>(
+        `/api/experiences/${experience.id}/script-audio/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            force,
+            scriptId,
+          }),
+        },
+      );
+      setScriptAudioItems(payload.scripts);
+      if (payload.errors?.length) {
+        setScriptAudioError(payload.errors.join(" "));
+      }
+    } catch (generateError) {
+      setScriptAudioError(
+        generateError instanceof Error
+          ? generateError.message
+          : "Could not generate scripted audio.",
+      );
+    } finally {
+      setScriptAudioStatus("idle");
+    }
+  }
+
+  function playScriptAudioPreview(item: ScriptAudioItem) {
+    if (!item.audioUrl) return;
+
+    scriptAudioPreviewRef.current?.pause();
+    const audio = new Audio(item.audioUrl);
+    scriptAudioPreviewRef.current = audio;
+    audio.onended = () => {
+      if (scriptAudioPreviewRef.current === audio) {
+        scriptAudioPreviewRef.current = null;
+      }
+    };
+    audio.onerror = () => {
+      if (scriptAudioPreviewRef.current === audio) {
+        scriptAudioPreviewRef.current = null;
+        setScriptAudioError("Could not play cached scripted audio.");
+      }
+    };
+    void audio.play().catch(() => {
+      if (scriptAudioPreviewRef.current === audio) {
+        scriptAudioPreviewRef.current = null;
+        setScriptAudioError("Could not play cached scripted audio.");
+      }
+    });
+  }
+
   async function runExperience() {
     if (!experience) return;
 
@@ -4630,6 +4891,115 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </div>
         ) : null}
 
+        {step.actionType === "interactive" ? (
+          <>
+            <div className="event-context-line interactive-action-line">
+              <span className="event-detail-label">INTERACTIVE</span>
+              <input
+                aria-label="Interactive id"
+                onChange={(event) =>
+                  updateConfig("interactiveId", event.target.value)
+                }
+                placeholder="delivery_data"
+                type="text"
+                value={stringConfigValue(step.config, "interactiveId")}
+              />
+              <span className="event-detail-label">MODE</span>
+              <input
+                aria-label="Interactive mode"
+                onChange={(event) => updateConfig("mode", event.target.value)}
+                placeholder="table"
+                type="text"
+                value={stringConfigValue(step.config, "mode")}
+              />
+            </div>
+            <div className="event-context-line interactive-action-line">
+              <span className="event-detail-label">TITLE</span>
+              <input
+                aria-label="Interactive title"
+                onChange={(event) => updateConfig("title", event.target.value)}
+                placeholder="Delivery data"
+                type="text"
+                value={stringConfigValue(step.config, "title")}
+              />
+              <span className="event-inline-operator">{"->"}</span>
+              <select
+                aria-label="Interactive completion event"
+                onChange={(event) =>
+                  updateConfig("triggersEvent", event.target.value)
+                }
+                value={triggerEventSlug}
+              >
+                <option value="">No completion route</option>
+                {triggerEventSlug && !hasTriggerEventOption ? (
+                  <option value={triggerEventSlug}>{triggerEventSlug}</option>
+                ) : null}
+                {editorEvents.map((event) => (
+                  <option key={event.id} value={event.slug}>
+                    {event.title || event.slug}
+                    {event.isStart ? " (start)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="event-context-line single-value">
+              <span className="event-detail-label">PROMPT</span>
+              <input
+                aria-label="Interactive prompt"
+                onChange={(event) => updateConfig("prompt", event.target.value)}
+                placeholder="What the learner should do here."
+                type="text"
+                value={stringConfigValue(step.config, "prompt")}
+              />
+            </div>
+          </>
+        ) : null}
+
+        {step.actionType === "interactive_update" ? (
+          <>
+            <div className="event-context-line interactive-action-line">
+              <span className="event-detail-label">UPDATE</span>
+              <input
+                aria-label="Interactive id"
+                onChange={(event) =>
+                  updateConfig("interactiveId", event.target.value)
+                }
+                placeholder="delivery_data"
+                type="text"
+                value={stringConfigValue(step.config, "interactiveId")}
+              />
+              <span className="event-detail-label">MODE</span>
+              <input
+                aria-label="Interactive mode"
+                onChange={(event) => updateConfig("mode", event.target.value)}
+                placeholder="graph"
+                type="text"
+                value={stringConfigValue(step.config, "mode")}
+              />
+            </div>
+            <div className="event-context-line single-value">
+              <span className="event-detail-label">TITLE</span>
+              <input
+                aria-label="Interactive title"
+                onChange={(event) => updateConfig("title", event.target.value)}
+                placeholder="Optional display title"
+                type="text"
+                value={stringConfigValue(step.config, "title")}
+              />
+            </div>
+            <div className="event-context-line single-value">
+              <span className="event-detail-label">PROMPT</span>
+              <input
+                aria-label="Interactive prompt"
+                onChange={(event) => updateConfig("prompt", event.target.value)}
+                placeholder="Optional updated prompt."
+                type="text"
+                value={stringConfigValue(step.config, "prompt")}
+              />
+            </div>
+          </>
+        ) : null}
+
         {step.actionType === "set_ui_trigger" ? (
           <div className="event-context-line">
             <span className="event-detail-label">WHEN</span>
@@ -4802,9 +5172,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onClassificationModelChange={(classificationModel) =>
                   updateTutorDraft("classificationModel", classificationModel)
                 }
-                onModelChange={(realtimeModel) =>
-                  updateTutorDraft("realtimeModel", realtimeModel)
-                }
+                onModelChange={updateTutorModelDraft}
                 onNameChange={(assistantName) =>
                   updateTutorDraft("assistantName", assistantName)
                 }
@@ -4824,6 +5192,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               />
             </section>
 
+            <section className="editor-section script-audio-section">
+              <ScriptAudioPanel
+                error={scriptAudioError}
+                isBusy={scriptAudioStatus === "loading" || scriptAudioStatus === "generating"}
+                items={scriptAudioItems}
+                onGenerateAll={() => void generateScriptAudio()}
+                onGenerateOne={(scriptId) => void generateScriptAudio(scriptId)}
+                onPlay={playScriptAudioPreview}
+                onRefresh={() => void loadScriptAudioItems(experience.id)}
+                status={scriptAudioStatus}
+              />
+            </section>
+
             <section className="editor-section event-editor-section">
               <div className="event-authoring-grid">
                 <aside className="event-outline" aria-label="Events">
@@ -4836,6 +5217,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       type="search"
                       value={eventSearch}
                     />
+                    <button
+                      aria-pressed={isEventGraphOpen}
+                      className="event-create-button secondary"
+                      onClick={() => setIsEventGraphOpen((current) => !current)}
+                      type="button"
+                    >
+                      Graph
+                    </button>
                     <button
                       className="event-create-button"
                       onClick={() => void createEditorEvent()}
@@ -4901,6 +5290,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       <div className="event-outline-empty">No events</div>
                     ) : null}
                   </div>
+                  {isEventGraphOpen ? (
+                    <EventGraphView
+                      events={editorEvents}
+                      onSelectEvent={(eventId) => void selectEditorEvent(eventId)}
+                      selectedEventId={selectedEvent?.id ?? ""}
+                    />
+                  ) : null}
                 </aside>
 
                 <div className="event-workspace">
@@ -5347,6 +5743,175 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 value={stringConfigValue(step.config, "selector")}
                               />
                             </div>
+                          ) : null}
+
+                          {step.actionType === "interactive" ? (
+                            <>
+                              <div className="event-context-line interactive-action-line">
+                                <span className="event-detail-label">
+                                  INTERACTIVE
+                                </span>
+                                <input
+                                  aria-label="Interactive id"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "interactiveId",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="delivery_data"
+                                  type="text"
+                                  value={stringConfigValue(
+                                    step.config,
+                                    "interactiveId",
+                                  )}
+                                />
+                                <span className="event-detail-label">MODE</span>
+                                <input
+                                  aria-label="Interactive mode"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "mode",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="table"
+                                  type="text"
+                                  value={stringConfigValue(step.config, "mode")}
+                                />
+                              </div>
+                              <div className="event-context-line interactive-action-line">
+                                <span className="event-detail-label">TITLE</span>
+                                <input
+                                  aria-label="Interactive title"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "title",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Delivery data"
+                                  type="text"
+                                  value={stringConfigValue(step.config, "title")}
+                                />
+                                <span className="event-inline-operator">
+                                  {"->"}
+                                </span>
+                                <select
+                                  aria-label="Interactive completion event"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "triggersEvent",
+                                      event.target.value,
+                                    )
+                                  }
+                                  value={triggerEventSlug}
+                                >
+                                  <option value="">No completion route</option>
+                                  {triggerEventSlug && !hasTriggerEventOption ? (
+                                    <option value={triggerEventSlug}>
+                                      {triggerEventSlug}
+                                    </option>
+                                  ) : null}
+                                  {editorEvents.map((event) => (
+                                    <option key={event.id} value={event.slug}>
+                                      {event.title || event.slug}
+                                      {event.isStart ? " (start)" : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="event-context-line single-value">
+                                <span className="event-detail-label">PROMPT</span>
+                                <input
+                                  aria-label="Interactive prompt"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "prompt",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="What the learner should do here."
+                                  type="text"
+                                  value={stringConfigValue(step.config, "prompt")}
+                                />
+                              </div>
+                            </>
+                          ) : null}
+
+                          {step.actionType === "interactive_update" ? (
+                            <>
+                              <div className="event-context-line interactive-action-line">
+                                <span className="event-detail-label">UPDATE</span>
+                                <input
+                                  aria-label="Interactive id"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "interactiveId",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="delivery_data"
+                                  type="text"
+                                  value={stringConfigValue(
+                                    step.config,
+                                    "interactiveId",
+                                  )}
+                                />
+                                <span className="event-detail-label">MODE</span>
+                                <input
+                                  aria-label="Interactive mode"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "mode",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="graph"
+                                  type="text"
+                                  value={stringConfigValue(step.config, "mode")}
+                                />
+                              </div>
+                              <div className="event-context-line single-value">
+                                <span className="event-detail-label">TITLE</span>
+                                <input
+                                  aria-label="Interactive title"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "title",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Optional display title"
+                                  type="text"
+                                  value={stringConfigValue(step.config, "title")}
+                                />
+                              </div>
+                              <div className="event-context-line single-value">
+                                <span className="event-detail-label">PROMPT</span>
+                                <input
+                                  aria-label="Interactive prompt"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "prompt",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Optional updated prompt."
+                                  type="text"
+                                  value={stringConfigValue(step.config, "prompt")}
+                                />
+                              </div>
+                            </>
                           ) : null}
 
                           {step.actionType === "set_ui_trigger" ? (
@@ -6835,6 +7400,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [resolvedSlide, setResolvedSlide] = useState<ResolvedSlide | null>(null);
   const [slideStatus, setSlideStatus] = useState<SlideStatus>("empty");
   const [slideError, setSlideError] = useState("");
+  const [runtimeInteractive, setRuntimeInteractive] =
+    useState<RuntimeInteractive | null>(null);
+  const [runtimeInteractiveState, setRuntimeInteractiveState] = useState<
+    Record<string, unknown>
+  >({});
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("idle");
   const [chatStatus, setChatStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -6885,6 +7455,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     overrides: Partial<RuntimeUiState> = {},
   ): RuntimeUiState {
     return {
+      interactive: runtimeInteractiveState,
       notesVisible,
       ...overrides,
     };
@@ -6925,6 +7496,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         setSlideError("");
         setSlideRef(slide.slideRef);
         setSlideStatus("ready");
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
       }
 
       if (action.type === "slide_error") {
@@ -6935,6 +7508,43 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             : "Could not load that slide.",
         );
         setSlideStatus("error");
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
+      }
+
+      if (action.type === "interactive") {
+        const interactive = runtimeInteractiveFromRecord(action);
+        if (!interactive) continue;
+
+        setRuntimeInteractive(interactive);
+        setRuntimeInteractiveState(recordFromUnknown(interactive.config.initialState));
+        setResolvedSlide(null);
+        setSlideError("");
+        setSlideStatus("empty");
+      }
+
+      if (action.type === "interactive_update") {
+        const update = runtimeInteractiveFromRecord(action);
+        if (!update) continue;
+
+        setRuntimeInteractive((current) => {
+          const base = current?.interactiveId === update.interactiveId ? current : update;
+          return {
+            ...base,
+            config: {
+              ...base.config,
+              ...update.config,
+            },
+            mode: update.mode || base.mode,
+            prompt: update.prompt || base.prompt,
+            title: update.title || base.title,
+          };
+        });
+      }
+
+      if (action.type === "interactive_clear") {
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
       }
     }
 
@@ -7023,6 +7633,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         : {};
     const highlightsValue = uiRuntime.highlights;
     const buttonsValue = uiRuntime.buttons;
+    const interactiveValue = uiRuntime.interactive;
     const slideValue = uiRuntime.slide;
     const slideErrorValue = uiRuntime.slideError;
     const triggersValue = uiRuntime.triggers;
@@ -7088,6 +7699,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setRuntimeHighlights(nextHighlights);
     setRuntimeTriggers(nextTriggers);
 
+    const nextInteractive = runtimeInteractiveFromRecord(interactiveValue);
+    if (nextInteractive) {
+      setRuntimeInteractive(nextInteractive);
+      setRuntimeInteractiveState(
+        recordFromUnknown(nextInteractive.config.initialState),
+      );
+      setResolvedSlide(null);
+      setSlideError("");
+      setSlideStatus("empty");
+      return;
+    }
+
     const hasRuntimeSlideState =
       Object.prototype.hasOwnProperty.call(uiRuntime, "slide") ||
       Object.prototype.hasOwnProperty.call(uiRuntime, "slideError");
@@ -7109,14 +7732,25 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         setSlideError("");
         setSlideRef(nextSlide.slideRef);
         setSlideStatus("ready");
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
       } else if (nextSlideError) {
         setResolvedSlide(null);
         setSlideError(nextSlideError);
         setSlideStatus("error");
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
       } else {
         setResolvedSlide(null);
         setSlideError("");
         setSlideStatus("empty");
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(uiRuntime, "interactive")) {
+        setRuntimeInteractive(null);
+        setRuntimeInteractiveState({});
       }
     }
   }
@@ -7506,6 +8140,16 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     void runSessionEventBySlug(button.triggersEvent, currentRuntimeUiState(), "", {
       clearButtons: true,
     });
+  }
+
+  function completeRuntimeInteractive(nextState: Record<string, unknown>) {
+    setRuntimeInteractiveState(nextState);
+    if (!runtimeInteractive?.triggersEvent) return;
+
+    void runSessionEventBySlug(
+      runtimeInteractive.triggersEvent,
+      currentRuntimeUiState({ interactive: nextState }),
+    );
   }
 
   function toggleRuntimeNotes() {
@@ -8667,11 +9311,20 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                         classificationModel,
                       })),
                     onModelChange: (model) => {
+                      const nextVoice = isRealtimeVoiceSupported(
+                        model,
+                        selectedVoice,
+                      )
+                        ? selectedVoice
+                        : (realtimeVoiceOptionsForModel(model)[0]?.id ??
+                          selectedVoice);
                       setTutorForm((current) => ({
                         ...current,
                         realtimeModel: model,
+                        voice: nextVoice,
                       }));
                       setSelectedModel(model);
+                      setSelectedVoice(nextVoice);
                     },
                     onNameChange: (assistantName) =>
                       setTutorForm((current) => ({
@@ -8728,6 +9381,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             <PanelWindow ariaLabel="Panel five" density="main">
               <MainPanelContent
                 error={slideError}
+                interactive={runtimeInteractive}
+                interactiveState={runtimeInteractiveState}
+                onInteractiveComplete={completeRuntimeInteractive}
+                onInteractiveStateChange={setRuntimeInteractiveState}
                 slide={resolvedSlide}
                 status={slideStatus}
               />
@@ -9123,6 +9780,173 @@ function RuntimePlaceholderPanel({
   );
 }
 
+function ScriptAudioPanel({
+  error,
+  isBusy,
+  items,
+  onGenerateAll,
+  onGenerateOne,
+  onPlay,
+  onRefresh,
+  status,
+}: {
+  error: string;
+  isBusy: boolean;
+  items: ScriptAudioItem[];
+  onGenerateAll: () => void;
+  onGenerateOne: (scriptId: string) => void;
+  onPlay: (item: ScriptAudioItem) => void;
+  onRefresh: () => void;
+  status: "idle" | "loading" | "generating";
+}) {
+  const cachedCount = items.filter((item) => item.cached && item.wordsCached).length;
+  const statusLabel =
+    status === "generating"
+      ? "Generating"
+      : status === "loading"
+        ? "Loading"
+        : `${cachedCount}/${items.length}`;
+
+  return (
+    <div className="script-audio-panel">
+      <div className="script-audio-header">
+        <div>
+          <span>Script audio</span>
+          <strong>{statusLabel}</strong>
+        </div>
+        <div className="script-audio-actions">
+          <button
+            className="header-action"
+            disabled={isBusy || !items.some((item) => item.canGenerate)}
+            onClick={onGenerateAll}
+            type="button"
+          >
+            Generate
+          </button>
+          <button
+            className="header-action secondary"
+            disabled={isBusy}
+            onClick={onRefresh}
+            type="button"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="script-audio-list">
+        {items.map((item) => (
+          <div className="script-audio-row" key={item.id}>
+            <span className="script-audio-source">{item.source}</span>
+            <span className="script-audio-preview">{item.preview || "---"}</span>
+            <span className={`script-audio-pill ${item.cached ? "ready" : ""}`}>
+              {item.cached ? "audio" : "new"}
+            </span>
+            <span className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}>
+              {item.wordsCached ? "words" : "timing"}
+            </span>
+            <button
+              className="event-icon-button"
+              disabled={!item.audioUrl}
+              onClick={() => onPlay(item)}
+              title="Play cached audio"
+              type="button"
+            >
+              <PlayIcon />
+            </button>
+            <button
+              className="event-icon-button"
+              disabled={isBusy || !item.canGenerate}
+              onClick={() => onGenerateOne(item.id)}
+              title="Generate this script"
+              type="button"
+            >
+              <RefreshIcon />
+            </button>
+          </div>
+        ))}
+        {!items.length ? <div className="script-audio-empty">---</div> : null}
+      </div>
+      {error ? <p className="control-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function EventGraphView({
+  events,
+  onSelectEvent,
+  selectedEventId,
+}: {
+  events: ExperienceEvent[];
+  onSelectEvent: (eventId: string) => void;
+  selectedEventId: string;
+}) {
+  const sortedEvents = sortedExperienceEvents(events);
+  const indexBySlug = new Map<string, number>();
+  sortedEvents.forEach((event, index) => {
+    indexBySlug.set(event.slug, index);
+    indexBySlug.set(event.id, index);
+  });
+  const rowHeight = 44;
+  const height = Math.max(74, sortedEvents.length * rowHeight + 28);
+  const links = sortedEvents.flatMap((event, sourceIndex) =>
+    eventOutgoingSlugs(event)
+      .map((slug) => ({
+        slug,
+        sourceIndex,
+        targetIndex: indexBySlug.get(slug) ?? -1,
+      }))
+      .filter((link) => link.targetIndex >= 0),
+  );
+
+  return (
+    <div className="event-graph-view" aria-label="Event graph">
+      <svg
+        aria-hidden="true"
+        className="event-graph-lines"
+        viewBox={`0 0 260 ${height}`}
+      >
+        {links.map((link, index) => {
+          const startY = 24 + link.sourceIndex * rowHeight;
+          const endY = 24 + link.targetIndex * rowHeight;
+          const midX = link.sourceIndex < link.targetIndex ? 206 : 224;
+          return (
+            <path
+              d={`M 102 ${startY} C ${midX} ${startY}, ${midX} ${endY}, 138 ${endY}`}
+              key={`${link.sourceIndex}-${link.targetIndex}-${link.slug}-${index}`}
+            />
+          );
+        })}
+      </svg>
+      <div className="event-graph-nodes">
+        {sortedEvents.map((event) => {
+          const stats = eventTransitionStats(events, event);
+          return (
+            <button
+              className={[
+                "event-graph-node",
+                event.id === selectedEventId ? "is-selected" : "",
+                stats.isUnlinked ? "is-unlinked" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={event.id}
+              onClick={() => onSelectEvent(event.id)}
+              type="button"
+            >
+              <span>{event.title || event.slug}</span>
+              <small>
+                {event.isStart ? "start" : `${stats.incomingCount} in`} /{" "}
+                {stats.outgoingCount} out
+              </small>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ExperienceControls({
   chatStatus,
   error,
@@ -9289,6 +10113,7 @@ function TutorControls({
         },
         ...classificationModelOptions,
       ];
+  const voiceOptions = realtimeVoiceOptionsForModel(tutor.realtimeModel);
   const sampleActionLabel =
     sampleStatus === "playing"
       ? "Stop voice sample"
@@ -9404,7 +10229,7 @@ function TutorControls({
             }
             value={tutor.voice}
           >
-            {realtimeVoiceOptions.map((option) => (
+            {voiceOptions.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.label}
               </option>
@@ -9573,13 +10398,32 @@ function SlideControls({
 
 function MainPanelContent({
   error,
+  interactive,
+  interactiveState,
+  onInteractiveComplete,
+  onInteractiveStateChange,
   slide,
   status,
 }: {
   error: string;
+  interactive: RuntimeInteractive | null;
+  interactiveState: Record<string, unknown>;
+  onInteractiveComplete: (state: Record<string, unknown>) => void;
+  onInteractiveStateChange: (state: Record<string, unknown>) => void;
   slide: ResolvedSlide | null;
   status: SlideStatus;
 }) {
+  if (interactive) {
+    return (
+      <InteractiveWorkspace
+        interactive={interactive}
+        onComplete={onInteractiveComplete}
+        onStateChange={onInteractiveStateChange}
+        state={interactiveState}
+      />
+    );
+  }
+
   if (slide) {
     return (
       <div className="slide-workspace">
@@ -9609,6 +10453,162 @@ function MainPanelContent({
       aria-label={status === "loading" ? "Loading slide" : "Empty slide panel"}
       className="slide-workspace empty"
     />
+  );
+}
+
+function InteractiveWorkspace({
+  interactive,
+  onComplete,
+  onStateChange,
+  state,
+}: {
+  interactive: RuntimeInteractive;
+  onComplete: (state: Record<string, unknown>) => void;
+  onStateChange: (state: Record<string, unknown>) => void;
+  state: Record<string, unknown>;
+}) {
+  if (interactive.interactiveId === "delivery_data") {
+    return (
+      <DeliveryDataInteractive
+        interactive={interactive}
+        onComplete={onComplete}
+        onStateChange={onStateChange}
+        state={state}
+      />
+    );
+  }
+
+  return (
+    <div className="interactive-workspace">
+      <div className="interactive-shell generic-interactive">
+        <div className="interactive-header">
+          <span>{interactive.interactiveId}</span>
+          <strong>{interactive.title}</strong>
+        </div>
+        {interactive.prompt ? <p>{interactive.prompt}</p> : null}
+        <textarea
+          aria-label={`${interactive.title} response`}
+          onChange={(event) =>
+            onStateChange({ ...state, response: event.target.value })
+          }
+          placeholder="---"
+          value={typeof state.response === "string" ? state.response : ""}
+        />
+        {interactive.triggersEvent ? (
+          <button
+            className="interactive-primary-action"
+            onClick={() =>
+              onComplete({
+                ...state,
+                completedAt: new Date().toISOString(),
+              })
+            }
+            type="button"
+          >
+            Done
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DeliveryDataInteractive({
+  interactive,
+  onComplete,
+  onStateChange,
+  state,
+}: {
+  interactive: RuntimeInteractive;
+  onComplete: (state: Record<string, unknown>) => void;
+  onStateChange: (state: Record<string, unknown>) => void;
+  state: Record<string, unknown>;
+}) {
+  const rows = [
+    { distance: 1.2, minutes: 7, order: "A-184" },
+    { distance: 2.1, minutes: 12, order: "B-302" },
+    { distance: 3.4, minutes: 18, order: "C-119" },
+    { distance: 4.8, minutes: 27, order: "D-447" },
+  ];
+  const estimate =
+    typeof state.estimate === "string" ? state.estimate : String(state.estimate ?? "");
+  const mode = interactive.mode || "table";
+  const maxMinutes = Math.max(...rows.map((row) => row.minutes));
+
+  return (
+    <div className="interactive-workspace">
+      <div className="interactive-shell delivery-interactive">
+        <div className="interactive-header">
+          <span>{mode}</span>
+          <strong>{interactive.title}</strong>
+        </div>
+        {interactive.prompt ? <p>{interactive.prompt}</p> : null}
+
+        {mode === "graph" ? (
+          <div className="delivery-bars" aria-label="Delivery data graph">
+            {rows.map((row) => (
+              <div className="delivery-bar-row" key={row.order}>
+                <span>{row.order}</span>
+                <div>
+                  <i style={{ width: `${(row.minutes / maxMinutes) * 100}%` }} />
+                </div>
+                <strong>{row.minutes}m</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <table className="delivery-table">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Distance</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.order}>
+                  <td>{row.order}</td>
+                  <td>{row.distance.toFixed(1)} mi</td>
+                  <td>{row.minutes} min</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <div className="interactive-response-row">
+          <label>
+            <span>Estimate</span>
+            <input
+              inputMode="numeric"
+              onChange={(event) =>
+                onStateChange({ ...state, estimate: event.target.value })
+              }
+              placeholder="minutes"
+              type="text"
+              value={estimate}
+            />
+          </label>
+          {interactive.triggersEvent ? (
+            <button
+              className="interactive-primary-action"
+              disabled={!estimate.trim()}
+              onClick={() =>
+                onComplete({
+                  ...state,
+                  completedAt: new Date().toISOString(),
+                  estimate: estimate.trim(),
+                })
+              }
+              type="button"
+            >
+              Submit
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -9842,6 +10842,26 @@ function PlayIcon() {
       width="13"
     >
       <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M20 12a8 8 0 0 1-13.7 5.7M4 12a8 8 0 0 1 13.7-5.7M18 3v4h-4M6 21v-4h4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
     </svg>
   );
 }

@@ -30,6 +30,7 @@ from .audio_cache import (
     openai_error_message,
     script_audio_audio_path,
     script_audio_metadata_path,
+    script_audio_words_path,
     voice_sample_audio_path,
 )
 from .models import (
@@ -56,9 +57,10 @@ from .slides import (
 DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
 OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
 REALTIME_MODELS = {
-    "gpt-realtime-mini",
-    "gpt-realtime-1.5",
     "gpt-realtime-2",
+    "gpt-realtime-1.5",
+    "gpt-realtime",
+    "gpt-realtime-mini",
 }
 CLASSIFICATION_MODELS = {
     "gpt-5.5",
@@ -106,7 +108,8 @@ DEFAULT_CLASSIFIER_RESULT_SCHEMA = {
 }
 SCRIPT_MARKER_PATTERN = re.compile(
     (
-        r"\[(show_image|slide|gslide|highlight|highlight_on|highlight_off|"
+        r"\[(show_image|slide|gslide|interactive|interactive_update|"
+        r"interactive_clear|highlight|highlight_on|highlight_off|"
         r"overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)"
         r"(?::\s*([^\]]+))?\]"
     ),
@@ -117,6 +120,10 @@ SCRIPT_WORD_PATTERN = re.compile(r"\S+")
 
 def normalize_script_speech(text):
     return " ".join(str(text or "").split())
+
+
+def normalized_interactive_config(value):
+    return value if isinstance(value, dict) else {}
 
 
 def script_word_count(text):
@@ -220,6 +227,41 @@ def script_cues_with_word_times(cues, words):
     return timed_cues
 
 
+def build_interactive_action(
+    *,
+    config,
+    event_id="",
+    metadata=None,
+    runtime_context=None,
+    step_id="",
+    update=False,
+):
+    runtime_context = runtime_context or {}
+    metadata = dict(metadata or {})
+    interactive_id = render_context_template(
+        config.get("interactiveId") or config.get("name") or "delivery_data",
+        runtime_context,
+    ).strip()
+    if not interactive_id:
+        return None
+
+    action = {
+        "config": normalized_interactive_config(config.get("config")),
+        "eventId": str(event_id),
+        "interactiveId": interactive_id,
+        "mode": render_context_template(config.get("mode", ""), runtime_context).strip(),
+        "prompt": render_context_template(config.get("prompt", ""), runtime_context).strip(),
+        "stepId": step_id,
+        "title": render_context_template(config.get("title", ""), runtime_context).strip(),
+        "type": "interactive_update" if update else "interactive",
+        **metadata,
+    }
+    triggers_event = str(config.get("triggersEvent", "")).strip()
+    if triggers_event:
+        action["triggersEvent"] = triggers_event
+    return action
+
+
 def resolve_script_marker_action(marker, config, runtime_context):
     marker_type = marker.get("markerType")
     args = marker.get("args") or []
@@ -259,6 +301,31 @@ def resolve_script_marker_action(marker, config, runtime_context):
             "slideRef": slide_ref,
             "type": "gslide",
         }
+
+    if marker_type in {"interactive", "interactive_update"}:
+        interactive_id = (
+            render_context_template(args[0] if args else "", runtime_context).strip()
+            or render_context_template(config.get("interactiveId", ""), runtime_context).strip()
+            or "delivery_data"
+        )
+        mode = (
+            render_context_template(args[1] if len(args) > 1 else "", runtime_context).strip()
+            or render_context_template(config.get("mode", ""), runtime_context).strip()
+        )
+        return build_interactive_action(
+            config={
+                "config": config.get("interactiveConfig", {}),
+                "interactiveId": interactive_id,
+                "mode": mode,
+                "prompt": config.get("interactivePrompt", ""),
+                "title": config.get("interactiveTitle", ""),
+            },
+            runtime_context=runtime_context,
+            update=marker_type == "interactive_update",
+        )
+
+    if marker_type == "interactive_clear":
+        return {"type": "interactive_clear"}
 
     if marker_type == "highlight":
         selector = str(args[0] if args else "").strip()
@@ -625,6 +692,9 @@ def ensure_tutor_settings(experience):
     if not tutor_settings.classification_model:
         tutor_settings.classification_model = settings.DLU_CLASSIFICATION_DEFAULT_MODEL
         tutor_settings.save(update_fields=["classification_model", "updated_at"])
+    if tutor_settings.realtime_model not in REALTIME_MODELS:
+        tutor_settings.realtime_model = settings.DLU_REALTIME_DEFAULT_MODEL
+        tutor_settings.save(update_fields=["realtime_model", "updated_at"])
     return tutor_settings
 
 
@@ -713,6 +783,176 @@ def session_payload(session):
         "session": serialize_session(session),
         "messages": [serialize_message(message) for message in session.messages.all()],
     }
+
+
+def script_is_static_for_audio(text):
+    return "{{" not in text and "{%" not in text and "{#" not in text
+
+
+def script_audio_item_from_text(experience, tutor_settings, source, raw_text, index):
+    script, _ = parse_script_markers(raw_text)
+    script = script.strip()
+    if not script:
+        return None
+
+    cache_key = compute_script_audio_cache_key(
+        assistant_name=tutor_settings.assistant_name,
+        realtime_model=tutor_settings.realtime_model,
+        script=script,
+        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+        voice=tutor_settings.voice,
+        voice_instructions=tutor_settings.voice_instructions,
+    )
+    audio_path = script_audio_audio_path(cache_key)
+    words_path = script_audio_words_path(
+        cache_key,
+        settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+    )
+    cached = audio_path.exists()
+    words_cached = words_path.exists()
+    return {
+        "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
+        "cacheKey": cache_key,
+        "canGenerate": script_is_static_for_audio(raw_text),
+        "cached": cached,
+        "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
+        "experienceId": str(experience.id),
+        "id": hashlib.sha1(
+            f"{experience.id}:{index}:{source}:{script}".encode("utf-8")
+        ).hexdigest()[:16],
+        "preview": script[:240],
+        "script": script,
+        "source": source,
+        "wordsCached": words_cached,
+    }
+
+
+def iter_script_audio_texts_from_action_sequence(actions, source_prefix):
+    if not isinstance(actions, list):
+        return
+
+    for index, action in enumerate(actions, start=1):
+        if not isinstance(action, dict):
+            continue
+        action_type = str(action.get("actionType", "")).strip()
+        config = action.get("config") if isinstance(action.get("config"), dict) else {}
+        label = str(action.get("label", "")).strip()
+        source = f"{source_prefix} / {label or action_type or f'action {index}'}"
+        if action_type == EventActionStep.ActionType.SCRIPT:
+            yield source, str(config.get("text", ""))
+
+
+def collect_experience_script_audio_items(experience):
+    tutor_settings = ensure_tutor_settings(experience)
+    items = []
+    seen_scripts = set()
+
+    for event in experience.events.order_by("sort_order", "created_at"):
+        event_source = event.title or event.slug or "Event"
+        for step in event.steps.order_by("sort_order", "created_at"):
+            if step.action_type == EventActionStep.ActionType.SCRIPT:
+                source = f"{event_source} / {step.label or DEFAULT_SCRIPT_STEP_LABEL}"
+                item = script_audio_item_from_text(
+                    experience,
+                    tutor_settings,
+                    source,
+                    str((step.config or {}).get("text", "")),
+                    len(items),
+                )
+                if item and item["script"] not in seen_scripts:
+                    seen_scripts.add(item["script"])
+                    items.append(item)
+
+        for tool in event.chat_tools.order_by("sort_order", "created_at"):
+            for source, raw_text in iter_script_audio_texts_from_action_sequence(
+                tool.handler_actions,
+                f"{event_source} / FC route {tool.name}",
+            ):
+                item = script_audio_item_from_text(
+                    experience,
+                    tutor_settings,
+                    source,
+                    raw_text,
+                    len(items),
+                )
+                if item and item["script"] not in seen_scripts:
+                    seen_scripts.add(item["script"])
+                    items.append(item)
+
+        for check in event.conversation_checks.order_by("sort_order", "created_at"):
+            for source, raw_text in iter_script_audio_texts_from_action_sequence(
+                check.handler_actions,
+                f"{event_source} / Check {check.title}",
+            ):
+                item = script_audio_item_from_text(
+                    experience,
+                    tutor_settings,
+                    source,
+                    raw_text,
+                    len(items),
+                )
+                if item and item["script"] not in seen_scripts:
+                    seen_scripts.add(item["script"])
+                    items.append(item)
+
+        for group in event.classifier_groups.order_by("sort_order", "created_at"):
+            for source, raw_text in iter_script_audio_texts_from_action_sequence(
+                group.handler_actions,
+                f"{event_source} / Classifiers {group.title}",
+            ):
+                item = script_audio_item_from_text(
+                    experience,
+                    tutor_settings,
+                    source,
+                    raw_text,
+                    len(items),
+                )
+                if item and item["script"] not in seen_scripts:
+                    seen_scripts.add(item["script"])
+                    items.append(item)
+
+    return items
+
+
+def generate_script_audio_item(request, experience, tutor_settings, item, force=False):
+    if not item.get("canGenerate"):
+        return False, "Dynamic scripts with template variables cannot be pregenerated yet."
+    if item.get("cached") and item.get("wordsCached") and not force:
+        return False, ""
+
+    if force:
+        audio_path = script_audio_audio_path(item["cacheKey"])
+        metadata_path = script_audio_metadata_path(item["cacheKey"])
+        words_path = script_audio_words_path(
+            item["cacheKey"],
+            settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+        )
+        for path in (audio_path, metadata_path, words_path):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
+    recording = get_or_create_script_audio(
+        api_key=settings.OPENAI_API_KEY,
+        assistant_name=tutor_settings.assistant_name,
+        realtime_model=tutor_settings.realtime_model,
+        safety_identifier=hash_safety_identifier(request.user),
+        script=item["script"],
+        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+        voice=tutor_settings.voice,
+        voice_instructions=tutor_settings.voice_instructions,
+    )
+    get_or_create_script_audio_words(
+        api_key=settings.OPENAI_API_KEY,
+        alignment_model=settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+        audio_path=recording.audio_path,
+        cache_key=recording.cache_key,
+        safety_identifier=hash_safety_identifier(request.user),
+        script=item["script"],
+    )
+    return True, ""
 
 
 def get_session_current_event(session):
@@ -1440,6 +1680,51 @@ def validate_action_config(action_type, value):
             return None, selector_error
         return {"selector": selector}, ""
 
+    if action_type in {
+        EventActionStep.ActionType.INTERACTIVE,
+        EventActionStep.ActionType.INTERACTIVE_UPDATE,
+    }:
+        interactive_id = str(value.get("interactiveId", "")).strip()
+        if not interactive_id:
+            return None, "Interactive id is required."
+        if len(interactive_id) > 80:
+            return None, "Interactive id is too long."
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", interactive_id):
+            return None, "Interactive id can only contain letters, numbers, dashes, and underscores."
+
+        title = str(value.get("title", "")).strip()
+        mode = str(value.get("mode", "")).strip()
+        prompt = str(value.get("prompt", "")).strip()
+        if len(title) > 160:
+            return None, "Interactive title is too long."
+        if len(mode) > 80:
+            return None, "Interactive mode is too long."
+        if len(prompt) > 1200:
+            return None, "Interactive prompt is too long."
+
+        config = normalized_interactive_config(value.get("config"))
+        if len(json.dumps(config, ensure_ascii=True)) > 8000:
+            return None, "Interactive config is too large."
+
+        triggers_event, event_error = validate_event_slug(
+            value.get("triggersEvent"),
+            label="Completion event",
+            required=False,
+        )
+        if event_error:
+            return None, event_error
+
+        payload = {
+            "config": config,
+            "interactiveId": interactive_id,
+            "mode": mode,
+            "prompt": prompt,
+            "title": title,
+        }
+        if action_type == EventActionStep.ActionType.INTERACTIVE:
+            payload["triggersEvent"] = triggers_event
+        return payload, ""
+
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
@@ -1697,6 +1982,7 @@ def apply_runtime_actions_to_state(
     ui_runtime = dict(state.get("uiRuntime") or {})
     buttons = list(ui_runtime.get("buttons") or [])
     highlights = dict(ui_runtime.get("highlights") or {})
+    interactive = ui_runtime.get("interactive")
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -1725,11 +2011,45 @@ def apply_runtime_actions_to_state(
                 "slideRef": str(action.get("slideRef", "")),
             }
             slide_error = ""
+            interactive = None
             continue
 
         if action_type == "slide_error":
             slide_error = str(action.get("detail", "Could not load that slide."))
             slide = None
+            interactive = None
+            continue
+
+        if action_type == "interactive":
+            interactive = {
+                "config": normalized_interactive_config(action.get("config")),
+                "eventId": str(action.get("eventId", "")),
+                "interactiveId": str(action.get("interactiveId", "")),
+                "mode": str(action.get("mode", "")),
+                "prompt": str(action.get("prompt", "")),
+                "stepId": str(action.get("stepId", "")),
+                "title": str(action.get("title", "")),
+                "triggersEvent": str(action.get("triggersEvent", "")),
+            }
+            slide = None
+            slide_error = ""
+            continue
+
+        if action_type == "interactive_update" and isinstance(interactive, dict):
+            interactive = {
+                **interactive,
+                "config": {
+                    **normalized_interactive_config(interactive.get("config")),
+                    **normalized_interactive_config(action.get("config")),
+                },
+            }
+            for key in ("interactiveId", "mode", "prompt", "title"):
+                if action.get(key):
+                    interactive[key] = str(action.get(key, ""))
+            continue
+
+        if action_type == "interactive_clear":
+            interactive = None
             continue
 
         if action_type == "button_choice":
@@ -1775,6 +2095,7 @@ def apply_runtime_actions_to_state(
 
     ui_runtime["buttons"] = buttons
     ui_runtime["highlights"] = highlights
+    ui_runtime["interactive"] = interactive
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
     ui_runtime["triggers"] = triggers
@@ -1810,7 +2131,7 @@ def initial_script_cue_actions_from_messages(messages):
 def hydrate_initial_script_runtime_state(session):
     state = dict(session.runtime_state or {})
     ui_runtime = dict(state.get("uiRuntime") or {})
-    if ui_runtime.get("slide") or ui_runtime.get("slideError"):
+    if ui_runtime.get("interactive") or ui_runtime.get("slide") or ui_runtime.get("slideError"):
         return
 
     messages = list(session.messages.order_by("sequence"))
@@ -2029,6 +2350,31 @@ def run_action_sequence(
                     **metadata,
                 }
             )
+            continue
+
+        if action_type == EventActionStep.ActionType.INTERACTIVE:
+            action = build_interactive_action(
+                config=config,
+                event_id=str(event.id),
+                metadata=metadata,
+                runtime_context=runtime_context,
+                step_id=step_id,
+            )
+            if action:
+                actions.append(action)
+            continue
+
+        if action_type == EventActionStep.ActionType.INTERACTIVE_UPDATE:
+            action = build_interactive_action(
+                config=config,
+                event_id=str(event.id),
+                metadata=metadata,
+                runtime_context=runtime_context,
+                step_id=step_id,
+                update=True,
+            )
+            if action:
+                actions.append(action)
             continue
 
         if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
@@ -2740,6 +3086,72 @@ def update_experience(request, experience_id):
 
     experience.save()
     return JsonResponse({"experience": serialize_experience(experience)})
+
+
+@require_http_methods(["GET", "POST"])
+def experience_script_audio(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    tutor_settings = ensure_tutor_settings(experience)
+    if request.method == "GET":
+        items = collect_experience_script_audio_items(experience)
+        return JsonResponse(
+            {
+                "generated": 0,
+                "scripts": items,
+                "totalScripts": len(items),
+            }
+        )
+
+    if not settings.OPENAI_API_KEY:
+        return JsonResponse(
+            {"detail": "OPENAI_API_KEY is not configured."},
+            status=500,
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+    force = bool(data.get("force", False))
+    target_id = str(data.get("scriptId", "")).strip()
+
+    generated = 0
+    errors = []
+    items = collect_experience_script_audio_items(experience)
+    for item in items:
+        if target_id and item["id"] != target_id:
+            continue
+        try:
+            did_generate, item_error = generate_script_audio_item(
+                request,
+                experience,
+                tutor_settings,
+                item,
+                force=force,
+            )
+            if did_generate:
+                generated += 1
+            if item_error:
+                errors.append(f"{item['source']}: {item_error}")
+        except (AudioGenerationError, AudioTimingError) as error:
+            errors.append(f"{item['source']}: {error.message}")
+
+    refreshed_items = collect_experience_script_audio_items(experience)
+    return JsonResponse(
+        {
+            "errors": errors,
+            "generated": generated,
+            "scripts": refreshed_items,
+            "totalScripts": len(refreshed_items),
+        },
+        status=207 if errors else 200,
+    )
 
 
 @require_http_methods(["GET", "POST"])

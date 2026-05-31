@@ -22,6 +22,7 @@ from core.views import (
     current_user,
     dev_login,
     experience_events,
+    experience_script_audio,
     experiences,
     frontend_index,
     health,
@@ -61,6 +62,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/events/",
         experience_events,
         name="experience-events",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/script-audio/",
+        experience_script_audio,
+        name="experience-script-audio",
     ),
     path(
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/",

@@ -1,15 +1,19 @@
 export const realtimeModelOptions = [
   {
-    id: "gpt-realtime-mini",
-    label: "Mini",
+    id: "gpt-realtime-2",
+    label: "Realtime 2",
   },
   {
     id: "gpt-realtime-1.5",
-    label: "1.5",
+    label: "Realtime 1.5",
   },
   {
-    id: "gpt-realtime-2",
-    label: "2",
+    id: "gpt-realtime",
+    label: "Realtime",
+  },
+  {
+    id: "gpt-realtime-mini",
+    label: "Mini",
   },
 ] as const;
 
@@ -29,6 +33,27 @@ export const realtimeVoiceOptions = [
 ] as const;
 
 export type RealtimeVoiceId = (typeof realtimeVoiceOptions)[number]["id"];
+
+const realtimeVoiceIds = realtimeVoiceOptions.map((voice) => voice.id);
+
+const realtimeVoicesByModel: Record<RealtimeModelId, RealtimeVoiceId[]> = {
+  "gpt-realtime-2": realtimeVoiceIds,
+  "gpt-realtime-1.5": realtimeVoiceIds,
+  "gpt-realtime": realtimeVoiceIds,
+  "gpt-realtime-mini": realtimeVoiceIds,
+};
+
+export function realtimeVoiceOptionsForModel(model: RealtimeModelId) {
+  const supported = new Set(realtimeVoicesByModel[model] ?? []);
+  return realtimeVoiceOptions.filter((voice) => supported.has(voice.id));
+}
+
+export function isRealtimeVoiceSupported(
+  model: RealtimeModelId,
+  voice: RealtimeVoiceId,
+) {
+  return Boolean(realtimeVoicesByModel[model]?.includes(voice));
+}
 
 export type RealtimeStatus =
   | "idle"
