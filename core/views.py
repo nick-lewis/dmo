@@ -3285,9 +3285,14 @@ def runtime_action_summary(action):
     action_type = str(action.get("type", "action") or "action")
     if action_type == "chat_message":
         message = action.get("message")
+        cue_count = action.get("scriptCueCount")
+        cue_suffix = ""
+        if isinstance(cue_count, int) and cue_count > 0:
+            cue_suffix = f" ({cue_count} cues)"
         if isinstance(message, dict):
-            return str(message.get("content", "") or "assistant message")[:180]
-        return "assistant message"
+            content = str(message.get("content", "") or "assistant message")[:180]
+            return f"{content}{cue_suffix}"
+        return f"assistant message{cue_suffix}"
     if action_type == "set_context":
         return f"{action.get('key', 'context')} = {compact_runtime_debug_value(action.get('value'))}"
     if action_type == "append_context_list":
@@ -3372,6 +3377,10 @@ def runtime_action_debug_details(action):
         "resultContextKey",
         "savedValues",
         "selector",
+        "scriptAudioCached",
+        "scriptCueCount",
+        "scriptCueTypes",
+        "scriptWordTiming",
         "slideRef",
         "soundPath",
         "source",
@@ -3899,12 +3908,21 @@ def run_action_sequence(
                 message.metadata["scriptAudio"] = script_audio
                 message.save(update_fields=["metadata"])
             messages.append(message)
+            script_audio_metadata = dict(message.metadata.get("scriptAudio") or {})
             actions.append(
                 {
                     "type": "chat_message",
                     "eventId": str(event.id),
                     "stepId": step_id,
                     "message": serialize_message(message),
+                    "scriptAudioCached": bool(script_audio_metadata.get("audioUrl")),
+                    "scriptCueCount": len(script_cues),
+                    "scriptCueTypes": [
+                        str(cue.get("action", {}).get("type", "") or "")
+                        for cue in script_cues
+                        if isinstance(cue.get("action"), dict)
+                    ],
+                    "scriptWordTiming": bool(script_audio_metadata.get("scriptWords")),
                     **metadata,
                 }
             )

@@ -898,6 +898,50 @@ class RuntimeContextActionTests(TestCase):
         )
         self.assertEqual(append_actions[-1]["list"], ["first", "second"])
 
+    def test_script_chat_message_debug_exposes_cue_plan(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            self.event,
+            [
+                {
+                    "id": "script-cues",
+                    "actionType": EventActionStep.ActionType.SCRIPT,
+                    "config": {
+                        "text": (
+                            "Hello [show_image: test-images/dLU-left.png] "
+                            "there [pause: 250]."
+                        )
+                    },
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(len(messages), 1)
+        chat_action = actions[0]
+        self.assertEqual(chat_action["type"], "chat_message")
+        self.assertEqual(chat_action["scriptCueCount"], 2)
+        self.assertEqual(chat_action["scriptCueTypes"], ["show_image", "pause"])
+        self.assertFalse(chat_action["scriptAudioCached"])
+        self.assertFalse(chat_action["scriptWordTiming"])
+
+        state = apply_runtime_actions_to_state({}, actions)
+        chat_trace = state["runtimeDebug"]["recentActions"][0]
+        self.assertEqual(chat_trace["type"], "chat_message")
+        self.assertEqual(chat_trace["details"]["scriptCueCount"], 2)
+        self.assertEqual(
+            chat_trace["details"]["scriptCueTypes"],
+            '["show_image","pause"]',
+        )
+        self.assertIn("(2 cues)", chat_trace["summary"])
+
 
 class RealtimeModelChoiceTests(TestCase):
     def test_model_choices_load_from_shared_frontend_registry(self):

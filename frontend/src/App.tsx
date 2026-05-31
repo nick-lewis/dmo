@@ -12062,6 +12062,34 @@ function RuntimeInspectorPanel({
   const timedAudioMessages = cachedAudioMessages.filter(
     (audio) => (audio?.scriptWords?.length ?? 0) > 0,
   );
+  const scriptCueRows = scriptedMessages
+    .flatMap((message) => {
+      const cachedAudio = cachedScriptAudioFromMessage(message);
+      const cues = cachedAudio?.scriptCues?.length
+        ? cachedAudio.scriptCues
+        : scriptCuesFromMessage(message);
+      const messageText = compactRuntimeValue(message.content, "script");
+
+      return cues.map((cue, index) => {
+        const actionType =
+          typeof cue.action.type === "string" ? cue.action.type : "action";
+        const cuePosition =
+          typeof cue.time === "number"
+            ? `${cue.time.toFixed(2)}s`
+            : typeof cue.wordIndex === "number"
+              ? `word ${cue.wordIndex}`
+              : `${Math.round(cue.progress * 100)}%`;
+
+        return {
+          detail: runtimeActionText(cue.action),
+          id: `${message.id}-${index}`,
+          message: messageText,
+          position: cuePosition,
+          type: actionType,
+        };
+      });
+    })
+    .slice(0, 24);
   const tutor = experience?.tutor ?? null;
   const realtimePromptDebug = recordFromUnknown(runtimeDebug.realtimePrompt);
   const realtimePromptInstructions =
@@ -12467,6 +12495,24 @@ function RuntimeInspectorPanel({
               <code>{timedAudioMessages.length}</code>
             </div>
           </div>
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Script cues</h2>
+          {scriptCueRows.length ? (
+            <div className="runtime-action-log">
+              {scriptCueRows.map((cue) => (
+                <div className="runtime-action-row" key={cue.id}>
+                  <span>{cue.position}</span>
+                  <strong>{cue.type}</strong>
+                  <p>{cue.detail}</p>
+                  <code className="runtime-action-detail">{cue.message}</code>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
         </section>
 
         <section className="runtime-inspector-section">
