@@ -932,12 +932,6 @@ def import_slug(value, fallback, max_length=180):
     return raw_slug[:max_length]
 
 
-def import_action_type(value):
-    action_type = str(value or "").strip()
-    valid_types = {choice[0] for choice in EventActionStep.ActionType.choices}
-    return action_type if action_type in valid_types else EventActionStep.ActionType.SCRIPT
-
-
 def import_json_object(value):
     return clone_json(value, {}) if isinstance(value, dict) else {}
 
@@ -946,20 +940,27 @@ def import_json_list(value):
     return clone_json(value, []) if isinstance(value, list) else []
 
 
+class ExperienceImportError(ValueError):
+    pass
+
+
+def import_action_sequence_or_raise(value, label):
+    actions, error = validate_action_sequence(value)
+    if error:
+        raise ExperienceImportError(f"{label}: {error}")
+    return actions
+
+
 def import_event_steps(event, steps):
-    if not isinstance(steps, list):
-        steps = []
-    for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            continue
+    for step in import_action_sequence_or_raise(steps, f"{event.title} actions"):
         EventActionStep.objects.create(
             event=event,
-            action_type=import_action_type(step.get("actionType")),
-            label=import_string(step.get("label"), "", max_length=160),
-            config=import_json_object(step.get("config")),
-            condition=import_json_object(step.get("condition")),
-            enabled=import_bool(step.get("enabled"), True),
-            sort_order=import_int(step.get("sortOrder"), index),
+            action_type=step["actionType"],
+            label=step["label"],
+            config=step["config"],
+            condition=step["condition"],
+            enabled=step["enabled"],
+            sort_order=step["sortOrder"],
         )
 
 
@@ -987,7 +988,10 @@ def import_chat_tools(event, tools):
                 strip=False,
             ),
             parameters=import_json_object(tool.get("parameters")),
-            handler_actions=import_json_list(tool.get("handlerActions")),
+            handler_actions=import_action_sequence_or_raise(
+                tool.get("handlerActions"),
+                f"{name} handler actions",
+            ),
             triggers_event=import_slug(tool.get("triggersEvent"), "", max_length=180)
             if tool.get("triggersEvent")
             else "",
@@ -1018,7 +1022,10 @@ def import_conversation_checks(event, checks):
                 "",
                 max_length=120,
             ),
-            handler_actions=import_json_list(check.get("handlerActions")),
+            handler_actions=import_action_sequence_or_raise(
+                check.get("handlerActions"),
+                f"{check.get('title') or 'Check'} handler actions",
+            ),
             triggers_event=import_slug(check.get("triggersEvent"), "", max_length=180)
             if check.get("triggersEvent")
             else "",
@@ -1051,7 +1058,10 @@ def import_classifier_groups(event, groups):
                 "_classifier_results",
                 max_length=120,
             ),
-            handler_actions=import_json_list(group.get("handlerActions")),
+            handler_actions=import_action_sequence_or_raise(
+                group.get("handlerActions"),
+                f"{group.get('title') or 'Classifier group'} handler actions",
+            ),
             triggers_event=import_slug(group.get("triggersEvent"), "", max_length=180)
             if group.get("triggersEvent")
             else "",
@@ -1113,104 +1123,120 @@ def create_experience_from_export_payload(user, payload):
     if events is not None and not isinstance(events, list):
         return None, "Imported events must be a list."
 
-    with transaction.atomic():
-        experience = Experience.objects.create(
-            user=user,
-            title=title,
-            slug=unique_experience_slug(user, title),
-            description=description,
-        )
-        tutor_data = data.get("tutor") if isinstance(data.get("tutor"), dict) else {}
-        tutor_settings = ensure_tutor_settings(experience)
-        tutor_settings.assistant_name = import_string(
-            tutor_data.get("assistantName"),
-            "dee-lou",
-            max_length=100,
-        )
-        tutor_settings.avatar_path = import_string(
-            tutor_data.get("avatarPath"),
-            "test-images/dLU-right.png",
-            max_length=220,
-        )
-        tutor_settings.classification_model = import_string(
-            tutor_data.get("classificationModel"),
-            settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
-            max_length=100,
-        )
-        tutor_settings.realtime_model = import_string(
-            tutor_data.get("realtimeModel"),
-            settings.DLU_REALTIME_DEFAULT_MODEL,
-            max_length=100,
-        )
-        tutor_settings.script_action_offset_ms = int(
-            max(
-                -SCRIPT_ACTION_OFFSET_LIMIT_MS,
-                min(
-                    SCRIPT_ACTION_OFFSET_LIMIT_MS,
-                    import_signed_int(tutor_data.get("scriptActionOffsetMs"), 0),
-                ),
+    try:
+        with transaction.atomic():
+            experience = Experience.objects.create(
+                user=user,
+                title=title,
+                slug=unique_experience_slug(user, title),
+                description=description,
             )
-        )
-        tutor_settings.system_prompt = import_string(
-            tutor_data.get("systemPrompt"),
-            "",
-            max_length=12000,
-            strip=False,
-        )
-        tutor_settings.voice = import_string(
-            tutor_data.get("voice"),
-            settings.DLU_REALTIME_DEFAULT_VOICE,
-            max_length=40,
-        )
-        tutor_settings.voice_instructions = import_string(
-            tutor_data.get("voiceInstructions"),
-            "",
-            max_length=4000,
-            strip=False,
-        )
-        tutor_settings.save()
+            tutor_data = data.get("tutor") if isinstance(data.get("tutor"), dict) else {}
+            tutor_settings = ensure_tutor_settings(experience)
+            tutor_settings.assistant_name = import_string(
+                tutor_data.get("assistantName"),
+                "dee-lou",
+                max_length=100,
+            )
+            tutor_settings.avatar_path = import_string(
+                tutor_data.get("avatarPath"),
+                "test-images/dLU-right.png",
+                max_length=220,
+            )
+            imported_classification_model = import_string(
+                tutor_data.get("classificationModel"),
+                settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+                max_length=100,
+            )
+            tutor_settings.classification_model = normalize_realtime_choice(
+                imported_classification_model,
+                classification_model_choices(),
+                settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+            ) or settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+            imported_realtime_model = import_string(
+                tutor_data.get("realtimeModel"),
+                settings.DLU_REALTIME_DEFAULT_MODEL,
+                max_length=100,
+            )
+            tutor_settings.realtime_model = normalize_realtime_model_choice(
+                imported_realtime_model,
+                settings.DLU_REALTIME_DEFAULT_MODEL,
+            ) or settings.DLU_REALTIME_DEFAULT_MODEL
+            tutor_settings.script_action_offset_ms = int(
+                max(
+                    -SCRIPT_ACTION_OFFSET_LIMIT_MS,
+                    min(
+                        SCRIPT_ACTION_OFFSET_LIMIT_MS,
+                        import_signed_int(tutor_data.get("scriptActionOffsetMs"), 0),
+                    ),
+                )
+            )
+            tutor_settings.system_prompt = import_string(
+                tutor_data.get("systemPrompt"),
+                "",
+                max_length=12000,
+                strip=False,
+            )
+            imported_voice = import_string(
+                tutor_data.get("voice"),
+                settings.DLU_REALTIME_DEFAULT_VOICE,
+                max_length=40,
+            )
+            tutor_settings.voice = normalize_realtime_choice(
+                imported_voice,
+                REALTIME_VOICES,
+                settings.DLU_REALTIME_DEFAULT_VOICE,
+            ) or settings.DLU_REALTIME_DEFAULT_VOICE
+            tutor_settings.voice_instructions = import_string(
+                tutor_data.get("voiceInstructions"),
+                "",
+                max_length=4000,
+                strip=False,
+            )
+            tutor_settings.save()
 
-        seen_event_slugs = set()
-        for index, event_data in enumerate(events or []):
-            if not isinstance(event_data, dict):
-                continue
-            event_title = import_string(
-                event_data.get("title"),
-                DEFAULT_START_EVENT_TITLE if index == 0 else "Event",
-                max_length=160,
-            )
-            event_slug = import_slug(event_data.get("slug"), event_title)
-            base_slug = event_slug
-            suffix = 2
-            while event_slug in seen_event_slugs:
-                event_slug = f"{base_slug[:174]}-{suffix}"[:180]
-                suffix += 1
-            seen_event_slugs.add(event_slug)
-            event = ExperienceEvent.objects.create(
-                experience=experience,
-                title=event_title,
-                slug=event_slug,
-                description=import_string(
-                    event_data.get("description"),
-                    "",
-                    max_length=4000,
-                    strip=False,
-                ),
-                chat_instructions=import_string(
-                    event_data.get("chatInstructions"),
-                    "",
-                    max_length=12000,
-                    strip=False,
-                ),
-                is_start=import_bool(event_data.get("isStart"), index == 0),
-                sort_order=import_int(event_data.get("sortOrder"), index),
-            )
-            import_event_steps(event, event_data.get("steps"))
-            import_chat_tools(event, event_data.get("chatTools"))
-            import_conversation_checks(event, event_data.get("conversationChecks"))
-            import_classifier_groups(event, event_data.get("classifierGroups"))
-
-        ensure_start_event(experience)
+            seen_event_slugs = set()
+            for index, event_data in enumerate(events or []):
+                if not isinstance(event_data, dict):
+                    continue
+                event_title = import_string(
+                    event_data.get("title"),
+                    DEFAULT_START_EVENT_TITLE if index == 0 else "Event",
+                    max_length=160,
+                )
+                event_slug = import_slug(event_data.get("slug"), event_title)
+                base_slug = event_slug
+                suffix = 2
+                while event_slug in seen_event_slugs:
+                    event_slug = f"{base_slug[:174]}-{suffix}"[:180]
+                    suffix += 1
+                seen_event_slugs.add(event_slug)
+                event = ExperienceEvent.objects.create(
+                    experience=experience,
+                    title=event_title,
+                    slug=event_slug,
+                    description=import_string(
+                        event_data.get("description"),
+                        "",
+                        max_length=4000,
+                        strip=False,
+                    ),
+                    chat_instructions=import_string(
+                        event_data.get("chatInstructions"),
+                        "",
+                        max_length=12000,
+                        strip=False,
+                    ),
+                    is_start=import_bool(event_data.get("isStart"), index == 0),
+                    sort_order=import_int(event_data.get("sortOrder"), index),
+                )
+                import_event_steps(event, event_data.get("steps"))
+                import_chat_tools(event, event_data.get("chatTools"))
+                import_conversation_checks(event, event_data.get("conversationChecks"))
+                import_classifier_groups(event, event_data.get("classifierGroups"))
+            ensure_start_event(experience)
+    except ExperienceImportError as error:
+        return None, str(error)
 
     return experience, ""
 
@@ -3892,7 +3918,7 @@ def export_experience(request, experience_id):
     payload = {
         "exportedAt": timezone.now().isoformat(),
         "format": "dlu.experience",
-        "version": 1,
+        "version": EXPERIENCE_EXPORT_VERSION,
         "experience": serialize_experience(experience),
     }
     filename = f"{slugify(experience.title) or 'experience'}.dlu-experience.json"

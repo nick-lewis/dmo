@@ -798,3 +798,39 @@ class ExperienceContentMaturityTests(TestCase):
         self.assertIsNotNone(imported)
         self.assertEqual(imported.title, "Rich experience")
         self.assert_rich_experience_shape(imported)
+
+    def test_import_normalizes_legacy_realtime_model_alias(self):
+        source = self.create_rich_experience()
+        payload = {
+            "format": "dlu.experience",
+            "version": 1,
+            "experience": serialize_experience(source),
+        }
+        payload["experience"]["tutor"]["realtimeModel"] = "gpt-realtime-2"
+
+        imported, error = create_experience_from_export_payload(self.other_user, payload)
+
+        self.assertEqual(error, "")
+        self.assertIsNotNone(imported)
+        self.assertEqual(imported.tutor_settings.realtime_model, "gpt-realtime")
+
+    def test_import_rejects_unregistered_interactive_app_and_rolls_back(self):
+        source = self.create_rich_experience()
+        payload = {
+            "format": "dlu.experience",
+            "version": 1,
+            "experience": serialize_experience(source),
+        }
+        payload["experience"]["events"][0]["steps"][1]["config"][
+            "interactiveId"
+        ] = "missing_app"
+        initial_count = Experience.objects.filter(user=self.other_user).count()
+
+        imported, error = create_experience_from_export_payload(self.other_user, payload)
+
+        self.assertIsNone(imported)
+        self.assertIn("Main-panel app is not registered.", error)
+        self.assertEqual(
+            Experience.objects.filter(user=self.other_user).count(),
+            initial_count,
+        )
