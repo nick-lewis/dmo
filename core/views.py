@@ -1983,6 +1983,9 @@ def apply_runtime_actions_to_state(
     buttons = list(ui_runtime.get("buttons") or [])
     highlights = dict(ui_runtime.get("highlights") or {})
     interactive = ui_runtime.get("interactive")
+    interactive_state = normalized_interactive_config(
+        ui_runtime.get("interactiveState")
+    )
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -2012,17 +2015,20 @@ def apply_runtime_actions_to_state(
             }
             slide_error = ""
             interactive = None
+            interactive_state = {}
             continue
 
         if action_type == "slide_error":
             slide_error = str(action.get("detail", "Could not load that slide."))
             slide = None
             interactive = None
+            interactive_state = {}
             continue
 
         if action_type == "interactive":
+            config = normalized_interactive_config(action.get("config"))
             interactive = {
-                "config": normalized_interactive_config(action.get("config")),
+                "config": config,
                 "eventId": str(action.get("eventId", "")),
                 "interactiveId": str(action.get("interactiveId", "")),
                 "mode": str(action.get("mode", "")),
@@ -2031,11 +2037,15 @@ def apply_runtime_actions_to_state(
                 "title": str(action.get("title", "")),
                 "triggersEvent": str(action.get("triggersEvent", "")),
             }
+            interactive_state = normalized_interactive_config(
+                action.get("state", config.get("initialState"))
+            )
             slide = None
             slide_error = ""
             continue
 
         if action_type == "interactive_update" and isinstance(interactive, dict):
+            action_state = action.get("state")
             interactive = {
                 **interactive,
                 "config": {
@@ -2046,10 +2056,17 @@ def apply_runtime_actions_to_state(
             for key in ("interactiveId", "mode", "prompt", "title"):
                 if action.get(key):
                     interactive[key] = str(action.get(key, ""))
+            if isinstance(action_state, dict):
+                interactive_state = normalized_interactive_config(action_state)
+            continue
+
+        if action_type == "interactive_state":
+            interactive_state = normalized_interactive_config(action.get("state"))
             continue
 
         if action_type == "interactive_clear":
             interactive = None
+            interactive_state = {}
             continue
 
         if action_type == "button_choice":
@@ -2096,6 +2113,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["buttons"] = buttons
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
+    ui_runtime["interactiveState"] = interactive_state
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
     ui_runtime["triggers"] = triggers
@@ -4026,6 +4044,103 @@ def run_session_event(request, session_id):
             "ranMessages": [serialize_message(message) for message in messages],
         }
     )
+
+
+@require_POST
+def update_session_interactive(request, session_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    interactive_id = str(data.get("interactiveId", "")).strip()
+    if not interactive_id:
+        return JsonResponse({"detail": "Main-panel app is required."}, status=400)
+    if len(interactive_id) > 80 or not re.fullmatch(r"[A-Za-z0-9_-]+", interactive_id):
+        return JsonResponse({"detail": "Main-panel app id is invalid."}, status=400)
+
+    next_state = normalized_interactive_config(data.get("state"))
+    if len(json.dumps(next_state, ensure_ascii=True)) > 12000:
+        return JsonResponse({"detail": "Main-panel app state is too large."}, status=400)
+
+    context_values = normalized_interactive_config(data.get("context"))
+    if len(json.dumps(context_values, ensure_ascii=True)) > 12000:
+        return JsonResponse({"detail": "Main-panel app context is too large."}, status=400)
+    for key in context_values:
+        if not isinstance(key, str) or not key.strip():
+            return JsonResponse({"detail": "Context keys must be named."}, status=400)
+        if len(key) > 120:
+            return JsonResponse({"detail": "Context key is too long."}, status=400)
+
+    emitted_actions = data.get("actions")
+    if not isinstance(emitted_actions, list):
+        emitted_actions = []
+    if len(emitted_actions) > 24:
+        return JsonResponse({"detail": "Too many emitted actions."}, status=400)
+    emitted_actions = [
+        action for action in emitted_actions if isinstance(action, dict)
+    ]
+    if len(json.dumps(emitted_actions, ensure_ascii=True)) > 16000:
+        return JsonResponse({"detail": "Emitted actions are too large."}, status=400)
+
+    with transaction.atomic():
+        session = (
+            TutoringSession.objects.select_for_update()
+            .filter(
+                id=session_id,
+                user=request.user,
+                status=TutoringSession.Status.ACTIVE,
+            )
+            .first()
+        )
+        if not session:
+            return JsonResponse({"detail": "Session not found."}, status=404)
+
+        state = dict(session.runtime_state or {})
+        ui_runtime = dict(state.get("uiRuntime") or {})
+        active_interactive = ui_runtime.get("interactive")
+        if not isinstance(active_interactive, dict):
+            return JsonResponse(
+                {"detail": "No main-panel app is active."},
+                status=400,
+            )
+        active_id = str(active_interactive.get("interactiveId", "")).strip()
+        if active_id != interactive_id:
+            return JsonResponse(
+                {"detail": "That main-panel app is no longer active."},
+                status=409,
+            )
+
+        runtime_context = dict(session.runtime_context or {})
+        actions = [
+            {
+                "interactiveId": interactive_id,
+                "state": next_state,
+                "type": "interactive_state",
+            }
+        ]
+
+        for key, value in context_values.items():
+            context_key = key.strip()
+            runtime_context[context_key] = value
+            actions.append(
+                {
+                    "key": context_key,
+                    "type": "set_context",
+                    "value": value,
+                }
+            )
+
+        actions.extend(emitted_actions)
+        state = apply_runtime_actions_to_state(state, actions)
+        session.runtime_context = runtime_context
+        session.runtime_state = state
+        session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
+
+    return JsonResponse({**session_payload(session), "actions": actions})
 
 
 def parse_tool_arguments(value):

@@ -360,6 +360,10 @@ type ConversationCheckPayload = SessionPayload & {
   ranMessages?: ChatMessage[];
 };
 
+type InteractiveRuntimePayload = SessionPayload & {
+  actions: Array<Record<string, unknown>>;
+};
+
 type RuntimeUiState = {
   interactive?: Record<string, unknown>;
   notesVisible: boolean;
@@ -401,6 +405,48 @@ type RuntimeActionLogEntry = {
   time: string;
   type: string;
 };
+
+type MainPanelAppHost = {
+  context: Record<string, unknown>;
+  emitActions: (actions: Array<Record<string, unknown>>) => void;
+  runEvent: (eventSlug: string, state?: Record<string, unknown>) => void;
+  saveContext: (values: Record<string, unknown>) => Promise<void>;
+  setState: (state: Record<string, unknown>) => void;
+  submit: (state?: Record<string, unknown>, context?: Record<string, unknown>) => void;
+};
+
+type MainPanelAppProps = {
+  host: MainPanelAppHost;
+  interactive: RuntimeInteractive;
+  state: Record<string, unknown>;
+};
+
+type MainPanelAppDefinition = {
+  Component: (props: MainPanelAppProps) => ReactNode;
+  defaultView: string;
+  id: string;
+  label: string;
+  views: Array<{ id: string; label: string }>;
+};
+
+const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
+  {
+    Component: DeliveryDataInteractive,
+    defaultView: "table",
+    id: "delivery_data",
+    label: "Delivery data",
+    views: [
+      { id: "table", label: "Table" },
+      { id: "graph", label: "Graph" },
+    ],
+  },
+];
+
+const defaultMainPanelApp = mainPanelAppDefinitions[0];
+
+function getMainPanelAppDefinition(appId: string) {
+  return mainPanelAppDefinitions.find((app) => app.id === appId) ?? null;
+}
 
 type VoiceSampleStatus = "idle" | "loading" | "playing";
 
@@ -979,8 +1025,8 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   }
   if (actionType === "interactive") {
     return {
-      interactiveId: "delivery_data",
-      mode: "default",
+      interactiveId: defaultMainPanelApp.id,
+      mode: defaultMainPanelApp.defaultView,
       prompt: "",
       title: "",
       triggersEvent: "",
@@ -988,8 +1034,8 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   }
   if (actionType === "interactive_update") {
     return {
-      interactiveId: "delivery_data",
-      mode: "graph",
+      interactiveId: defaultMainPanelApp.id,
+      mode: defaultMainPanelApp.views[1]?.id ?? defaultMainPanelApp.defaultView,
       prompt: "",
       title: "",
     };
@@ -1353,6 +1399,9 @@ function runtimeActionText(action: Record<string, unknown>) {
       action.interactiveId,
       "app",
     )} -> ${compactRuntimeValue(action.mode, "update")}`;
+  }
+  if (type === "interactive_state") {
+    return `${compactRuntimeValue(action.interactiveId, "app")} state saved`;
   }
   if (type === "interactive_clear") {
     return "clear main-panel app";
@@ -4984,23 +5033,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         {step.actionType === "interactive" ? (
           <>
             <div className="event-context-line interactive-action-line">
-              <span className="event-detail-label">APP</span>
-              <input
-                aria-label="Main-panel app id"
-                onChange={(event) =>
-                  updateConfig("interactiveId", event.target.value)
-                }
-                placeholder="delivery_data"
-                type="text"
-                value={stringConfigValue(step.config, "interactiveId")}
-              />
-              <span className="event-detail-label">VIEW</span>
-              <input
-                aria-label="Main-panel app view"
-                onChange={(event) => updateConfig("mode", event.target.value)}
-                placeholder="default"
-                type="text"
-                value={stringConfigValue(step.config, "mode")}
+              <MainPanelAppFields
+                appId={stringConfigValue(step.config, "interactiveId")}
+                onConfigChange={updateConfig}
+                view={stringConfigValue(step.config, "mode")}
               />
             </div>
             <div className="event-context-line single-value">
@@ -5030,23 +5066,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         {step.actionType === "interactive_update" ? (
           <>
             <div className="event-context-line interactive-action-line">
-              <span className="event-detail-label">APP</span>
-              <input
-                aria-label="Main-panel app id"
-                onChange={(event) =>
-                  updateConfig("interactiveId", event.target.value)
-                }
-                placeholder="delivery_data"
-                type="text"
-                value={stringConfigValue(step.config, "interactiveId")}
-              />
-              <span className="event-detail-label">VIEW</span>
-              <input
-                aria-label="Main-panel app view"
-                onChange={(event) => updateConfig("mode", event.target.value)}
-                placeholder="graph"
-                type="text"
-                value={stringConfigValue(step.config, "mode")}
+              <MainPanelAppFields
+                appId={stringConfigValue(step.config, "interactiveId")}
+                onConfigChange={updateConfig}
+                view={stringConfigValue(step.config, "mode")}
               />
             </div>
           </>
@@ -5821,36 +5844,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           {step.actionType === "interactive" ? (
                             <>
                               <div className="event-context-line interactive-action-line">
-                                <span className="event-detail-label">APP</span>
-                                <input
-                                  aria-label="Main-panel app id"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "interactiveId",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="delivery_data"
-                                  type="text"
-                                  value={stringConfigValue(
+                                <MainPanelAppFields
+                                  appId={stringConfigValue(
                                     step.config,
                                     "interactiveId",
                                   )}
-                                />
-                                <span className="event-detail-label">VIEW</span>
-                                <input
-                                  aria-label="Main-panel app view"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "mode",
-                                      event.target.value,
-                                    )
+                                  onConfigChange={(key, value) =>
+                                    updateEventStepConfig(step.id, key, value)
                                   }
-                                  placeholder="default"
-                                  type="text"
-                                  value={stringConfigValue(step.config, "mode")}
+                                  view={stringConfigValue(step.config, "mode")}
                                 />
                               </div>
                               <div className="event-context-line single-value">
@@ -5888,36 +5890,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           {step.actionType === "interactive_update" ? (
                             <>
                               <div className="event-context-line interactive-action-line">
-                                <span className="event-detail-label">APP</span>
-                                <input
-                                  aria-label="Main-panel app id"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "interactiveId",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="delivery_data"
-                                  type="text"
-                                  value={stringConfigValue(
+                                <MainPanelAppFields
+                                  appId={stringConfigValue(
                                     step.config,
                                     "interactiveId",
                                   )}
-                                />
-                                <span className="event-detail-label">VIEW</span>
-                                <input
-                                  aria-label="Main-panel app view"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "mode",
-                                      event.target.value,
-                                    )
+                                  onConfigChange={(key, value) =>
+                                    updateEventStepConfig(step.id, key, value)
                                   }
-                                  placeholder="graph"
-                                  type="text"
-                                  value={stringConfigValue(step.config, "mode")}
+                                  view={stringConfigValue(step.config, "mode")}
                                 />
                               </div>
                             </>
@@ -7366,6 +7347,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const scriptAudioSkipRef = useRef<(() => void) | null>(null);
   const scriptTextSkipRef = useRef<(() => void) | null>(null);
+  const interactiveSaveTimerRef = useRef<number | null>(null);
+  const interactiveSaveVersionRef = useRef(0);
   const suppressSlideControlResetRef = useRef(false);
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -7470,6 +7453,97 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     };
   }
 
+  function clearInteractiveSaveTimer() {
+    if (interactiveSaveTimerRef.current !== null) {
+      window.clearTimeout(interactiveSaveTimerRef.current);
+      interactiveSaveTimerRef.current = null;
+    }
+  }
+
+  async function persistRuntimeInteractiveState(
+    interactiveId: string,
+    nextState: Record<string, unknown>,
+    context: Record<string, unknown> = {},
+    actions: Array<Record<string, unknown>> = [],
+  ) {
+    if (!session || !interactiveId) return false;
+
+    const version = interactiveSaveVersionRef.current + 1;
+    interactiveSaveVersionRef.current = version;
+
+    try {
+      const payload = await apiFetch<InteractiveRuntimePayload>(
+        `/api/sessions/${session.id}/interactive/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            actions,
+            context,
+            interactiveId,
+            state: nextState,
+          }),
+        },
+      );
+
+      if (interactiveSaveVersionRef.current !== version) return;
+
+      setSession(payload.session);
+      setMessages(payload.messages);
+      applyRuntimeActions(payload.actions);
+      return true;
+    } catch (error) {
+      if (interactiveSaveVersionRef.current !== version) return false;
+
+      setChatStatus("error");
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : "Could not save the main-panel app state.",
+      );
+      return false;
+    }
+  }
+
+  function queueRuntimeInteractiveSave(nextState: Record<string, unknown>) {
+    if (!runtimeInteractive) return;
+
+    const interactiveId = runtimeInteractive.interactiveId;
+    clearInteractiveSaveTimer();
+    interactiveSaveTimerRef.current = window.setTimeout(() => {
+      interactiveSaveTimerRef.current = null;
+      void persistRuntimeInteractiveState(interactiveId, nextState);
+    }, 350);
+  }
+
+  function changeRuntimeInteractiveState(nextState: Record<string, unknown>) {
+    setRuntimeInteractiveState(nextState);
+    queueRuntimeInteractiveSave(nextState);
+  }
+
+  async function saveRuntimeInteractiveContext(
+    values: Record<string, unknown>,
+    state = runtimeInteractiveState,
+  ) {
+    if (!runtimeInteractive) return;
+    clearInteractiveSaveTimer();
+    await persistRuntimeInteractiveState(
+      runtimeInteractive.interactiveId,
+      state,
+      values,
+    );
+  }
+
+  function emitRuntimeInteractiveActions(actions: Array<Record<string, unknown>>) {
+    if (!runtimeInteractive || !actions.length) return;
+    clearInteractiveSaveTimer();
+    void persistRuntimeInteractiveState(
+      runtimeInteractive.interactiveId,
+      runtimeInteractiveState,
+      {},
+      actions,
+    );
+  }
+
   function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
     if (!actions.length) return;
 
@@ -7526,10 +7600,17 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (!interactive) continue;
 
         setRuntimeInteractive(interactive);
-        setRuntimeInteractiveState(recordFromUnknown(interactive.config.initialState));
+        setRuntimeInteractiveState(
+          recordFromUnknown(action.state ?? interactive.config.initialState),
+        );
         setResolvedSlide(null);
         setSlideError("");
         setSlideStatus("empty");
+      }
+
+      if (action.type === "interactive_state") {
+        const state = recordFromUnknown(action.state);
+        setRuntimeInteractiveState(state);
       }
 
       if (action.type === "interactive_update") {
@@ -7549,6 +7630,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             title: update.title || base.title,
           };
         });
+        if (Object.prototype.hasOwnProperty.call(action, "state")) {
+          setRuntimeInteractiveState(recordFromUnknown(action.state));
+        }
       }
 
       if (action.type === "interactive_clear") {
@@ -7643,6 +7727,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const highlightsValue = uiRuntime.highlights;
     const buttonsValue = uiRuntime.buttons;
     const interactiveValue = uiRuntime.interactive;
+    const interactiveStateValue = uiRuntime.interactiveState;
     const slideValue = uiRuntime.slide;
     const slideErrorValue = uiRuntime.slideError;
     const triggersValue = uiRuntime.triggers;
@@ -7712,7 +7797,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     if (nextInteractive) {
       setRuntimeInteractive(nextInteractive);
       setRuntimeInteractiveState(
-        recordFromUnknown(nextInteractive.config.initialState),
+        recordFromUnknown(interactiveStateValue ?? nextInteractive.config.initialState),
       );
       setResolvedSlide(null);
       setSlideError("");
@@ -7874,6 +7959,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   }, [selectedExperienceId]);
 
   useEffect(() => {
+    clearInteractiveSaveTimer();
     setNotesVisible(false);
     setRuntimeActionLog([]);
     setResolvedSlide(null);
@@ -7990,6 +8076,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   useEffect(() => {
     return () => {
+      clearInteractiveSaveTimer();
       realtimeConnectionRef.current?.close();
       scriptTextSkipRef.current?.();
       scriptAudioSkipRef.current?.();
@@ -8151,13 +8238,37 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     });
   }
 
-  function completeRuntimeInteractive(nextState: Record<string, unknown>) {
+  async function completeRuntimeInteractive(
+    nextState = runtimeInteractiveState,
+    context: Record<string, unknown> = {},
+  ) {
+    if (!runtimeInteractive) return;
+
+    clearInteractiveSaveTimer();
     setRuntimeInteractiveState(nextState);
-    if (!runtimeInteractive?.triggersEvent) return;
+    const saved = await persistRuntimeInteractiveState(
+      runtimeInteractive.interactiveId,
+      nextState,
+      context,
+    );
+    if (!saved) return;
+
+    if (!runtimeInteractive.triggersEvent) return;
 
     void runSessionEventBySlug(
       runtimeInteractive.triggersEvent,
       currentRuntimeUiState({ interactive: nextState }),
+    );
+  }
+
+  function runRuntimeInteractiveEvent(
+    eventSlug: string,
+    state = runtimeInteractiveState,
+  ) {
+    if (!eventSlug) return;
+    void runSessionEventBySlug(
+      eventSlug,
+      currentRuntimeUiState({ interactive: state }),
     );
   }
 
@@ -9389,11 +9500,15 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           >
             <PanelWindow ariaLabel="Panel five" density="main">
               <MainPanelContent
+                context={session?.runtimeContext ?? {}}
+                emitInteractiveActions={emitRuntimeInteractiveActions}
                 error={slideError}
                 interactive={runtimeInteractive}
                 interactiveState={runtimeInteractiveState}
                 onInteractiveComplete={completeRuntimeInteractive}
-                onInteractiveStateChange={setRuntimeInteractiveState}
+                onInteractiveEvent={runRuntimeInteractiveEvent}
+                onInteractiveSaveContext={saveRuntimeInteractiveContext}
+                onInteractiveStateChange={changeRuntimeInteractiveState}
                 slide={resolvedSlide}
                 status={slideStatus}
               />
@@ -9453,6 +9568,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             currentEvent={currentRuntimeEvent}
             currentEventSlug={currentRuntimeEventSlug}
             highlights={runtimeHighlights}
+            interactive={runtimeInteractive}
+            interactiveState={runtimeInteractiveState}
             runtimeContext={session?.runtimeContext ?? {}}
             session={session}
             triggers={runtimeTriggers}
@@ -9469,6 +9586,8 @@ function RuntimeInspectorPanel({
   currentEvent,
   currentEventSlug,
   highlights,
+  interactive,
+  interactiveState,
   runtimeContext,
   session,
   triggers,
@@ -9478,11 +9597,14 @@ function RuntimeInspectorPanel({
   currentEvent: ExperienceEvent | null;
   currentEventSlug: string;
   highlights: Record<string, RuntimeHighlight>;
+  interactive: RuntimeInteractive | null;
+  interactiveState: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
   session: TutoringSession | null;
   triggers: RuntimeUiTrigger[];
 }) {
   const contextEntries = Object.entries(runtimeContext);
+  const interactiveStateEntries = Object.entries(interactiveState);
   const highlightEntries = Object.values(highlights);
   const currentEventLabel =
     currentEvent?.title || currentEventSlug || (session ? "Start" : "---");
@@ -9511,6 +9633,30 @@ function RuntimeInspectorPanel({
           {contextEntries.length ? (
             <div className="runtime-inspector-list">
               {contextEntries.map(([key, value]) => (
+                <div className="runtime-inspector-row" key={key}>
+                  <span>{key}</span>
+                  <code>{compactRuntimeValue(value)}</code>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Main panel</h2>
+          {interactive ? (
+            <div className="runtime-inspector-list">
+              <div className="runtime-inspector-row">
+                <span>App</span>
+                <code>{interactive.interactiveId}</code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>View</span>
+                <code>{interactive.mode || "---"}</code>
+              </div>
+              {interactiveStateEntries.map(([key, value]) => (
                 <div className="runtime-inspector-row" key={key}>
                   <span>{key}</span>
                   <code>{compactRuntimeValue(value)}</code>
@@ -10441,19 +10587,92 @@ function SlideControls({
   );
 }
 
+function MainPanelAppFields({
+  appId,
+  onConfigChange,
+  view,
+}: {
+  appId: string;
+  onConfigChange: (key: "interactiveId" | "mode", value: string) => void;
+  view: string;
+}) {
+  const appDefinition =
+    getMainPanelAppDefinition(appId) ?? defaultMainPanelApp;
+  const hasCurrentApp = mainPanelAppDefinitions.some((app) => app.id === appId);
+  const currentView = view || appDefinition.defaultView;
+  const hasCurrentView = appDefinition.views.some(
+    (candidate) => candidate.id === currentView,
+  );
+
+  return (
+    <>
+      <span className="event-detail-label">APP</span>
+      <select
+        aria-label="Main-panel app"
+        onChange={(event) => {
+          const nextApp = getMainPanelAppDefinition(event.target.value);
+          onConfigChange("interactiveId", event.target.value);
+          if (nextApp && !nextApp.views.some((item) => item.id === currentView)) {
+            onConfigChange("mode", nextApp.defaultView);
+          }
+        }}
+        value={hasCurrentApp ? appId : ""}
+      >
+        {!hasCurrentApp ? (
+          <option value="">{appId || "Choose app"}</option>
+        ) : null}
+        {mainPanelAppDefinitions.map((app) => (
+          <option key={app.id} value={app.id}>
+            {app.label}
+          </option>
+        ))}
+      </select>
+      <span className="event-detail-label">VIEW</span>
+      <select
+        aria-label="Main-panel app view"
+        onChange={(event) => onConfigChange("mode", event.target.value)}
+        value={hasCurrentView ? currentView : ""}
+      >
+        {!hasCurrentView && currentView ? (
+          <option value="">{currentView}</option>
+        ) : null}
+        {appDefinition.views.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+}
+
 function MainPanelContent({
+  context,
+  emitInteractiveActions,
   error,
   interactive,
   interactiveState,
   onInteractiveComplete,
+  onInteractiveEvent,
+  onInteractiveSaveContext,
   onInteractiveStateChange,
   slide,
   status,
 }: {
+  context: Record<string, unknown>;
+  emitInteractiveActions: (actions: Array<Record<string, unknown>>) => void;
   error: string;
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
-  onInteractiveComplete: (state: Record<string, unknown>) => void;
+  onInteractiveComplete: (
+    state?: Record<string, unknown>,
+    context?: Record<string, unknown>,
+  ) => void;
+  onInteractiveEvent: (eventSlug: string, state?: Record<string, unknown>) => void;
+  onInteractiveSaveContext: (
+    values: Record<string, unknown>,
+    state?: Record<string, unknown>,
+  ) => Promise<void>;
   onInteractiveStateChange: (state: Record<string, unknown>) => void;
   slide: ResolvedSlide | null;
   status: SlideStatus;
@@ -10461,8 +10680,12 @@ function MainPanelContent({
   if (interactive) {
     return (
       <InteractiveWorkspace
+        context={context}
+        emitActions={emitInteractiveActions}
         interactive={interactive}
         onComplete={onInteractiveComplete}
+        onRunEvent={onInteractiveEvent}
+        onSaveContext={onInteractiveSaveContext}
         onStateChange={onInteractiveStateChange}
         state={interactiveState}
       />
@@ -10502,22 +10725,46 @@ function MainPanelContent({
 }
 
 function InteractiveWorkspace({
+  context,
+  emitActions,
   interactive,
   onComplete,
+  onRunEvent,
+  onSaveContext,
   onStateChange,
   state,
 }: {
+  context: Record<string, unknown>;
+  emitActions: (actions: Array<Record<string, unknown>>) => void;
   interactive: RuntimeInteractive;
-  onComplete: (state: Record<string, unknown>) => void;
+  onComplete: (
+    state?: Record<string, unknown>,
+    context?: Record<string, unknown>,
+  ) => void;
+  onRunEvent: (eventSlug: string, state?: Record<string, unknown>) => void;
+  onSaveContext: (
+    values: Record<string, unknown>,
+    state?: Record<string, unknown>,
+  ) => Promise<void>;
   onStateChange: (state: Record<string, unknown>) => void;
   state: Record<string, unknown>;
 }) {
-  if (interactive.interactiveId === "delivery_data") {
+  const appDefinition = getMainPanelAppDefinition(interactive.interactiveId);
+  const host: MainPanelAppHost = {
+    context,
+    emitActions,
+    runEvent: onRunEvent,
+    saveContext: (values) => onSaveContext(values, state),
+    setState: onStateChange,
+    submit: onComplete,
+  };
+
+  if (appDefinition) {
+    const AppComponent = appDefinition.Component;
     return (
-      <DeliveryDataInteractive
+      <AppComponent
+        host={host}
         interactive={interactive}
-        onComplete={onComplete}
-        onStateChange={onStateChange}
         state={state}
       />
     );
@@ -10534,7 +10781,7 @@ function InteractiveWorkspace({
         <textarea
           aria-label={`${interactive.title} response`}
           onChange={(event) =>
-            onStateChange({ ...state, response: event.target.value })
+            host.setState({ ...state, response: event.target.value })
           }
           placeholder="---"
           value={typeof state.response === "string" ? state.response : ""}
@@ -10543,7 +10790,7 @@ function InteractiveWorkspace({
           <button
             className="interactive-primary-action"
             onClick={() =>
-              onComplete({
+              host.submit({
                 ...state,
                 completedAt: new Date().toISOString(),
               })
@@ -10559,16 +10806,10 @@ function InteractiveWorkspace({
 }
 
 function DeliveryDataInteractive({
+  host,
   interactive,
-  onComplete,
-  onStateChange,
   state,
-}: {
-  interactive: RuntimeInteractive;
-  onComplete: (state: Record<string, unknown>) => void;
-  onStateChange: (state: Record<string, unknown>) => void;
-  state: Record<string, unknown>;
-}) {
+}: MainPanelAppProps) {
   const rows = [
     { distance: 1.2, minutes: 7, order: "A-184" },
     { distance: 2.1, minutes: 12, order: "B-302" },
@@ -10578,6 +10819,7 @@ function DeliveryDataInteractive({
   const estimate =
     typeof state.estimate === "string" ? state.estimate : String(state.estimate ?? "");
   const mode = interactive.mode || "table";
+  const view = mode === "graph" ? "graph" : "table";
   const maxMinutes = Math.max(...rows.map((row) => row.minutes));
   const appTitle = interactive.title || "Delivery data";
   const appPrompt =
@@ -10587,12 +10829,12 @@ function DeliveryDataInteractive({
     <div className="interactive-workspace">
       <div className="interactive-shell delivery-interactive">
         <div className="interactive-header">
-          <span>{mode}</span>
+          <span>{view}</span>
           <strong>{appTitle}</strong>
         </div>
         <p>{appPrompt}</p>
 
-        {mode === "graph" ? (
+        {view === "graph" ? (
           <div className="delivery-bars" aria-label="Delivery data graph">
             {rows.map((row) => (
               <div className="delivery-bar-row" key={row.order}>
@@ -10631,7 +10873,7 @@ function DeliveryDataInteractive({
             <input
               inputMode="numeric"
               onChange={(event) =>
-                onStateChange({ ...state, estimate: event.target.value })
+                host.setState({ ...state, estimate: event.target.value })
               }
               placeholder="minutes"
               type="text"
@@ -10642,13 +10884,16 @@ function DeliveryDataInteractive({
             <button
               className="interactive-primary-action"
               disabled={!estimate.trim()}
-              onClick={() =>
-                onComplete({
+              onClick={() => {
+                const nextState = {
                   ...state,
                   completedAt: new Date().toISOString(),
                   estimate: estimate.trim(),
-                })
-              }
+                };
+                host.submit(nextState, {
+                  delivery_estimate: estimate.trim(),
+                });
+              }}
               type="button"
             >
               Submit
