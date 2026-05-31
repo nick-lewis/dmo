@@ -1,47 +1,30 @@
+import modelOptionsData from "./modelOptions.json";
+
+type ModelOption = {
+  id: string;
+  label: string;
+};
+
 export const realtimeModelOptions = [
-  {
-    id: "gpt-realtime-mini",
-    label: "Mini",
-  },
-  {
-    id: "gpt-realtime-1.5",
-    label: "Realtime 1.5",
-  },
-  {
-    id: "gpt-realtime-2",
-    label: "Realtime 2",
-  },
-  {
-    id: "gpt-realtime",
-    label: "Realtime legacy",
-  },
-] as const;
+  ...modelOptionsData.realtimeModels,
+] as ModelOption[];
 
 export type RealtimeModelId = (typeof realtimeModelOptions)[number]["id"];
 
 export const realtimeVoiceOptions = [
-  { id: "marin", label: "Marin" },
-  { id: "cedar", label: "Cedar" },
-  { id: "verse", label: "Verse" },
-  { id: "ash", label: "Ash" },
-  { id: "ballad", label: "Ballad" },
-  { id: "coral", label: "Coral" },
-  { id: "echo", label: "Echo" },
-  { id: "sage", label: "Sage" },
-  { id: "shimmer", label: "Shimmer" },
-  { id: "alloy", label: "Alloy" },
-] as const;
+  ...modelOptionsData.realtimeVoices,
+] as ModelOption[];
 
 export type RealtimeVoiceId = (typeof realtimeVoiceOptions)[number]["id"];
 
-const realtimeVoiceIds = realtimeVoiceOptions.map((voice) => voice.id);
+export const classificationModelOptions = [
+  ...modelOptionsData.classificationModels,
+] as ModelOption[];
 
-const realtimeVoicesByModel: Record<RealtimeModelId, RealtimeVoiceId[]> = {
-  "gpt-realtime-1.5": realtimeVoiceIds,
-  "gpt-realtime-2": realtimeVoiceIds,
-  "gpt-realtime": realtimeVoiceIds,
-  "gpt-realtime-mini": realtimeVoiceIds,
-};
+const realtimeVoicesByModel = modelOptionsData.realtimeVoicesByModel as Record<
+  string,
+  RealtimeVoiceId[]
+>;
 
 export function realtimeVoiceOptionsForModel(model: RealtimeModelId) {
   const supported = new Set(realtimeVoicesByModel[model] ?? []);

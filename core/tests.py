@@ -40,6 +40,13 @@ from .views import (
     EXPERIENCE_EXPORT_FORMAT,
     EXPERIENCE_EXPORT_VERSION,
     MAIN_PANEL_APP_REGISTRY,
+    CLASSIFICATION_MODELS,
+    MODEL_OPTIONS,
+    REALTIME_MODEL_OPTIONS,
+    REALTIME_MODELS,
+    REALTIME_VOICE_ORDER,
+    REALTIME_VOICES,
+    REALTIME_VOICES_BY_MODEL,
     normalize_realtime_voice_choice,
     REGISTERED_MAIN_PANEL_APP_IDS,
     realtime_voice_choices_for_model,
@@ -847,6 +854,36 @@ class RuntimeContextActionTests(TestCase):
 
 
 class RealtimeModelChoiceTests(TestCase):
+    def test_model_choices_load_from_shared_frontend_registry(self):
+        registry_path = settings.BASE_DIR / "frontend" / "src" / "modelOptions.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            set(REALTIME_MODEL_OPTIONS),
+            {option["id"] for option in registry["realtimeModels"]},
+        )
+        self.assertEqual(REALTIME_MODELS, set(REALTIME_MODEL_OPTIONS))
+        self.assertEqual(
+            set(REALTIME_VOICE_ORDER),
+            {option["id"] for option in registry["realtimeVoices"]},
+        )
+        self.assertEqual(REALTIME_VOICES, set(REALTIME_VOICE_ORDER))
+        self.assertEqual(
+            CLASSIFICATION_MODELS,
+            {option["id"] for option in registry["classificationModels"]},
+        )
+        self.assertEqual(
+            {
+                model: set(voices)
+                for model, voices in registry["realtimeVoicesByModel"].items()
+            },
+            REALTIME_VOICES_BY_MODEL,
+        )
+        self.assertEqual(
+            {option["id"] for option in MODEL_OPTIONS["realtimeModels"]},
+            REALTIME_MODELS,
+        )
+
     def test_current_realtime_model_choices_are_preserved_on_serialize(self):
         User = get_user_model()
         user = User.objects.create_user(
@@ -898,6 +935,18 @@ class RealtimeModelChoiceTests(TestCase):
         self.assertEqual(experience.tutor_settings.realtime_model, "gpt-realtime")
 
     def test_realtime_voice_choices_are_scoped_to_realtime_models(self):
+        expected_realtime_voices = {
+            "alloy",
+            "ash",
+            "ballad",
+            "cedar",
+            "coral",
+            "echo",
+            "marin",
+            "sage",
+            "shimmer",
+            "verse",
+        }
         for model in [
             "gpt-realtime-mini",
             "gpt-realtime",
@@ -905,9 +954,7 @@ class RealtimeModelChoiceTests(TestCase):
             "gpt-realtime-2",
         ]:
             voices = realtime_voice_choices_for_model(model)
-            self.assertIn("marin", voices)
-            self.assertIn("cedar", voices)
-            self.assertIn("ash", voices)
+            self.assertEqual(expected_realtime_voices, voices)
             self.assertNotIn("fable", voices)
             self.assertNotIn("nova", voices)
             self.assertNotIn("onyx", voices)

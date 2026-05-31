@@ -1,0 +1,78 @@
+{
+  "classificationModels": [
+    { "id": "gpt-5.4-mini", "label": "5.4 mini" },
+    { "id": "gpt-5.4-nano", "label": "5.4 nano" },
+    { "id": "gpt-5.4", "label": "5.4" },
+    { "id": "gpt-5.4-pro", "label": "5.4 pro" },
+    { "id": "gpt-5.5", "label": "5.5" },
+    { "id": "gpt-5.5-pro", "label": "5.5 pro" }
+  ],
+  "realtimeModels": [
+    { "id": "gpt-realtime-mini", "label": "Mini" },
+    { "id": "gpt-realtime-1.5", "label": "Realtime 1.5" },
+    { "id": "gpt-realtime-2", "label": "Realtime 2" },
+    { "id": "gpt-realtime", "label": "Realtime legacy" }
+  ],
+  "realtimeVoices": [
+    { "id": "marin", "label": "Marin" },
+    { "id": "cedar", "label": "Cedar" },
+    { "id": "verse", "label": "Verse" },
+    { "id": "ash", "label": "Ash" },
+    { "id": "ballad", "label": "Ballad" },
+    { "id": "coral", "label": "Coral" },
+    { "id": "echo", "label": "Echo" },
+    { "id": "sage", "label": "Sage" },
+    { "id": "shimmer", "label": "Shimmer" },
+    { "id": "alloy", "label": "Alloy" }
+  ],
+  "realtimeVoicesByModel": {
+    "gpt-realtime": [
+      "marin",
+      "cedar",
+      "verse",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "alloy"
+    ],
+    "gpt-realtime-1.5": [
+      "marin",
+      "cedar",
+      "verse",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "alloy"
+    ],
+    "gpt-realtime-2": [
+      "marin",
+      "cedar",
+      "verse",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "alloy"
+    ],
+    "gpt-realtime-mini": [
+      "marin",
+      "cedar",
+      "verse",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "alloy"
+    ]
+  }
+}

@@ -18,6 +18,7 @@ import {
   type RealtimeStatus,
   type RealtimeToolCall,
   type RealtimeVoiceId,
+  classificationModelOptions,
   isRealtimeVoiceSupported,
   realtimeModelOptions,
   realtimeVoiceOptionsForModel,
@@ -31,15 +32,6 @@ import {
   type MainPanelAppHost,
   type RuntimeInteractive,
 } from "./mainPanelApps";
-
-const classificationModelOptions = [
-  { id: "gpt-5.4-mini", label: "5.4 mini" },
-  { id: "gpt-5.4-nano", label: "5.4 nano" },
-  { id: "gpt-5.4", label: "5.4" },
-  { id: "gpt-5.4-pro", label: "5.4 pro" },
-  { id: "gpt-5.5", label: "5.5" },
-  { id: "gpt-5.5-pro", label: "5.5 pro" },
-] as const;
 
 type ClassificationModelId = string;
 

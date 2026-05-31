@@ -57,40 +57,52 @@ from .slides import (
 
 DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
 OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
-REALTIME_MODELS = {
-    "gpt-realtime",
-    "gpt-realtime-1.5",
-    "gpt-realtime-2",
-    "gpt-realtime-mini",
-}
+MODEL_OPTIONS_PATH = settings.BASE_DIR / "frontend" / "src" / "modelOptions.json"
+
+
+def load_model_options():
+    try:
+        options = json.loads(MODEL_OPTIONS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "classificationModels": [],
+            "realtimeModels": [],
+            "realtimeVoices": [],
+            "realtimeVoicesByModel": {},
+        }
+    return options if isinstance(options, dict) else {}
+
+
+MODEL_OPTIONS = load_model_options()
+REALTIME_MODEL_OPTIONS = tuple(
+    str(option.get("id", "") or "").strip()
+    for option in MODEL_OPTIONS.get("realtimeModels", [])
+    if isinstance(option, dict) and str(option.get("id", "") or "").strip()
+)
+REALTIME_MODELS = set(REALTIME_MODEL_OPTIONS)
 LEGACY_REALTIME_MODEL_ALIASES = {
     "gpt-4o-mini-realtime-preview": "gpt-realtime-mini",
     "gpt-4o-realtime-preview": "gpt-realtime",
 }
 CLASSIFICATION_MODELS = {
-    "gpt-5.5",
-    "gpt-5.5-pro",
-    "gpt-5.4",
-    "gpt-5.4-pro",
-    "gpt-5.4-mini",
-    "gpt-5.4-nano",
+    str(option.get("id", "") or "").strip()
+    for option in MODEL_OPTIONS.get("classificationModels", [])
+    if isinstance(option, dict) and str(option.get("id", "") or "").strip()
 }
-REALTIME_VOICE_ORDER = (
-    "marin",
-    "cedar",
-    "verse",
-    "ash",
-    "ballad",
-    "coral",
-    "echo",
-    "sage",
-    "shimmer",
-    "alloy",
+REALTIME_VOICE_ORDER = tuple(
+    str(option.get("id", "") or "").strip()
+    for option in MODEL_OPTIONS.get("realtimeVoices", [])
+    if isinstance(option, dict) and str(option.get("id", "") or "").strip()
 )
 REALTIME_VOICES = set(REALTIME_VOICE_ORDER)
 REALTIME_VOICES_BY_MODEL = {
-    realtime_model: set(REALTIME_VOICE_ORDER)
-    for realtime_model in REALTIME_MODELS
+    str(model or "").strip(): {
+        str(voice or "").strip()
+        for voice in voices
+        if str(voice or "").strip()
+    }
+    for model, voices in MODEL_OPTIONS.get("realtimeVoicesByModel", {}).items()
+    if isinstance(voices, list) and str(model or "").strip()
 }
 REALTIME_CONTEXT_MESSAGE_LIMIT = 24
 REALTIME_CONTEXT_CHAR_LIMIT = 8000
