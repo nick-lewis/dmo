@@ -2973,12 +2973,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventRedoStack([]);
   }
 
+  function rememberEventDraftForUndo() {
+    setEventUndoStack((current) =>
+      [eventDraft, ...current].slice(0, editorUndoLimit),
+    );
+    setEventRedoStack([]);
+  }
+
   function stageEventDraft(nextDraft: EventDraft, recordHistory = true) {
     if (recordHistory) {
-      setEventUndoStack((current) =>
-        [eventDraft, ...current].slice(0, editorUndoLimit),
-      );
-      setEventRedoStack([]);
+      rememberEventDraftForUndo();
     }
     setEventDraft(nextDraft);
     queueEventAutosave(nextDraft);
@@ -4374,14 +4378,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }));
   }
 
-  function applyUpdatedEvent(nextEvent: ExperienceEvent) {
+  function applyUpdatedEvent(nextEvent: ExperienceEvent, resetHistory = true) {
     if (!experience) return;
 
     const nextExperience = replaceExperienceEvent(experience, nextEvent);
     setExperience(nextExperience);
     setSelectedEventId(nextEvent.id);
     setEventDraft(eventDraftFromEvent(nextEvent));
-    clearEventUndoHistory();
+    if (resetHistory) {
+      clearEventUndoHistory();
+    }
   }
 
   async function selectEditorEvent(nextEventId: string) {
@@ -4809,6 +4815,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       sortOrder: index,
     }));
 
+    rememberEventDraftForUndo();
+    clearEventAutosaveTimer();
     setEventDraft({
       ...eventDraft,
       steps: nextSteps,
@@ -4825,7 +4833,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           }),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
     } catch (moveError) {
       setError(
         moveError instanceof Error ? moveError.message : "Could not reorder steps.",
@@ -5644,7 +5652,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         className="event-icon-button"
                         disabled={!eventUndoStack.length}
                         onClick={undoEventEdit}
-                        title="Undo event edit"
+                        title="Undo event edit or reordered action"
                         type="button"
                       >
                         <UndoIcon />
@@ -5653,7 +5661,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         className="event-icon-button"
                         disabled={!eventRedoStack.length}
                         onClick={redoEventEdit}
-                        title="Redo event edit"
+                        title="Redo event edit or reordered action"
                         type="button"
                       >
                         <RedoIcon />
