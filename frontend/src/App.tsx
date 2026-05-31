@@ -489,6 +489,12 @@ type DeliveryDataRow = {
   order: string;
 };
 
+type EventOutgoingLink = {
+  kind: string;
+  slug: string;
+  source: string;
+};
+
 const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
   {
     Component: DeliveryDataInteractive,
@@ -1301,8 +1307,11 @@ function eventTitleForTrigger(events: ExperienceEvent[], eventSlug: string) {
   return target?.title ?? eventSlug;
 }
 
-function actionSequenceOutgoingSlugs(steps: ActionSequenceStep[] = []) {
-  const slugs = new Set<string>();
+function actionSequenceOutgoingLinks(
+  steps: ActionSequenceStep[] = [],
+  sourcePrefix = "Action",
+) {
+  const links: EventOutgoingLink[] = [];
   for (const step of steps) {
     if (
       step.actionType !== "set_ui_trigger" &&
@@ -1313,45 +1322,60 @@ function actionSequenceOutgoingSlugs(steps: ActionSequenceStep[] = []) {
       continue;
     }
     const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
-    if (triggersEvent) slugs.add(triggersEvent);
+    if (!triggersEvent) continue;
+    links.push({
+      kind: eventActionLabel(step.actionType),
+      slug: triggersEvent,
+      source: `${sourcePrefix}: ${step.label || eventActionLabel(step.actionType)}`,
+    });
   }
-  return [...slugs];
+  return links;
+}
+
+function eventOutgoingLinks(event: ExperienceEvent) {
+  const links = actionSequenceOutgoingLinks(event.steps, "On entry");
+  for (const tool of event.chatTools) {
+    const triggersEvent = tool.triggersEvent.trim();
+    if (triggersEvent) {
+      links.push({
+        kind: "FC route",
+        slug: triggersEvent,
+        source: tool.description || tool.name,
+      });
+    }
+    links.push(...actionSequenceOutgoingLinks(tool.handlerActions, `FC route ${tool.name}`));
+  }
+  for (const check of event.conversationChecks ?? []) {
+    const triggersEvent = check.triggersEvent.trim();
+    if (triggersEvent) {
+      links.push({
+        kind: "Check",
+        slug: triggersEvent,
+        source: check.title || "Conversation check",
+      });
+    }
+    links.push(...actionSequenceOutgoingLinks(check.handlerActions, `Check ${check.title}`));
+  }
+  for (const group of event.classifierGroups ?? []) {
+    const triggersEvent = group.triggersEvent.trim();
+    if (triggersEvent) {
+      links.push({
+        kind: "Classifiers",
+        slug: triggersEvent,
+        source: group.title || "Classifier group",
+      });
+    }
+    links.push(
+      ...actionSequenceOutgoingLinks(group.handlerActions, `Classifiers ${group.title}`),
+    );
+  }
+  return links;
 }
 
 function eventOutgoingSlugs(event: ExperienceEvent) {
   const slugs = new Set<string>();
-  for (const step of event.steps) {
-    if (
-      step.actionType !== "set_ui_trigger" &&
-      step.actionType !== "goto_event" &&
-      step.actionType !== "button_choice" &&
-      step.actionType !== "interactive"
-    ) {
-      continue;
-    }
-    const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
-    if (triggersEvent) slugs.add(triggersEvent);
-  }
-  for (const tool of event.chatTools) {
-    const triggersEvent = tool.triggersEvent.trim();
-    if (triggersEvent) slugs.add(triggersEvent);
-    for (const handlerSlug of actionSequenceOutgoingSlugs(tool.handlerActions)) {
-      slugs.add(handlerSlug);
-    }
-  }
-  for (const check of event.conversationChecks ?? []) {
-    const triggersEvent = check.triggersEvent.trim();
-    if (triggersEvent) slugs.add(triggersEvent);
-    for (const handlerSlug of actionSequenceOutgoingSlugs(check.handlerActions)) {
-      slugs.add(handlerSlug);
-    }
-  }
-  for (const group of event.classifierGroups ?? []) {
-    const triggersEvent = group.triggersEvent.trim();
-    if (triggersEvent) slugs.add(triggersEvent);
-    for (const handlerSlug of actionSequenceOutgoingSlugs(group.handlerActions)) {
-      slugs.add(handlerSlug);
-    }
+  for (const link of eventOutgoingLinks(event)) {
+    slugs.add(link.slug);
   }
   return [...slugs];
 }
@@ -10332,6 +10356,8 @@ function EventGraphView({
     indexBySlug.set(event.slug, index);
     indexBySlug.set(event.id, index);
   });
+  const selectedEvent =
+    sortedEvents.find((event) => event.id === selectedEventId) ?? sortedEvents[0];
   const rowHeight = 44;
   const height = Math.max(74, sortedEvents.length * rowHeight + 28);
   const links = sortedEvents.flatMap((event, sourceIndex) =>
@@ -10342,6 +10368,28 @@ function EventGraphView({
         targetIndex: indexBySlug.get(slug) ?? -1,
       }))
       .filter((link) => link.targetIndex >= 0),
+  );
+  const selectedOutgoingLinks = selectedEvent
+    ? eventOutgoingLinks(selectedEvent)
+    : [];
+  const incomingLinks = selectedEvent
+    ? sortedEvents.flatMap((event) =>
+        eventOutgoingLinks(event)
+          .filter(
+            (link) =>
+              link.slug === selectedEvent.slug || link.slug === selectedEvent.id,
+          )
+          .map((link) => ({
+            ...link,
+            sourceEvent: event.title || event.slug,
+          })),
+      )
+    : [];
+  const unresolvedLinks = selectedOutgoingLinks.filter(
+    (link) =>
+      !sortedEvents.some(
+        (event) => event.slug === link.slug || event.id === link.slug,
+      ),
   );
 
   return (
@@ -10388,6 +10436,102 @@ function EventGraphView({
           );
         })}
       </div>
+      {selectedEvent ? (
+        <div className="event-graph-details">
+          <div className="event-graph-details-header">
+            <strong>{selectedEvent.title || selectedEvent.slug}</strong>
+            <span>
+              {incomingLinks.length} in / {selectedOutgoingLinks.length} out
+            </span>
+          </div>
+          <EventGraphLinkList
+            empty="No outgoing routes"
+            events={sortedEvents}
+            links={selectedOutgoingLinks}
+            title="Outgoing"
+          />
+          <EventGraphIncomingList
+            empty={selectedEvent.isStart ? "Start event" : "No incoming routes"}
+            links={incomingLinks}
+            title="Incoming"
+          />
+          {unresolvedLinks.length ? (
+            <EventGraphLinkList
+              empty=""
+              events={sortedEvents}
+              links={unresolvedLinks}
+              title="Unresolved"
+              unresolved
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EventGraphLinkList({
+  empty,
+  events,
+  links,
+  title,
+  unresolved = false,
+}: {
+  empty: string;
+  events: ExperienceEvent[];
+  links: EventOutgoingLink[];
+  title: string;
+  unresolved?: boolean;
+}) {
+  return (
+    <div className="event-graph-link-group">
+      <span>{title}</span>
+      {links.length ? (
+        links.map((link, index) => (
+          <div
+            className={`event-graph-link-row ${unresolved ? "is-unresolved" : ""}`}
+            key={`${link.slug}-${link.source}-${index}`}
+          >
+            <strong>{eventTitleForTrigger(events, link.slug)}</strong>
+            <small>
+              {link.kind} / {link.source}
+            </small>
+          </div>
+        ))
+      ) : (
+        <p>{empty}</p>
+      )}
+    </div>
+  );
+}
+
+function EventGraphIncomingList({
+  empty,
+  links,
+  title,
+}: {
+  empty: string;
+  links: Array<EventOutgoingLink & { sourceEvent: string }>;
+  title: string;
+}) {
+  return (
+    <div className="event-graph-link-group">
+      <span>{title}</span>
+      {links.length ? (
+        links.map((link, index) => (
+          <div
+            className="event-graph-link-row"
+            key={`${link.sourceEvent}-${link.slug}-${link.source}-${index}`}
+          >
+            <strong>{link.sourceEvent}</strong>
+            <small>
+              {link.kind} / {link.source}
+            </small>
+          </div>
+        ))
+      ) : (
+        <p>{empty}</p>
+      )}
     </div>
   );
 }
