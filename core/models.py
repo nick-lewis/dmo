@@ -105,7 +105,6 @@ class EventActionStep(models.Model):
         GET_UI_STATE = "get_ui_state", "Get UI state"
         HIGHLIGHT_ON = "highlight_on", "Highlight on"
         HIGHLIGHT_OFF = "highlight_off", "Highlight off"
-        GSLIDE = "gslide", "Google slide"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
         GOTO_EVENT = "goto_event", "Go to event"
         BUTTON_CHOICE = "button_choice", "Button choice"

@@ -1284,10 +1284,6 @@ button {
   grid-template-columns: auto minmax(160px, 1fr);
 }
 
-.event-context-line.event-slide-line {
-  grid-template-columns: auto minmax(220px, 1fr) auto minmax(54px, 0.18fr);
-}
-
 .event-detail-label,
 .event-inline-operator {
   color: color-mix(in srgb, var(--muted-ink) 48%, transparent);

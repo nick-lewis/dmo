@@ -1201,21 +1201,6 @@ def validate_action_config(action_type, value):
             return None, selector_error
         return {"selector": selector}, ""
 
-    if action_type == EventActionStep.ActionType.GSLIDE:
-        deck_url = str(value.get("deckUrl", "")).strip()
-        slide_ref = str(value.get("slideRef", "1")).strip() or "1"
-        if not deck_url:
-            return None, "Deck URL is required."
-        if len(deck_url) > 2048:
-            return None, "Deck URL is too long."
-        if len(slide_ref) > 120:
-            return None, "Slide reference is too long."
-        return {
-            "deckUrl": deck_url,
-            "forceRefresh": bool(value.get("forceRefresh", False)),
-            "slideRef": slide_ref,
-        }, ""
-
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
@@ -1728,56 +1713,6 @@ def run_action_sequence(
                     "type": "highlight_off",
                     "eventId": str(event.id),
                     "selector": selector,
-                    "stepId": step_id,
-                    **metadata,
-                }
-            )
-            continue
-
-        if action_type == EventActionStep.ActionType.GSLIDE:
-            deck_url = render_context_template(
-                config.get("deckUrl", ""),
-                runtime_context,
-            ).strip()
-            slide_ref = render_context_template(
-                config.get("slideRef", "1"),
-                runtime_context,
-            ).strip() or "1"
-            if not deck_url:
-                continue
-
-            try:
-                resolved = resolve_slide_image(
-                    deck_url,
-                    slide_ref,
-                    force_refresh=bool(config.get("forceRefresh", False)),
-                )
-            except (SlideResolutionError, SlideFetchError) as error:
-                actions.append(
-                    {
-                        "type": "slide_error",
-                        "actionType": action_type,
-                        "deckUrl": deck_url,
-                        "detail": str(error),
-                        "eventId": str(event.id),
-                        "slideRef": slide_ref,
-                        "stepId": step_id,
-                        **metadata,
-                    }
-                )
-                continue
-
-            actions.append(
-                {
-                    "type": "gslide",
-                    "actionType": action_type,
-                    "cached": resolved.cache_hit,
-                    "deckUrl": deck_url,
-                    "eventId": str(event.id),
-                    "imageUrl": f"/api/slides/images/{resolved.filename}/",
-                    "pageId": resolved.page_id,
-                    "presentationId": resolved.presentation_id,
-                    "slideRef": slide_ref,
                     "stepId": step_id,
                     **metadata,
                 }

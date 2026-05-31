@@ -65,7 +65,6 @@ const eventActionOptions = [
   { id: "get_ui_state", label: "Read UI" },
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
-  { id: "gslide", label: "Google slide" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -133,7 +132,6 @@ type EventActionStep = {
     | "get_ui_state"
     | "highlight_on"
     | "highlight_off"
-    | "gslide"
     | "set_ui_trigger"
     | "goto_event"
     | "button_choice";
@@ -866,9 +864,6 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return { selector: ".runtime-notes-toggle" };
   }
-  if (actionType === "gslide") {
-    return { deckUrl: sampleSlideDeckUrl, slideRef: "1" };
-  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
@@ -911,7 +906,6 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "get_ui_state") return "Read UI state";
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
-  if (actionType === "gslide") return "Show Google slide";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -1002,9 +996,6 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return "Remove a highlight from an interface target";
   }
-  if (actionType === "gslide") {
-    return "Display a Google Slides page in the main panel";
-  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -1034,7 +1025,6 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
     return "flow";
   }
   if (actionType === "highlight_on" || actionType === "highlight_off") return "ui";
-  if (actionType === "gslide") return "ui";
   return "speech";
 }
 
@@ -1256,10 +1246,6 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
   if (step.actionType === "highlight_off") {
     return `clear ${stringConfigValue(step.config, "selector", "target")}`;
-  }
-  if (step.actionType === "gslide") {
-    const slideRef = stringConfigValue(step.config, "slideRef", "1");
-    return `slide ${slideRef || "1"}`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -4425,27 +4411,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </div>
         ) : null}
 
-        {step.actionType === "gslide" ? (
-          <div className="event-context-line event-slide-line">
-            <span className="event-detail-label">DECK</span>
-            <input
-              aria-label="Google Slides deck URL"
-              onChange={(event) => updateConfig("deckUrl", event.target.value)}
-              placeholder="Google Slides URL"
-              type="text"
-              value={stringConfigValue(step.config, "deckUrl")}
-            />
-            <span className="event-detail-label">SLIDE</span>
-            <input
-              aria-label="Google slide reference"
-              onChange={(event) => updateConfig("slideRef", event.target.value)}
-              placeholder="1"
-              type="text"
-              value={stringConfigValue(step.config, "slideRef")}
-            />
-          </div>
-        ) : null}
-
         {step.actionType === "set_ui_trigger" ? (
           <div className="event-context-line">
             <span className="event-detail-label">WHEN</span>
@@ -5137,39 +5102,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 placeholder=".runtime-notes-toggle"
                                 type="text"
                                 value={stringConfigValue(step.config, "selector")}
-                              />
-                            </div>
-                          ) : null}
-
-                          {step.actionType === "gslide" ? (
-                            <div className="event-context-line event-slide-line">
-                              <span className="event-detail-label">DECK</span>
-                              <input
-                                aria-label="Google Slides deck URL"
-                                onChange={(event) =>
-                                  updateEventStepConfig(
-                                    step.id,
-                                    "deckUrl",
-                                    event.target.value,
-                                  )
-                                }
-                                placeholder="Google Slides URL"
-                                type="text"
-                                value={stringConfigValue(step.config, "deckUrl")}
-                              />
-                              <span className="event-detail-label">SLIDE</span>
-                              <input
-                                aria-label="Google slide reference"
-                                onChange={(event) =>
-                                  updateEventStepConfig(
-                                    step.id,
-                                    "slideRef",
-                                    event.target.value,
-                                  )
-                                }
-                                placeholder="1"
-                                type="text"
-                                value={stringConfigValue(step.config, "slideRef")}
                               />
                             </div>
                           ) : null}
