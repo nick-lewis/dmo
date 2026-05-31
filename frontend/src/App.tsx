@@ -45,6 +45,13 @@ type DraggingHandlerAction = {
   ownerKind: HandlerActionOwnerKind;
 };
 
+type ConversationItemKind = HandlerActionOwnerKind;
+
+type DraggingConversationItem = {
+  itemId: string;
+  itemKind: ConversationItemKind;
+};
+
 const leftPanels = [
   { density: "tall", kind: "experience", label: "Experience" },
   { density: "tutor", kind: "tutor", label: "Tutor settings" },
@@ -64,6 +71,7 @@ const slideSettingsStorageKey = "dlu.slide-settings.v1";
 const experienceSelectionStorageKey = "dlu.selected-experience.v1";
 const experienceAutosaveDelayMs = 700;
 const editorUndoLimit = 80;
+const conversationItemDragMimeType = "application/x-dlu-conversation-item";
 const handlerActionDragMimeType = "application/x-dlu-handler-action";
 const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
@@ -3453,6 +3461,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const [eventSearch, setEventSearch] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
+  const [draggingConversationItem, setDraggingConversationItem] =
+    useState<DraggingConversationItem | null>(null);
   const [draggingHandlerAction, setDraggingHandlerAction] =
     useState<DraggingHandlerAction | null>(null);
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
@@ -3652,6 +3662,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
+      setDraggingConversationItem(null);
+      setDraggingHandlerAction(null);
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -3695,6 +3707,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
+      setDraggingConversationItem(null);
+      setDraggingHandlerAction(null);
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -3747,6 +3761,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         clearEventUndoHistory();
         resetExpandedItems();
         setDraggingStepId("");
+        setDraggingConversationItem(null);
+        setDraggingHandlerAction(null);
         setIsEventAddMenuOpen(false);
         setIsConversationAddMenuOpen(false);
         setConversationAddMenuToolId("");
@@ -3788,6 +3804,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
+      setDraggingConversationItem(null);
+      setDraggingHandlerAction(null);
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -5262,6 +5280,59 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }));
   }
 
+  function reorderDraftOrderedItems<T extends { id: string; sortOrder: number }>(
+    items: T[],
+    itemId: string,
+    targetItemId: string,
+  ) {
+    const currentIndex = items.findIndex((item) => item.id === itemId);
+    const targetIndex = items.findIndex((item) => item.id === targetItemId);
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
+      return items;
+    }
+
+    const reorderedItems = [...items];
+    const [movedItem] = reorderedItems.splice(currentIndex, 1);
+    reorderedItems.splice(targetIndex, 0, movedItem);
+    return reorderedItems.map((item, index) => ({
+      ...item,
+      sortOrder: index,
+    }));
+  }
+
+  function reorderEventChatTool(toolId: string, targetToolId: string) {
+    stageEventDraft({
+      ...eventDraft,
+      chatTools: reorderDraftOrderedItems(
+        eventDraft.chatTools,
+        toolId,
+        targetToolId,
+      ),
+    });
+  }
+
+  function reorderEventConversationCheck(checkId: string, targetCheckId: string) {
+    stageEventDraft({
+      ...eventDraft,
+      conversationChecks: reorderDraftOrderedItems(
+        eventDraft.conversationChecks,
+        checkId,
+        targetCheckId,
+      ),
+    });
+  }
+
+  function reorderEventClassifierGroup(groupId: string, targetGroupId: string) {
+    stageEventDraft({
+      ...eventDraft,
+      classifierGroups: reorderDraftOrderedItems(
+        eventDraft.classifierGroups,
+        groupId,
+        targetGroupId,
+      ),
+    });
+  }
+
   function updateEventChatToolActionDraft(
     toolId: string,
     actionId: string,
@@ -5722,6 +5793,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     clearEventUndoHistory();
     resetExpandedItems();
     setDraggingStepId("");
+    setDraggingConversationItem(null);
     setDraggingHandlerAction(null);
     setIsEventAddMenuOpen(false);
     setIsConversationAddMenuOpen(false);
@@ -5768,6 +5840,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
+      setDraggingConversationItem(null);
+      setDraggingHandlerAction(null);
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -5820,6 +5894,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
+      setDraggingConversationItem(null);
+      setDraggingHandlerAction(null);
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -6291,6 +6367,87 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setDraggingStepId("");
     if (!sourceStepId || sourceStepId === targetStepId) return;
     await reorderEventStep(sourceStepId, targetStepId);
+  }
+
+  function serializeConversationItemDrag(payload: DraggingConversationItem) {
+    return JSON.stringify(payload);
+  }
+
+  function parseConversationItemDrag(value: string) {
+    if (!value) return null;
+
+    try {
+      const parsed = JSON.parse(value) as Partial<DraggingConversationItem>;
+      if (
+        (parsed.itemKind === "chatTool" ||
+          parsed.itemKind === "conversationCheck" ||
+          parsed.itemKind === "classifierGroup") &&
+        typeof parsed.itemId === "string"
+      ) {
+        return parsed as DraggingConversationItem;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  function dragConversationItem(
+    event: DragEvent<HTMLElement>,
+    payload: DraggingConversationItem,
+  ) {
+    const serializedPayload = serializeConversationItemDrag(payload);
+    setDraggingConversationItem(payload);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(conversationItemDragMimeType, serializedPayload);
+    event.dataTransfer.setData("text/plain", serializedPayload);
+  }
+
+  function dragOverConversationItem(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function dropConversationItem(
+    event: DragEvent<HTMLElement>,
+    target: DraggingConversationItem,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const source =
+      parseConversationItemDrag(
+        event.dataTransfer.getData(conversationItemDragMimeType),
+      ) ??
+      parseConversationItemDrag(event.dataTransfer.getData("text/plain")) ??
+      draggingConversationItem;
+    setDraggingConversationItem(null);
+    if (
+      !source ||
+      source.itemId === target.itemId ||
+      source.itemKind !== target.itemKind
+    ) {
+      return;
+    }
+
+    if (source.itemKind === "chatTool") {
+      reorderEventChatTool(source.itemId, target.itemId);
+      return;
+    }
+
+    if (source.itemKind === "conversationCheck") {
+      reorderEventConversationCheck(source.itemId, target.itemId);
+      return;
+    }
+
+    reorderEventClassifierGroup(source.itemId, target.itemId);
+  }
+
+  function isDraggingConversationItem(payload: DraggingConversationItem) {
+    return (
+      draggingConversationItem?.itemKind === payload.itemKind &&
+      draggingConversationItem.itemId === payload.itemId
+    );
   }
 
   function serializeHandlerActionDrag(payload: DraggingHandlerAction) {
@@ -7959,6 +8116,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
                   );
+                  const dragPayload: DraggingConversationItem = {
+                    itemId: tool.id,
+                    itemKind: "chatTool",
+                  };
 
                   return (
                     <article
@@ -7966,15 +8127,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         "event-step",
                         "chat-exit-step",
                         "tone-flow",
+                        isDraggingConversationItem(dragPayload)
+                          ? "is-dragging"
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !tool.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
                       key={tool.id}
+                      onDragOver={dragOverConversationItem}
+                      onDrop={(event) =>
+                        dropConversationItem(event, dragPayload)
+                      }
                     >
                       <div className="event-step-main">
-                        <span className="event-drag-handle is-static">
+                        <span
+                          aria-label="Drag FC route"
+                          className="event-drag-handle"
+                          draggable
+                          onDragEnd={() => setDraggingConversationItem(null)}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
+                          title="Drag to reorder"
+                        >
                           <GripIcon />
                         </span>
 
@@ -8380,6 +8557,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                   const hasTriggerEventOption = editorEvents.some(
                     (event) => event.slug === targetEventSlug,
                   );
+                  const dragPayload: DraggingConversationItem = {
+                    itemId: check.id,
+                    itemKind: "conversationCheck",
+                  };
 
                   return (
                     <article
@@ -8388,15 +8569,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         "chat-exit-step",
                         "conversation-check-step",
                         "tone-state",
+                        isDraggingConversationItem(dragPayload)
+                          ? "is-dragging"
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !check.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
                       key={check.id}
+                      onDragOver={dragOverConversationItem}
+                      onDrop={(event) =>
+                        dropConversationItem(event, dragPayload)
+                      }
                     >
                       <div className="event-step-main">
-                        <span className="event-drag-handle is-static">
+                        <span
+                          aria-label="Drag conversation check"
+                          className="event-drag-handle"
+                          draggable
+                          onDragEnd={() => setDraggingConversationItem(null)}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
+                          title="Drag to reorder"
+                        >
                           <GripIcon />
                         </span>
 
@@ -8761,6 +8958,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     (event) => event.slug === targetEventSlug,
                   );
                   const groupMenuId = `classifier-group:${group.id}`;
+                  const dragPayload: DraggingConversationItem = {
+                    itemId: group.id,
+                    itemKind: "classifierGroup",
+                  };
 
                   return (
                     <article
@@ -8768,15 +8969,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         "event-step",
                         "chat-exit-step",
                         "tone-state",
+                        isDraggingConversationItem(dragPayload)
+                          ? "is-dragging"
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !group.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
                       key={group.id}
+                      onDragOver={dragOverConversationItem}
+                      onDrop={(event) =>
+                        dropConversationItem(event, dragPayload)
+                      }
                     >
                       <div className="event-step-main">
-                        <span className="event-drag-handle is-static">
+                        <span
+                          aria-label="Drag classifier group"
+                          className="event-drag-handle"
+                          draggable
+                          onDragEnd={() => setDraggingConversationItem(null)}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
+                          title="Drag to reorder"
+                        >
                           <GripIcon />
                         </span>
 
