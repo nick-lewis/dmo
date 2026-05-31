@@ -463,6 +463,7 @@ type RuntimeDebugTraceEntry = {
 };
 
 type EventOutgoingLink = {
+  condition?: string;
   kind: string;
   slug: string;
   source: string;
@@ -1385,6 +1386,7 @@ function actionSequenceOutgoingLinks(
 ) {
   const links: EventOutgoingLink[] = [];
   for (const step of steps) {
+    const condition = conditionRecordSummary(step.condition);
     if (step.actionType === "script") {
       const markers = parseScriptMarkerInstances(
         stringConfigValue(step.config, "text"),
@@ -1399,6 +1401,7 @@ function actionSequenceOutgoingLinks(
         const triggersEvent = markerDestination || fallbackDestination;
         if (!triggersEvent) return;
         links.push({
+          condition,
           kind: "App submit",
           slug: triggersEvent,
           source: `${sourcePrefix}: ${step.label || "Say"} / ${
@@ -1419,6 +1422,7 @@ function actionSequenceOutgoingLinks(
     const triggersEvent = stringConfigValue(step.config, "triggersEvent").trim();
     if (!triggersEvent) continue;
     links.push({
+      condition,
       kind: eventActionLabel(step.actionType),
       slug: triggersEvent,
       source: `${sourcePrefix}: ${step.label || eventActionLabel(step.actionType)}`,
@@ -1433,6 +1437,7 @@ function eventOutgoingLinks(event: ExperienceEvent) {
     const triggersEvent = tool.triggersEvent.trim();
     if (triggersEvent) {
       links.push({
+        condition: "function called",
         kind: "FC route",
         slug: triggersEvent,
         source: tool.description || tool.name,
@@ -1444,6 +1449,7 @@ function eventOutgoingLinks(event: ExperienceEvent) {
     const triggersEvent = check.triggersEvent.trim();
     if (triggersEvent) {
       links.push({
+        condition: "check matched",
         kind: "Check",
         slug: triggersEvent,
         source: check.title || "Conversation check",
@@ -1455,6 +1461,8 @@ function eventOutgoingLinks(event: ExperienceEvent) {
     const triggersEvent = group.triggersEvent.trim();
     if (triggersEvent) {
       links.push({
+        condition:
+          conditionRecordSummary(group.condition) || "classifier matched",
         kind: "Classifiers",
         slug: triggersEvent,
         source: group.title || "Classifier group",
@@ -11531,6 +11539,11 @@ function EventGraphView({
     (total, event) => total + (statsByEventId.get(event.id)?.outgoingCount ?? 0),
     0,
   );
+  const conditionalRouteCount = sortedEvents.reduce(
+    (total, event) =>
+      total + eventOutgoingLinks(event).filter((link) => link.condition).length,
+    0,
+  );
   const selectedEvent =
     sortedEvents.find((event) => event.id === selectedEventId) ?? sortedEvents[0];
   const rowHeight = 44;
@@ -11590,6 +11603,7 @@ function EventGraphView({
       <div className="event-graph-summary">
         <span>{sortedEvents.length} events</span>
         <span>{routeCount} routes</span>
+        <span>{conditionalRouteCount} conditional</span>
         {orphanCount ? <strong>{orphanCount} orphaned</strong> : <span>0 orphaned</span>}
         {unresolvedRouteCount ? (
           <strong>{unresolvedRouteCount} unresolved</strong>
@@ -11698,6 +11712,7 @@ function EventGraphLinkList({
                 <strong>{link.slug || "Missing event"}</strong>
                 <small>
                   {link.kind} / {link.source}
+                  {link.condition ? ` / if ${link.condition}` : ""}
                 </small>
               </div>
             );
@@ -11713,6 +11728,7 @@ function EventGraphLinkList({
               <strong>{target.title || target.slug}</strong>
               <small>
                 {link.kind} / {link.source}
+                {link.condition ? ` / if ${link.condition}` : ""}
               </small>
             </button>
           );
@@ -11749,6 +11765,7 @@ function EventGraphIncomingList({
             <strong>{link.sourceEvent}</strong>
             <small>
               {link.kind} / {link.source}
+              {link.condition ? ` / if ${link.condition}` : ""}
             </small>
           </button>
         ))
