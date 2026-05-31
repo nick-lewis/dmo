@@ -1962,6 +1962,13 @@ class ExperienceContentMaturityTests(TestCase):
             config={"text": "Try this. [interactive: missing_app, table, done]"},
             sort_order=4,
         )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Missing slide deck script",
+            config={"text": "Look here. [gslide: 2]"},
+            sort_order=5,
+        )
         self.client.force_login(self.user)
 
         response = self.client.get(f"/api/experiences/{source.id}/validation/")
@@ -1986,6 +1993,14 @@ class ExperienceContentMaturityTests(TestCase):
         self.assertIn(
             "missing_app",
             [issue["interactiveId"] for issue in validation["appIssues"]],
+        )
+        self.assertIn(
+            "missing_slide_deck",
+            [issue["issueType"] for issue in validation["scriptIssues"]],
+        )
+        self.assertIn(
+            "2",
+            [issue["value"] for issue in validation["scriptIssues"]],
         )
         self.assertIn(
             "done",

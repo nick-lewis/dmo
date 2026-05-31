@@ -564,6 +564,18 @@ type ExperienceValidationAppIssue = {
   sourceItemId: string;
 };
 
+type ExperienceValidationScriptIssue = {
+  detail: string;
+  issueType: string;
+  markerType: string;
+  source: string;
+  sourceEventId: string;
+  sourceEventSlug: string;
+  sourceEventTitle: string;
+  sourceItemId: string;
+  value: string;
+};
+
 type ExperienceValidation = {
   appIssues: ExperienceValidationAppIssue[];
   dynamicRouteCount: number;
@@ -571,6 +583,7 @@ type ExperienceValidation = {
   orphanedEvents: ExperienceValidationEvent[];
   routeCount: number;
   routes: ExperienceValidationRoute[];
+  scriptIssues: ExperienceValidationScriptIssue[];
   unresolvedRoutes: ExperienceValidationRoute[];
 };
 
@@ -13816,9 +13829,11 @@ function EventGraphValidationPanel({
   validationError: string;
 }) {
   const appIssueCount = validation?.appIssues.length ?? 0;
+  const scriptIssueCount = validation?.scriptIssues.length ?? 0;
   const unresolvedCount = validation?.unresolvedRoutes.length ?? 0;
   const orphanCount = validation?.orphanedEvents.length ?? 0;
-  const issueCount = appIssueCount + unresolvedCount + orphanCount;
+  const issueCount =
+    appIssueCount + scriptIssueCount + unresolvedCount + orphanCount;
   const statusLabel =
     status === "loading"
       ? "Checking"
@@ -13843,6 +13858,7 @@ function EventGraphValidationPanel({
           <span>{validation.routeCount} routes</span>
           <span>{validation.dynamicRouteCount} dynamic</span>
           <span>{appIssueCount} app issues</span>
+          <span>{scriptIssueCount} script issues</span>
         </div>
       ) : null}
       {validationError ? (
@@ -13861,6 +13877,22 @@ function EventGraphValidationPanel({
               type="button"
             >
               <strong>{issue.interactiveId}</strong>
+              <span>
+                {issue.sourceEventTitle || issue.sourceEventSlug} / {issue.source}
+              </span>
+            </button>
+          ))}
+          {validation.scriptIssues.map((issue, index) => (
+            <button
+              className="event-graph-validation-row is-script"
+              key={`${issue.sourceEventId}-${issue.issueType}-${issue.value}-${index}`}
+              onClick={() =>
+                onOpenRouteSource(issue.sourceEventId, issue.sourceItemId)
+              }
+              title={issue.detail}
+              type="button"
+            >
+              <strong>{issue.value || issue.markerType || "script"}</strong>
               <span>
                 {issue.sourceEventTitle || issue.sourceEventSlug} / {issue.source}
               </span>
@@ -13896,7 +13928,7 @@ function EventGraphValidationPanel({
       ) : null}
       {validation && !issueCount ? (
         <p className="event-graph-validation-empty">
-          No unresolved routes, orphaned events, or app registration issues.
+          No unresolved routes, orphaned events, app registration issues, or script issues.
         </p>
       ) : null}
     </div>

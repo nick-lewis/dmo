@@ -855,9 +855,32 @@ def validation_app_issue(event, interactive_id, source, source_item_id=""):
     }
 
 
+def validation_script_issue(
+    event,
+    detail,
+    source,
+    source_item_id="",
+    issue_type="script",
+    marker_type="",
+    value="",
+):
+    return {
+        "detail": detail,
+        "issueType": issue_type,
+        "markerType": str(marker_type or ""),
+        "source": source,
+        "sourceEventId": str(event.id),
+        "sourceEventSlug": event.slug,
+        "sourceEventTitle": event.title,
+        "sourceItemId": str(source_item_id or ""),
+        "value": str(value or ""),
+    }
+
+
 def validation_routes_from_action_sequence(event, actions, source_prefix):
     routes = []
     app_issues = []
+    script_issues = []
     action_type_labels = dict(EventActionStep.ActionType.choices)
     for action in actions or []:
         if not isinstance(action, dict):
@@ -871,17 +894,33 @@ def validation_routes_from_action_sequence(event, actions, source_prefix):
 
         if action_type == EventActionStep.ActionType.SCRIPT:
             _, markers = parse_script_markers(config.get("text", ""))
+            deck_url = validation_config_value(config, "deckUrl")
             fallback_target = validation_config_value(config, "triggersEvent")
             fallback_target_is_dynamic = validation_template_is_dynamic(fallback_target)
             fallback_app_id = validation_config_value(config, "interactiveId")
 
             for marker in markers:
                 marker_type = marker.get("markerType")
+                marker_text = f"{source} / [{marker_type}]"
+                if marker_type in {"gslide", "slide"} and not deck_url:
+                    args = marker.get("args") or []
+                    slide_ref = str(args[0]).strip() if args else "1"
+                    script_issues.append(
+                        validation_script_issue(
+                            event,
+                            "Script slide marker needs a deck URL.",
+                            marker_text,
+                            source_item_id,
+                            issue_type="missing_slide_deck",
+                            marker_type=marker_type,
+                            value=slide_ref or "1",
+                        )
+                    )
+
                 if marker_type not in {"interactive", "interactive_update"}:
                     continue
 
                 args = marker.get("args") or []
-                marker_text = f"{source} / [{marker_type}]"
                 interactive_id = (
                     str(args[0]).strip()
                     if args
@@ -945,7 +984,7 @@ def validation_routes_from_action_sequence(event, actions, source_prefix):
             )
         )
 
-    return routes, app_issues
+    return routes, app_issues, script_issues
 
 
 def experience_validation_summary(experience):
@@ -957,6 +996,7 @@ def experience_validation_summary(experience):
 
     routes = []
     app_issues = []
+    script_issues = []
     for event in events:
         action_steps = [
             {
@@ -967,13 +1007,14 @@ def experience_validation_summary(experience):
             }
             for step in event.steps.order_by("sort_order", "created_at")
         ]
-        step_routes, step_app_issues = validation_routes_from_action_sequence(
-            event,
-            action_steps,
-            "On entry",
-        )
+        (
+            step_routes,
+            step_app_issues,
+            step_script_issues,
+        ) = validation_routes_from_action_sequence(event, action_steps, "On entry")
         routes.extend(step_routes)
         app_issues.extend(step_app_issues)
+        script_issues.extend(step_script_issues)
 
         for tool in event.chat_tools.order_by("sort_order", "created_at"):
             if tool.triggers_event:
@@ -986,13 +1027,16 @@ def experience_validation_summary(experience):
                         tool.id,
                     )
                 )
-            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
-                event,
-                tool.handler_actions,
-                f"FC route {tool.name}",
+            (
+                handler_routes,
+                handler_app_issues,
+                handler_script_issues,
+            ) = validation_routes_from_action_sequence(
+                event, tool.handler_actions, f"FC route {tool.name}"
             )
             routes.extend(handler_routes)
             app_issues.extend(handler_app_issues)
+            script_issues.extend(handler_script_issues)
 
         for check in event.conversation_checks.order_by("sort_order", "created_at"):
             if check.triggers_event:
@@ -1005,13 +1049,16 @@ def experience_validation_summary(experience):
                         check.id,
                     )
                 )
-            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
-                event,
-                check.handler_actions,
-                f"Check {check.title}",
+            (
+                handler_routes,
+                handler_app_issues,
+                handler_script_issues,
+            ) = validation_routes_from_action_sequence(
+                event, check.handler_actions, f"Check {check.title}"
             )
             routes.extend(handler_routes)
             app_issues.extend(handler_app_issues)
+            script_issues.extend(handler_script_issues)
 
         for group in event.classifier_groups.order_by("sort_order", "created_at"):
             if group.triggers_event:
@@ -1024,13 +1071,16 @@ def experience_validation_summary(experience):
                         group.id,
                     )
                 )
-            handler_routes, handler_app_issues = validation_routes_from_action_sequence(
-                event,
-                group.handler_actions,
-                f"Classifiers {group.title}",
+            (
+                handler_routes,
+                handler_app_issues,
+                handler_script_issues,
+            ) = validation_routes_from_action_sequence(
+                event, group.handler_actions, f"Classifiers {group.title}"
             )
             routes.extend(handler_routes)
             app_issues.extend(handler_app_issues)
+            script_issues.extend(handler_script_issues)
 
     unresolved_routes = [
         route
@@ -1062,6 +1112,7 @@ def experience_validation_summary(experience):
         "orphanedEvents": orphaned_events,
         "routeCount": len(routes),
         "routes": routes,
+        "scriptIssues": script_issues,
         "unresolvedRoutes": unresolved_routes,
     }
 
