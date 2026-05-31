@@ -1538,6 +1538,25 @@ function compactRuntimeValue(value: unknown, fallback = "---") {
   }
 }
 
+function fullRuntimeValue(value: unknown, fallback = "---") {
+  if (value === undefined) return fallback;
+  if (typeof value === "string") return value.trim() || fallback;
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function runtimeValueTypeLabel(value: unknown) {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  if (value === undefined) return "unset";
+  if (typeof value === "object") return "object";
+  return typeof value;
+}
+
 function runtimeActionText(action: Record<string, unknown>) {
   const type = typeof action.type === "string" ? action.type : "action";
   if (type === "conversation_check_result") {
@@ -10636,7 +10655,9 @@ function RuntimeInspectorPanel({
   slideError: string;
   triggers: RuntimeUiTrigger[];
 }) {
-  const contextEntries = Object.entries(runtimeContext);
+  const contextEntries = Object.entries(runtimeContext).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
   const interactiveStateEntries = Object.entries(interactiveState);
   const highlightEntries = Object.values(highlights);
   const serverActionEntries = runtimeDebugEntries(runtimeDebug.recentActions).slice(
@@ -10778,7 +10799,13 @@ function RuntimeInspectorPanel({
               {contextEntries.map(([key, value]) => (
                 <div className="runtime-inspector-row" key={key}>
                   <span>{key}</span>
-                  <code>{compactRuntimeValue(value)}</code>
+                  <code
+                    className="runtime-inspector-value"
+                    title={fullRuntimeValue(value)}
+                  >
+                    <span>{compactRuntimeValue(value)}</span>
+                    <small>{runtimeValueTypeLabel(value)}</small>
+                  </code>
                 </div>
               ))}
             </div>

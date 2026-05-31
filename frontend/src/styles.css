@@ -2816,6 +2816,37 @@ button {
   color: rgba(31, 37, 41, 0.62);
 }
 
+.runtime-inspector-row code.runtime-inspector-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.runtime-inspector-value span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-inspector-value small {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: 1px solid rgba(31, 37, 41, 0.08);
+  border-radius: 4px;
+  color: rgba(31, 37, 41, 0.4);
+  font-family: var(--mono-font);
+  font-size: 0.55rem;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 .runtime-inspector-row span {
   min-width: 0;
   overflow: hidden;
