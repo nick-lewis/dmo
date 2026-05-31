@@ -1124,6 +1124,63 @@ class ConversationRuntimeTests(TestCase):
             sort_order=0,
         )
 
+    def test_run_completed_event_moves_session_current_event(self):
+        target_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Already introduced",
+            slug="already-introduced",
+            sort_order=1,
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={
+                "currentEventSlug": "fruit-chat",
+                "eventRuns": {
+                    str(target_event.id): {
+                        "status": "complete",
+                    }
+                },
+                "uiRuntime": {
+                    "triggers": [
+                        {
+                            "selector": ".continue-button",
+                            "triggersEvent": "already-introduced",
+                        }
+                    ]
+                },
+            },
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/events/run/",
+            data=json.dumps(
+                {
+                    "eventSlug": "already-introduced",
+                    "triggerSelector": ".continue-button",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["ran"])
+        self.assertEqual(payload["event"]["slug"], "already-introduced")
+        self.assertEqual(payload["actions"][0]["type"], "event_skipped")
+
+        session.refresh_from_db()
+        self.assertEqual(
+            session.runtime_state["currentEventSlug"],
+            "already-introduced",
+        )
+        self.assertEqual(
+            session.runtime_state["currentEventId"],
+            str(target_event.id),
+        )
+        self.assertEqual(session.runtime_state["uiRuntime"]["triggers"], [])
+
     def test_classifier_handler_updates_context_without_leaving_event(self):
         group = EventClassifierGroup.objects.create(
             event=self.chat_event,

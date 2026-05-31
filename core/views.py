@@ -4112,9 +4112,14 @@ def run_event_chain(session, first_event, client_ui_state=None, state=None):
 
     state["eventRuns"] = event_runs
     if current_event:
-        state["currentEventId"] = str(current_event.id)
-        state["currentEventSlug"] = current_event.slug
+        state = set_runtime_current_event(state, current_event)
     return actions, messages, ran_events, state
+
+
+def set_runtime_current_event(state, event):
+    state["currentEventId"] = str(event.id)
+    state["currentEventSlug"] = event.slug
+    return state
 
 
 def conversation_check_transcript(session, limit=16):
@@ -5691,19 +5696,26 @@ def run_session_event(request, session_id):
         event_runs = dict(state.get("eventRuns") or {})
         run_key = str(event.id)
         if event_runs.get(run_key, {}).get("status") == "complete":
-            if clear_buttons or trigger_selector:
-                state = apply_runtime_actions_to_state(
-                    state,
-                    [],
-                    clear_buttons=clear_buttons,
-                    clear_trigger_selector=trigger_selector,
-                )
-                session.runtime_state = state
-                session.save(update_fields=["runtime_state", "updated_at"])
+            actions = [
+                {
+                    "type": "event_skipped",
+                    "eventId": str(event.id),
+                    "reason": "already_complete",
+                }
+            ]
+            state = set_runtime_current_event(state, event)
+            state = apply_runtime_actions_to_state(
+                state,
+                actions,
+                clear_buttons=clear_buttons,
+                clear_trigger_selector=trigger_selector,
+            )
+            session.runtime_state = state
+            session.save(update_fields=["runtime_state", "updated_at"])
             return JsonResponse(
                 {
                     **session_payload(session),
-                    "actions": [],
+                    "actions": actions,
                     "event": serialize_experience_event(event),
                     "ran": False,
                 }
