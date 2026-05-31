@@ -52,6 +52,7 @@ class TutorSettings(models.Model):
     voice = models.CharField(max_length=40, default="ash")
     system_prompt = models.TextField(blank=True, default="")
     voice_instructions = models.TextField(blank=True, default="")
+    script_action_offset_ms = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

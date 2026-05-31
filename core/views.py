@@ -86,6 +86,7 @@ DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
 INITIAL_SCRIPT_CUE_PROGRESS = 0.001
+SCRIPT_ACTION_OFFSET_LIMIT_MS = 3000
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
 TOOL_DISPLAY_TITLE_KEY = "x-dluDisplayTitle"
 SCRIPT_AUDIO_MESSAGE_SOURCES = {
@@ -373,6 +374,7 @@ def serialize_tutor_settings(tutor_settings):
         "avatarPath": tutor_settings.avatar_path,
         "classificationModel": tutor_settings.classification_model,
         "realtimeModel": tutor_settings.realtime_model,
+        "scriptActionOffsetMs": tutor_settings.script_action_offset_ms,
         "systemPrompt": tutor_settings.system_prompt,
         "voice": tutor_settings.voice,
         "voiceInstructions": tutor_settings.voice_instructions,
@@ -614,6 +616,7 @@ def ensure_tutor_settings(experience):
             "avatar_path": "test-images/dLU-right.png",
             "classification_model": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
             "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
+            "script_action_offset_ms": 0,
             "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
             "system_prompt": settings.DLU_REALTIME_DEFAULT_INSTRUCTIONS,
             "voice_instructions": "",
@@ -2705,6 +2708,27 @@ def update_experience(request, experience_id):
             if len(system_prompt) > 12000:
                 return JsonResponse({"detail": "System prompt is too long."}, status=400)
             tutor_settings.system_prompt = system_prompt
+
+        if "scriptActionOffsetMs" in tutor_data:
+            try:
+                script_action_offset_ms = int(tutor_data.get("scriptActionOffsetMs") or 0)
+            except (TypeError, ValueError):
+                return JsonResponse(
+                    {"detail": "Script action offset must be a number."},
+                    status=400,
+                )
+            if abs(script_action_offset_ms) > SCRIPT_ACTION_OFFSET_LIMIT_MS:
+                return JsonResponse(
+                    {
+                        "detail": (
+                            "Script action offset must be between "
+                            f"-{SCRIPT_ACTION_OFFSET_LIMIT_MS} and "
+                            f"{SCRIPT_ACTION_OFFSET_LIMIT_MS} ms."
+                        )
+                    },
+                    status=400,
+                )
+            tutor_settings.script_action_offset_ms = script_action_offset_ms
 
         if "voiceInstructions" in tutor_data:
             voice_instructions = str(tutor_data.get("voiceInstructions", "")).strip()

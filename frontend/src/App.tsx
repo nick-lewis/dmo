@@ -120,6 +120,7 @@ type TutorSettings = {
   avatarPath: string;
   classificationModel: ClassificationModelId;
   realtimeModel: RealtimeModelId;
+  scriptActionOffsetMs: number;
   systemPrompt: string;
   voice: RealtimeVoiceId;
   voiceInstructions: string;
@@ -1359,6 +1360,15 @@ function scriptCueTime(cue: ScriptCue, fallbackDurationSeconds: number) {
   return fallbackDurationSeconds * cue.progress;
 }
 
+function scriptCueEffectiveTime(
+  cue: ScriptCue,
+  fallbackDurationSeconds: number,
+  offsetMs: number,
+) {
+  const offsetSeconds = Number.isFinite(offsetMs) ? offsetMs / 1000 : 0;
+  return Math.max(0, scriptCueTime(cue, fallbackDurationSeconds) + offsetSeconds);
+}
+
 function scriptCueNeedsTiming(cue: ScriptCue) {
   return cue.progress > scriptImmediateCueProgress && typeof cue.time !== "number";
 }
@@ -2414,6 +2424,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     avatarPath: "test-images/dLU-right.png",
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
+    scriptActionOffsetMs: 0,
     systemPrompt: "",
     voice: "ash",
     voiceInstructions: "",
@@ -2821,6 +2832,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       draft.avatarPath !== experience.tutor.avatarPath ||
       draft.classificationModel !== experience.tutor.classificationModel ||
       draft.realtimeModel !== experience.tutor.realtimeModel ||
+      draft.scriptActionOffsetMs !== experience.tutor.scriptActionOffsetMs ||
       draft.systemPrompt !== experience.tutor.systemPrompt ||
       draft.voice !== experience.tutor.voice ||
       draft.voiceInstructions !== experience.tutor.voiceInstructions
@@ -2861,6 +2873,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           current.avatarPath !== draft.avatarPath ||
           current.classificationModel !== draft.classificationModel ||
           current.realtimeModel !== draft.realtimeModel ||
+          current.scriptActionOffsetMs !== draft.scriptActionOffsetMs ||
           current.systemPrompt !== draft.systemPrompt ||
           current.voice !== draft.voice ||
           current.voiceInstructions !== draft.voiceInstructions
@@ -4797,6 +4810,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 }
                 onPlaySample={playVoiceSample}
                 onSave={saveTutorSettings}
+                onScriptActionOffsetChange={(scriptActionOffsetMs) =>
+                  updateTutorDraft("scriptActionOffsetMs", scriptActionOffsetMs)
+                }
                 onVoiceChange={(voice) => updateTutorDraft("voice", voice)}
                 onVoiceInstructionsChange={(voiceInstructions) =>
                   updateTutorDraft("voiceInstructions", voiceInstructions)
@@ -6800,6 +6816,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     avatarPath: "test-images/dLU-right.png",
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
+    scriptActionOffsetMs: 0,
     systemPrompt: "",
     voice: "ash",
     voiceInstructions: "",
@@ -7850,6 +7867,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     audio: HTMLAudioElement,
     cues: ScriptCue[] = [],
     fallbackDurationSeconds = 0,
+    offsetMs = 0,
   ) {
     return new Promise<void>((resolve, reject) => {
       scriptAudioRef.current = audio;
@@ -7863,15 +7881,15 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           : fallbackDurationSeconds;
       const cueList = [...cues].sort(
         (left, right) =>
-          scriptCueTime(left, currentAudioDuration()) -
-          scriptCueTime(right, currentAudioDuration()),
+          scriptCueEffectiveTime(left, currentAudioDuration(), offsetMs) -
+          scriptCueEffectiveTime(right, currentAudioDuration(), offsetMs),
       );
 
       const runDueCues = (currentTime: number, runAll = false) => {
         const audioDuration = currentAudioDuration();
         while (cueIndex < cueList.length) {
           const cue = cueList[cueIndex];
-          const cueTime = scriptCueTime(cue, audioDuration);
+          const cueTime = scriptCueEffectiveTime(cue, audioDuration, offsetMs);
           if (!runAll && currentTime + 0.015 < cueTime) break;
 
           cueIndex += 1;
@@ -7958,17 +7976,27 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     const allCues = scriptCuesFromMessage(message, cueValue);
     const words = scriptWordsFromValue(wordValue);
+    const scriptActionOffsetMs = tutorForm.scriptActionOffsetMs;
     await Promise.all([
       waitForAudioMetadata(audio),
       preloadScriptCueAssets(allCues),
     ]);
 
     const cues = allCues.filter(
-      (cue) => cue.progress > scriptImmediateCueProgress,
+      (cue) =>
+        !(
+          scriptActionOffsetMs <= 0 &&
+          cue.progress <= scriptImmediateCueProgress
+        ),
     );
     await Promise.all([
       streamScriptMessageText(message, durationMs, audio, words),
-      playPreparedScriptAudio(audio, cues, fallbackDurationSeconds),
+      playPreparedScriptAudio(
+        audio,
+        cues,
+        fallbackDurationSeconds,
+        scriptActionOffsetMs,
+      ),
     ]);
   }
 
@@ -8064,7 +8092,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
     const immediateActions = scriptMessages.flatMap((message) =>
       scriptCuesFromMessage(message)
-        .filter((cue) => cue.progress <= scriptImmediateCueProgress)
+        .filter(
+          (cue) =>
+            tutorForm.scriptActionOffsetMs <= 0 &&
+            cue.progress <= scriptImmediateCueProgress,
+        )
         .map((cue) => cue.action),
     );
     applyRuntimeActions(immediateActions);
@@ -8647,6 +8679,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                         assistantName,
                       })),
                     onSave: saveTutorSettings,
+                    onScriptActionOffsetChange: (scriptActionOffsetMs) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        scriptActionOffsetMs,
+                      })),
                     onVoiceChange: (voice) => {
                       setTutorForm((current) => ({
                         ...current,
@@ -8922,6 +8959,7 @@ type TutorControlsProps = {
   onNameChange: (assistantName: string) => void;
   onPlaySample?: () => Promise<void> | void;
   onSave: () => Promise<void>;
+  onScriptActionOffsetChange: (offsetMs: number) => void;
   onVoiceChange: (voice: RealtimeVoiceId) => void;
   onVoiceInstructionsChange: (voiceInstructions: string) => void;
   realtimeStatus: RealtimeStatus;
@@ -9226,6 +9264,7 @@ function TutorControls({
   onNameChange,
   onPlaySample,
   onSave,
+  onScriptActionOffsetChange,
   onVoiceChange,
   onVoiceInstructionsChange,
   realtimeStatus,
@@ -9402,6 +9441,23 @@ function TutorControls({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="control-field offset-field">
+          <span>Action offset</span>
+          <input
+            max={3000}
+            min={-3000}
+            onChange={(event) => {
+              const nextOffset = Number.parseInt(event.target.value, 10);
+              onScriptActionOffsetChange(
+                Number.isFinite(nextOffset) ? nextOffset : 0,
+              );
+            }}
+            step={10}
+            type="number"
+            value={tutor.scriptActionOffsetMs}
+          />
         </label>
       </div>
 
