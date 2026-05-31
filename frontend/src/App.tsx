@@ -342,7 +342,7 @@ type ExperienceEvent = {
   updatedAt: string;
 };
 
-type EventStructuralRedo =
+type EventStructuralHistoryItem =
   | { event: ExperienceEvent; type: "delete" }
   | { event: ExperienceEvent; type: "restore" };
 
@@ -3483,12 +3483,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [eventRedoStack, setEventRedoStack] = useState<EventDraft[]>([]);
   const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
-  const [eventStructuralRedo, setEventStructuralRedo] =
-    useState<EventStructuralRedo | null>(null);
-  const [recentCreatedEvent, setRecentCreatedEvent] =
-    useState<ExperienceEvent | null>(null);
-  const [recentDeletedEvent, setRecentDeletedEvent] =
-    useState<ExperienceEvent | null>(null);
+  const [eventStructuralRedoStack, setEventStructuralRedoStack] = useState<
+    EventStructuralHistoryItem[]
+  >([]);
+  const [eventStructuralUndoStack, setEventStructuralUndoStack] = useState<
+    EventStructuralHistoryItem[]
+  >([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
   const [deletingEventId, setDeletingEventId] = useState("");
@@ -3582,6 +3582,24 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventRedoStack([]);
   }
 
+  function clearEventStructuralHistory() {
+    setEventStructuralUndoStack([]);
+    setEventStructuralRedoStack([]);
+  }
+
+  function pushEventStructuralUndo(item: EventStructuralHistoryItem) {
+    setEventStructuralUndoStack((current) =>
+      [item, ...current].slice(0, editorUndoLimit),
+    );
+    setEventStructuralRedoStack([]);
+  }
+
+  function pushEventStructuralRedo(item: EventStructuralHistoryItem) {
+    setEventStructuralRedoStack((current) =>
+      [item, ...current].slice(0, editorUndoLimit),
+    );
+  }
+
   function cloneEventDraft(draft: EventDraft) {
     return JSON.parse(JSON.stringify(draft)) as EventDraft;
   }
@@ -3591,8 +3609,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   function rememberEventDraftForUndo(draft = eventDraft) {
-    setEventStructuralRedo(null);
-    setRecentDeletedEvent(null);
+    setEventStructuralRedoStack([]);
     const snapshot = cloneEventDraft(draft);
     const snapshotSignature = eventDraftSignature(snapshot);
     setEventUndoStack((current) => {
@@ -3642,115 +3659,52 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     queueEventAutosave(restoredDraft);
   }
 
-  async function restoreRecentDeletedEvent() {
-    if (!experience || !recentDeletedEvent) return;
-
-    setError("");
-    try {
-      const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/`,
-        {
-          method: "POST",
-          body: JSON.stringify({ event: recentDeletedEvent }),
-        },
-      );
-
-      setExperience((current) => {
-        if (!current || current.id !== experience.id) return current;
-        const baseExperience = payload.event.isStart
-          ? {
-              ...current,
-              events: current.events.map((event) => ({
-                ...event,
-                isStart: false,
-              })),
-            }
-          : current;
-        return addExperienceEvent(baseExperience, payload.event);
-      });
-      lastPersistedEvent.current = payload.event;
-      setSelectedEventId(payload.event.id);
-      setEventDraft(eventDraftFromEvent(payload.event));
-      setEventStructuralRedo({ event: payload.event, type: "delete" });
-      setRecentCreatedEvent(null);
-      setRecentDeletedEvent(null);
-      clearEventUndoHistory();
-      resetExpandedItems();
-      setDraggingStepId("");
-      setDraggingConversationItem(null);
-      setDraggingHandlerAction(null);
-      setIsEventAddMenuOpen(false);
-      setIsConversationAddMenuOpen(false);
-      setConversationAddMenuToolId("");
-      setConversationAddMenuCheckId("");
-      void loadScriptAudioItems(experience.id, false);
-    } catch (restoreError) {
-      setError(
-        restoreError instanceof Error
-          ? restoreError.message
-          : "Could not restore deleted event.",
-      );
-    }
+  function resetStructuralEditorState(nextEvent: ExperienceEvent | null) {
+    lastPersistedEvent.current = nextEvent;
+    setSelectedEventId(nextEvent?.id ?? "");
+    setEventDraft(eventDraftFromEvent(nextEvent));
+    clearEventUndoHistory();
+    resetExpandedItems();
+    setDraggingStepId("");
+    setDraggingConversationItem(null);
+    setDraggingHandlerAction(null);
+    setIsEventAddMenuOpen(false);
+    setIsConversationAddMenuOpen(false);
+    setConversationAddMenuToolId("");
+    setConversationAddMenuCheckId("");
   }
 
-  async function removeRecentCreatedEvent() {
-    if (!experience || !recentCreatedEvent || experience.events.length <= 1) return;
-
-    const removedEvent = recentCreatedEvent;
-    setError("");
-    try {
-      const payload = await apiFetch<{ events: ExperienceEvent[] }>(
-        `/api/experiences/${experience.id}/events/${removedEvent.id}/`,
-        {
-          method: "DELETE",
-        },
-      );
-      const nextEvents = sortedExperienceEvents(payload.events);
-      const nextSelectedEvent =
-        nextEvents.find((event) => event.isStart) ?? nextEvents[0] ?? null;
-
-      setExperience({
-        ...experience,
-        events: nextEvents,
-      });
-      lastPersistedEvent.current = nextSelectedEvent;
-      setSelectedEventId(nextSelectedEvent?.id ?? "");
-      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
-      setEventStructuralRedo({ event: removedEvent, type: "restore" });
-      setRecentCreatedEvent(null);
-      setRecentDeletedEvent(null);
-      clearEventUndoHistory();
-      resetExpandedItems();
-      setDraggingStepId("");
-      setDraggingConversationItem(null);
-      setDraggingHandlerAction(null);
-      setIsEventAddMenuOpen(false);
-      setIsConversationAddMenuOpen(false);
-      setConversationAddMenuToolId("");
-      setConversationAddMenuCheckId("");
-      void loadScriptAudioItems(experience.id, false);
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error
-          ? removeError.message
-          : "Could not undo event creation.",
-      );
+  function completeStructuralHistoryMove(
+    from: "redo" | "undo",
+    opposite: EventStructuralHistoryItem,
+  ) {
+    if (from === "undo") {
+      setEventStructuralUndoStack((current) => current.slice(1));
+      pushEventStructuralRedo(opposite);
+      return;
     }
+
+    setEventStructuralRedoStack((current) => current.slice(1));
+    setEventStructuralUndoStack((current) =>
+      [opposite, ...current].slice(0, editorUndoLimit),
+    );
   }
 
-  async function redoStructuralEvent() {
-    if (!experience || !eventStructuralRedo) return;
+  async function applyStructuralHistoryItem(
+    item: EventStructuralHistoryItem,
+    from: "redo" | "undo",
+  ) {
+    if (!experience) return;
 
-    const redo = eventStructuralRedo;
     setError("");
 
-    if (redo.type === "restore") {
+    if (item.type === "restore") {
       try {
         const payload = await apiFetch<{ event: ExperienceEvent }>(
           `/api/experiences/${experience.id}/events/`,
           {
             method: "POST",
-            body: JSON.stringify({ event: redo.event }),
+            body: JSON.stringify({ event: item.event }),
           },
         );
 
@@ -3767,27 +3721,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             : current;
           return addExperienceEvent(baseExperience, payload.event);
         });
-        lastPersistedEvent.current = payload.event;
-        setSelectedEventId(payload.event.id);
-        setEventDraft(eventDraftFromEvent(payload.event));
-        setEventStructuralRedo(null);
-        setRecentCreatedEvent(payload.event);
-        setRecentDeletedEvent(null);
-        clearEventUndoHistory();
-        resetExpandedItems();
-        setDraggingStepId("");
-        setDraggingConversationItem(null);
-        setDraggingHandlerAction(null);
-        setIsEventAddMenuOpen(false);
-        setIsConversationAddMenuOpen(false);
-        setConversationAddMenuToolId("");
-        setConversationAddMenuCheckId("");
+        resetStructuralEditorState(payload.event);
+        completeStructuralHistoryMove(from, {
+          event: payload.event,
+          type: "delete",
+        });
         void loadScriptAudioItems(experience.id, false);
       } catch (restoreError) {
         setError(
           restoreError instanceof Error
             ? restoreError.message
-            : "Could not redo event creation.",
+            : "Could not restore event.",
         );
       }
       return;
@@ -3797,7 +3741,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     try {
       const payload = await apiFetch<{ events: ExperienceEvent[] }>(
-        `/api/experiences/${experience.id}/events/${redo.event.id}/`,
+        `/api/experiences/${experience.id}/events/${item.event.id}/`,
         {
           method: "DELETE",
         },
@@ -3810,29 +3754,31 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         ...experience,
         events: nextEvents,
       });
-      lastPersistedEvent.current = nextSelectedEvent;
-      setSelectedEventId(nextSelectedEvent?.id ?? "");
-      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
-      setEventStructuralRedo(null);
-      setRecentCreatedEvent(null);
-      setRecentDeletedEvent(redo.event);
-      clearEventUndoHistory();
-      resetExpandedItems();
-      setDraggingStepId("");
-      setDraggingConversationItem(null);
-      setDraggingHandlerAction(null);
-      setIsEventAddMenuOpen(false);
-      setIsConversationAddMenuOpen(false);
-      setConversationAddMenuToolId("");
-      setConversationAddMenuCheckId("");
+      resetStructuralEditorState(nextSelectedEvent);
+      completeStructuralHistoryMove(from, {
+        event: item.event,
+        type: "restore",
+      });
       void loadScriptAudioItems(experience.id, false);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
           ? deleteError.message
-          : "Could not redo event deletion.",
+          : "Could not delete event.",
       );
     }
+  }
+
+  async function undoStructuralEvent() {
+    const undo = eventStructuralUndoStack[0];
+    if (!undo) return;
+    await applyStructuralHistoryItem(undo, "undo");
+  }
+
+  async function redoStructuralEvent() {
+    const redo = eventStructuralRedoStack[0];
+    if (!redo) return;
+    await applyStructuralHistoryItem(redo, "redo");
   }
 
   function undoEditorHistory() {
@@ -3840,11 +3786,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       undoEventEdit();
       return;
     }
-    if (recentDeletedEvent) {
-      void restoreRecentDeletedEvent();
-      return;
-    }
-    void removeRecentCreatedEvent();
+    void undoStructuralEvent();
   }
 
   function redoEditorHistory() {
@@ -3868,9 +3810,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setTutorForm(nextExperience.tutor);
     setSelectedEventId(selectedEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(selectedEvent));
-    setEventStructuralRedo(null);
-    setRecentCreatedEvent(null);
-    setRecentDeletedEvent(null);
+    clearEventStructuralHistory();
     setExperienceValidation(null);
     setExperienceValidationError("");
     setExperienceValidationStatus("idle");
@@ -4059,10 +3999,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }, [
     eventDraft,
     eventRedoStack,
-    eventStructuralRedo,
+    eventStructuralRedoStack,
+    eventStructuralUndoStack,
     eventUndoStack,
-    recentCreatedEvent,
-    recentDeletedEvent,
   ]);
 
   useEffect(() => {
@@ -5804,7 +5743,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const nextEvent = getSelectedExperienceEvent(experience, nextEventId);
     setSelectedEventId(nextEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(nextEvent));
-    setEventStructuralRedo(null);
     clearEventUndoHistory();
     resetExpandedItems();
     setDraggingStepId("");
@@ -5849,9 +5787,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
-      setEventStructuralRedo(null);
-      setRecentCreatedEvent(payload.event);
-      setRecentDeletedEvent(null);
+      pushEventStructuralUndo({ event: payload.event, type: "delete" });
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
@@ -5900,21 +5836,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         ...experience,
         events: nextEvents,
       });
-      lastPersistedEvent.current = nextSelectedEvent;
-      setSelectedEventId(nextSelectedEvent?.id ?? "");
-      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
-      setEventStructuralRedo(null);
-      setRecentCreatedEvent(null);
-      setRecentDeletedEvent(selectedEvent);
-      clearEventUndoHistory();
-      resetExpandedItems();
-      setDraggingStepId("");
-      setDraggingConversationItem(null);
-      setDraggingHandlerAction(null);
-      setIsEventAddMenuOpen(false);
-      setIsConversationAddMenuOpen(false);
-      setConversationAddMenuToolId("");
-      setConversationAddMenuCheckId("");
+      resetStructuralEditorState(nextSelectedEvent);
+      pushEventStructuralUndo({ event: selectedEvent, type: "restore" });
       void loadScriptAudioItems(experience.id, false);
     } catch (deleteError) {
       setError(
@@ -6793,25 +6716,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           "No direct route",
       })),
     );
+  const nextStructuralUndo = eventStructuralUndoStack[0];
+  const nextStructuralRedo = eventStructuralRedoStack[0];
+  const structuralHistoryEventLabel = (item: EventStructuralHistoryItem) =>
+    item.event.title || item.event.slug || "event";
   const canUndoEditorHistory =
-    eventUndoStack.length > 0 ||
-    Boolean(recentDeletedEvent) ||
-    Boolean(recentCreatedEvent);
+    eventUndoStack.length > 0 || Boolean(nextStructuralUndo);
   const undoEditorTitle = eventUndoStack.length
     ? `Undo event edit (${eventUndoStack.length} available)`
-    : recentDeletedEvent
-      ? `Restore deleted event: ${recentDeletedEvent.title || recentDeletedEvent.slug}`
-      : recentCreatedEvent
-        ? `Remove new event: ${recentCreatedEvent.title || recentCreatedEvent.slug}`
+    : nextStructuralUndo?.type === "restore"
+      ? `Restore deleted event: ${structuralHistoryEventLabel(nextStructuralUndo)} (${eventStructuralUndoStack.length} structural available)`
+      : nextStructuralUndo?.type === "delete"
+        ? `Remove new event: ${structuralHistoryEventLabel(nextStructuralUndo)} (${eventStructuralUndoStack.length} structural available)`
         : "Nothing to undo";
   const canRedoEditorHistory =
-    eventRedoStack.length > 0 || Boolean(eventStructuralRedo);
+    eventRedoStack.length > 0 || Boolean(nextStructuralRedo);
   const redoEditorTitle = eventRedoStack.length
     ? `Redo event edit (${eventRedoStack.length} available)`
-    : eventStructuralRedo?.type === "restore"
-      ? `Restore event: ${eventStructuralRedo.event.title || eventStructuralRedo.event.slug}`
-      : eventStructuralRedo?.type === "delete"
-        ? `Delete event again: ${eventStructuralRedo.event.title || eventStructuralRedo.event.slug}`
+    : nextStructuralRedo?.type === "restore"
+      ? `Restore event: ${structuralHistoryEventLabel(nextStructuralRedo)} (${eventStructuralRedoStack.length} structural available)`
+      : nextStructuralRedo?.type === "delete"
+        ? `Delete event again: ${structuralHistoryEventLabel(nextStructuralRedo)} (${eventStructuralRedoStack.length} structural available)`
         : "Nothing to redo";
 
   function renderActionStepDetail(
