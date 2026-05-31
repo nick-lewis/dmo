@@ -4,6 +4,7 @@ import {
   type Dispatch,
   type FocusEvent,
   type FormEvent,
+  Fragment,
   type PointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -477,10 +478,21 @@ type MainPanelAppProps = {
 
 type MainPanelAppDefinition = {
   Component: (props: MainPanelAppProps) => ReactNode;
+  configFields?: MainPanelAppConfigField[];
+  defaultConfig?: Record<string, unknown>;
   defaultView: string;
   id: string;
   label: string;
   views: Array<{ id: string; label: string }>;
+};
+
+type MainPanelAppConfigField = {
+  defaultValue?: string | number;
+  id: string;
+  inputMode?: "text" | "numeric" | "decimal";
+  label: string;
+  placeholder?: string;
+  type?: "text" | "number";
 };
 
 type DeliveryDataRow = {
@@ -498,6 +510,26 @@ type EventOutgoingLink = {
 const mainPanelAppDefinitions: MainPanelAppDefinition[] = [
   {
     Component: DeliveryDataInteractive,
+    configFields: [
+      {
+        defaultValue: 3.9,
+        id: "targetDistance",
+        inputMode: "decimal",
+        label: "TARGET MI",
+        placeholder: "3.9",
+        type: "number",
+      },
+      {
+        defaultValue: "delivery_estimate",
+        id: "estimateContextKey",
+        label: "SAVE AS",
+        placeholder: "delivery_estimate",
+      },
+    ],
+    defaultConfig: {
+      estimateContextKey: "delivery_estimate",
+      targetDistance: 3.9,
+    },
     defaultView: "table",
     id: "delivery_data",
     label: "Delivery data",
@@ -512,6 +544,13 @@ const defaultMainPanelApp = mainPanelAppDefinitions[0];
 
 function getMainPanelAppDefinition(appId: string) {
   return mainPanelAppDefinitions.find((app) => app.id === appId) ?? null;
+}
+
+function cloneMainPanelAppConfig(app: MainPanelAppDefinition) {
+  return JSON.parse(JSON.stringify(app.defaultConfig ?? {})) as Record<
+    string,
+    unknown
+  >;
 }
 
 type VoiceSampleStatus = "idle" | "loading" | "playing";
@@ -1105,6 +1144,7 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   }
   if (actionType === "interactive") {
     return {
+      config: cloneMainPanelAppConfig(defaultMainPanelApp),
       interactiveId: defaultMainPanelApp.id,
       mode: defaultMainPanelApp.defaultView,
       prompt: "",
@@ -1114,6 +1154,7 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   }
   if (actionType === "interactive_update") {
     return {
+      config: {},
       interactiveId: defaultMainPanelApp.id,
       mode: defaultMainPanelApp.views[1]?.id ?? defaultMainPanelApp.defaultView,
       prompt: "",
@@ -1780,13 +1821,16 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
       "interactiveId",
       "app",
     );
+    const appDefinition = getMainPanelAppDefinition(interactiveId);
     const mode = stringConfigValue(step.config, "mode");
+    const viewLabel =
+      appDefinition?.views.find((view) => view.id === mode)?.label ?? mode;
     const triggersEvent = stringConfigValue(step.config, "triggersEvent");
     const targetEvent = eventTitleForTrigger(events, triggersEvent);
     return [
-      interactiveId || "app",
-      mode ? `view ${mode}` : "",
-      triggersEvent ? `completion: ${targetEvent || triggersEvent}` : "",
+      appDefinition?.label || interactiveId || "app",
+      viewLabel ? `(${viewLabel})` : "",
+      triggersEvent ? `on submit: ${targetEvent || triggersEvent}` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -1797,8 +1841,13 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
       "interactiveId",
       "app",
     );
+    const appDefinition = getMainPanelAppDefinition(interactiveId);
     const mode = stringConfigValue(step.config, "mode", "mode");
-    return `${interactiveId || "app"} view ${mode || "mode"}`;
+    const viewLabel =
+      appDefinition?.views.find((view) => view.id === mode)?.label ?? mode;
+    return `Update ${appDefinition?.label || interactiveId || "app"}${
+      viewLabel ? ` to ${viewLabel}` : ""
+    }`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -4137,13 +4186,26 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   function updateEventStepConfig(
     stepId: string,
     key: string,
-    value: string,
+    value: unknown,
   ) {
     updateEventStepDraft(stepId, (step) => ({
       ...step,
       config: {
         ...step.config,
         [key]: value,
+      },
+    }));
+  }
+
+  function updateEventStepConfigPatch(
+    stepId: string,
+    patch: Record<string, unknown>,
+  ) {
+    updateEventStepDraft(stepId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        ...patch,
       },
     }));
   }
@@ -4236,13 +4298,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     toolId: string,
     actionId: string,
     key: string,
-    value: string,
+    value: unknown,
   ) {
     updateEventChatToolActionDraft(toolId, actionId, (step) => ({
       ...step,
       config: {
         ...step.config,
         [key]: value,
+      },
+    }));
+  }
+
+  function updateEventChatToolActionConfigPatch(
+    toolId: string,
+    actionId: string,
+    patch: Record<string, unknown>,
+  ) {
+    updateEventChatToolActionDraft(toolId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        ...patch,
       },
     }));
   }
@@ -4345,13 +4421,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     checkId: string,
     actionId: string,
     key: string,
-    value: string,
+    value: unknown,
   ) {
     updateEventConversationCheckActionDraft(checkId, actionId, (step) => ({
       ...step,
       config: {
         ...step.config,
         [key]: value,
+      },
+    }));
+  }
+
+  function updateEventConversationCheckActionConfigPatch(
+    checkId: string,
+    actionId: string,
+    patch: Record<string, unknown>,
+  ) {
+    updateEventConversationCheckActionDraft(checkId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        ...patch,
       },
     }));
   }
@@ -4490,13 +4580,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     groupId: string,
     actionId: string,
     key: string,
-    value: string,
+    value: unknown,
   ) {
     updateEventClassifierGroupActionDraft(groupId, actionId, (step) => ({
       ...step,
       config: {
         ...step.config,
         [key]: value,
+      },
+    }));
+  }
+
+  function updateEventClassifierGroupActionConfigPatch(
+    groupId: string,
+    actionId: string,
+    patch: Record<string, unknown>,
+  ) {
+    updateEventClassifierGroupActionDraft(groupId, actionId, (step) => ({
+      ...step,
+      config: {
+        ...step.config,
+        ...patch,
       },
     }));
   }
@@ -5282,9 +5386,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
   function renderActionStepDetail(
     step: EventStepDraft,
-    updateConfig: (key: string, value: string) => void,
+    updateConfig: (key: string, value: unknown) => void,
     updateCondition: (condition: Partial<StepConditionDraft>) => void,
     className = "event-step-detail",
+    updateConfigPatch?: (patch: Record<string, unknown>) => void,
   ) {
     const triggerEventSlug = stringConfigValue(step.config, "triggersEvent");
     const hasTriggerEventOption = editorEvents.some(
@@ -5456,12 +5561,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             <div className="event-context-line interactive-action-line">
               <MainPanelAppFields
                 appId={stringConfigValue(step.config, "interactiveId")}
+                appConfig={recordFromUnknown(step.config.config)}
                 onConfigChange={updateConfig}
+                onConfigPatch={updateConfigPatch}
                 view={stringConfigValue(step.config, "mode")}
               />
             </div>
             <div className="event-context-line single-value">
-              <span className="event-detail-label">COMPLETION</span>
+              <span className="event-detail-label">ON SUBMIT</span>
               <select
                 aria-label="Main-panel app completion event"
                 onChange={(event) =>
@@ -5469,7 +5576,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 }
                 value={triggerEventSlug}
               >
-                <option value="">No completion route</option>
+                <option value="">Stay in this event</option>
                 {triggerEventSlug && !hasTriggerEventOption ? (
                   <option value={triggerEventSlug}>{triggerEventSlug}</option>
                 ) : null}
@@ -5489,7 +5596,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             <div className="event-context-line interactive-action-line">
               <MainPanelAppFields
                 appId={stringConfigValue(step.config, "interactiveId")}
+                appConfig={recordFromUnknown(step.config.config)}
                 onConfigChange={updateConfig}
+                onConfigPatch={updateConfigPatch}
                 view={stringConfigValue(step.config, "mode")}
               />
             </div>
@@ -6242,15 +6351,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     step.config,
                                     "interactiveId",
                                   )}
+                                  appConfig={recordFromUnknown(step.config.config)}
                                   onConfigChange={(key, value) =>
                                     updateEventStepConfig(step.id, key, value)
+                                  }
+                                  onConfigPatch={(patch) =>
+                                    updateEventStepConfigPatch(step.id, patch)
                                   }
                                   view={stringConfigValue(step.config, "mode")}
                                 />
                               </div>
                               <div className="event-context-line single-value">
                                 <span className="event-detail-label">
-                                  COMPLETION
+                                  ON SUBMIT
                                 </span>
                                 <select
                                   aria-label="Main-panel app completion event"
@@ -6263,7 +6376,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   }
                                   value={triggerEventSlug}
                                 >
-                                  <option value="">No completion route</option>
+                                  <option value="">Stay in this event</option>
                                   {triggerEventSlug && !hasTriggerEventOption ? (
                                     <option value={triggerEventSlug}>
                                       {triggerEventSlug}
@@ -6288,8 +6401,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     step.config,
                                     "interactiveId",
                                   )}
+                                  appConfig={recordFromUnknown(step.config.config)}
                                   onConfigChange={(key, value) =>
                                     updateEventStepConfig(step.id, key, value)
+                                  }
+                                  onConfigPatch={(patch) =>
+                                    updateEventStepConfigPatch(step.id, patch)
                                   }
                                   view={stringConfigValue(step.config, "mode")}
                                 />
@@ -6834,6 +6951,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 condition,
                                               ),
                                             "event-step-detail chat-tool-action-detail",
+                                            (patch) =>
+                                              updateEventChatToolActionConfigPatch(
+                                                tool.id,
+                                                step.id,
+                                                patch,
+                                              ),
                                           )
                                         : null}
                                     </article>
@@ -7185,6 +7308,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 condition,
                                               ),
                                             "event-step-detail chat-tool-action-detail",
+                                            (patch) =>
+                                              updateEventConversationCheckActionConfigPatch(
+                                                check.id,
+                                                step.id,
+                                                patch,
+                                              ),
                                           )
                                         : null}
                                     </article>
@@ -7645,6 +7774,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                                 condition,
                                               ),
                                             "event-step-detail chat-tool-action-detail",
+                                            (patch) =>
+                                              updateEventClassifierGroupActionConfigPatch(
+                                                group.id,
+                                                step.id,
+                                                patch,
+                                              ),
                                           )
                                         : null}
                                     </article>
@@ -11286,11 +11421,15 @@ function SlideControls({
 
 function MainPanelAppFields({
   appId,
+  appConfig,
   onConfigChange,
+  onConfigPatch,
   view,
 }: {
+  appConfig: Record<string, unknown>;
   appId: string;
-  onConfigChange: (key: "interactiveId" | "mode", value: string) => void;
+  onConfigChange: (key: string, value: unknown) => void;
+  onConfigPatch?: (patch: Record<string, unknown>) => void;
   view: string;
 }) {
   const appDefinition =
@@ -11300,6 +11439,21 @@ function MainPanelAppFields({
   const hasCurrentView = appDefinition.views.some(
     (candidate) => candidate.id === currentView,
   );
+  const configFields = appDefinition.configFields ?? [];
+
+  function changeAppConfigField(
+    field: MainPanelAppConfigField,
+    rawValue: string,
+  ) {
+    const nextValue =
+      field.type === "number" && rawValue.trim()
+        ? Number(rawValue)
+        : rawValue;
+    onConfigChange("config", {
+      ...appConfig,
+      [field.id]: Number.isNaN(nextValue) ? rawValue : nextValue,
+    });
+  }
 
   return (
     <>
@@ -11308,9 +11462,20 @@ function MainPanelAppFields({
         aria-label="Main-panel app"
         onChange={(event) => {
           const nextApp = getMainPanelAppDefinition(event.target.value);
-          onConfigChange("interactiveId", event.target.value);
-          if (nextApp && !nextApp.views.some((item) => item.id === currentView)) {
-            onConfigChange("mode", nextApp.defaultView);
+          if (nextApp && onConfigPatch) {
+            onConfigPatch({
+              config: cloneMainPanelAppConfig(nextApp),
+              interactiveId: nextApp.id,
+              mode: nextApp.defaultView,
+            });
+            return;
+          }
+          onConfigChange("interactiveId", nextApp?.id ?? event.target.value);
+          if (nextApp) {
+            onConfigChange("config", cloneMainPanelAppConfig(nextApp));
+            if (!nextApp.views.some((item) => item.id === currentView)) {
+              onConfigChange("mode", nextApp.defaultView);
+            }
           }
         }}
         value={hasCurrentApp ? appId : ""}
@@ -11339,6 +11504,30 @@ function MainPanelAppFields({
           </option>
         ))}
       </select>
+      {configFields.map((field) => {
+        const fallback = field.defaultValue ?? "";
+        const rawValue = appConfig[field.id];
+        const value =
+          typeof rawValue === "number" || typeof rawValue === "string"
+            ? String(rawValue)
+            : String(fallback);
+
+        return (
+          <Fragment key={field.id}>
+            <span className="event-detail-label">{field.label}</span>
+            <input
+              aria-label={`${appDefinition.label} ${field.label.toLowerCase()}`}
+              inputMode={field.inputMode}
+              onChange={(event) =>
+                changeAppConfigField(field, event.target.value)
+              }
+              placeholder={field.placeholder}
+              type={field.type ?? "text"}
+              value={value}
+            />
+          </Fragment>
+        );
+      })}
     </>
   );
 }
