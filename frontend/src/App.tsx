@@ -2976,6 +2976,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const tutorAutosaveVersion = useRef(0);
   const eventAutosaveTimer = useRef<number | null>(null);
   const eventAutosaveVersion = useRef(0);
+  const eventAutosaveInFlight = useRef<Promise<boolean> | null>(null);
+  const eventStepIdRemap = useRef<Map<string, string>>(new Map());
+  const lastPersistedEvent = useRef<ExperienceEvent | null>(null);
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
   const scriptAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -3031,9 +3034,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventRedoStack([]);
   }
 
-  function rememberEventDraftForUndo() {
+  function rememberEventDraftForUndo(draft = eventDraft) {
     setEventUndoStack((current) =>
-      [eventDraft, ...current].slice(0, editorUndoLimit),
+      [draft, ...current].slice(0, editorUndoLimit),
     );
     setEventRedoStack([]);
   }
@@ -3590,13 +3593,34 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     return eventAutosaveVersion.current;
   }
 
+  async function runEventAutosave(draft: EventDraft, version: number) {
+    const persistPromise = persistEventDraft(draft, version);
+    eventAutosaveInFlight.current = persistPromise;
+    const didSave = await persistPromise;
+    if (eventAutosaveInFlight.current === persistPromise) {
+      eventAutosaveInFlight.current = null;
+    }
+    return didSave;
+  }
+
   function getSelectedEventParts() {
     const selectedEvent = getSelectedExperienceEvent(experience, selectedEventId);
     return { selectedEvent };
   }
 
-  function hasEventChanges(draft: EventDraft) {
+  function getComparableSelectedEvent() {
     const { selectedEvent } = getSelectedEventParts();
+    if (
+      selectedEvent &&
+      lastPersistedEvent.current?.id === selectedEvent.id
+    ) {
+      return lastPersistedEvent.current;
+    }
+    return selectedEvent;
+  }
+
+  function hasEventChanges(draft: EventDraft) {
+    const selectedEvent = getComparableSelectedEvent();
     if (!selectedEvent) return false;
 
     if (
@@ -3693,7 +3717,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   async function persistEventDraft(draft: EventDraft, version: number) {
-    const { selectedEvent } = getSelectedEventParts();
+    const { selectedEvent: selectedEventState } = getSelectedEventParts();
+    const selectedEvent =
+      selectedEventState &&
+      lastPersistedEvent.current?.id === selectedEventState.id
+        ? lastPersistedEvent.current
+        : selectedEventState;
     if (!experience || !selectedEvent || !draft.title.trim()) {
       return true;
     }
@@ -3726,11 +3755,94 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             }),
           },
         );
+        lastPersistedEvent.current = eventPayload.event;
 
         if (eventAutosaveVersion.current === version) {
           setExperience((current) =>
             current && current.id === experience.id
               ? replaceExperienceEvent(current, eventPayload.event)
+              : current,
+          );
+        }
+      }
+
+      const createdStepIdByDraftId = new Map<string, string>();
+      let latestStructuralEvent: ExperienceEvent | null = null;
+      const currentStepIds = new Set(currentSteps.map((step) => step.id));
+      const draftStepIds = new Set(draft.steps.map((step) => step.id));
+
+      for (const draftStep of draft.steps) {
+        if (currentStepIds.has(draftStep.id)) continue;
+
+        const stepPayload = await apiFetch<{
+          event: ExperienceEvent;
+          step: EventActionStep;
+        }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              actionType: draftStep.actionType,
+              condition: normalizedStepCondition(draftStep.condition),
+              config: draftStep.config,
+              enabled: draftStep.enabled,
+              label: draftStep.label,
+            }),
+          },
+        );
+        createdStepIdByDraftId.set(draftStep.id, stepPayload.step.id);
+        eventStepIdRemap.current.set(draftStep.id, stepPayload.step.id);
+        latestStructuralEvent = stepPayload.event;
+      }
+
+      for (const currentStep of currentSteps) {
+        if (draftStepIds.has(currentStep.id)) continue;
+
+        const deletePayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${currentStep.id}/`,
+          {
+            method: "DELETE",
+          },
+        );
+        latestStructuralEvent = deletePayload.event;
+      }
+
+      if (latestStructuralEvent) {
+        const desiredStepIds = draft.steps.map(
+          (step) => createdStepIdByDraftId.get(step.id) ?? step.id,
+        );
+        const latestStepIds = sortedEventSteps(latestStructuralEvent.steps).map(
+          (step) => step.id,
+        );
+        const hasSameStepSet =
+          desiredStepIds.length === latestStepIds.length &&
+          desiredStepIds.every((stepId) => latestStepIds.includes(stepId));
+        const isSameOrder =
+          hasSameStepSet &&
+          desiredStepIds.every((stepId, index) => stepId === latestStepIds[index]);
+
+        if (hasSameStepSet && !isSameOrder) {
+          const reorderPayload = await apiFetch<{ event: ExperienceEvent }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/reorder/`,
+            {
+              method: "POST",
+              body: JSON.stringify({ stepIds: desiredStepIds }),
+            },
+          );
+          latestStructuralEvent = reorderPayload.event;
+        }
+
+        if (eventAutosaveVersion.current === version) {
+          const structuralEvent = latestStructuralEvent;
+          lastPersistedEvent.current = structuralEvent;
+          setExperience((current) =>
+            current && current.id === experience.id
+              ? replaceExperienceEvent(current, structuralEvent)
+              : current,
+          );
+          setEventDraft((current) =>
+            JSON.stringify(current) === JSON.stringify(draft)
+              ? eventDraftFromEvent(structuralEvent)
               : current,
           );
         }
@@ -3978,17 +4090,22 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const version = nextEventAutosaveVersion();
     eventAutosaveTimer.current = window.setTimeout(() => {
       eventAutosaveTimer.current = null;
-      void persistEventDraft(draft, version);
+      void runEventAutosave(draft, version);
     }, experienceAutosaveDelayMs);
   }
 
   async function flushEventAutosave() {
     clearEventAutosaveTimer();
 
+    if (eventAutosaveInFlight.current) {
+      const didSaveInFlight = await eventAutosaveInFlight.current;
+      if (!didSaveInFlight) return false;
+    }
+
     if (!hasEventChanges(eventDraft)) return true;
 
     const version = nextEventAutosaveVersion();
-    return persistEventDraft(eventDraft, version);
+    return runEventAutosave(eventDraft, version);
   }
 
   function updateEventDraft(
@@ -4439,6 +4556,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   function applyUpdatedEvent(nextEvent: ExperienceEvent, resetHistory = true) {
     if (!experience) return;
 
+    lastPersistedEvent.current = nextEvent;
     const nextExperience = replaceExperienceEvent(experience, nextEvent);
     setExperience(nextExperience);
     setSelectedEventId(nextEvent.id);
@@ -4516,6 +4634,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo();
       const existingStepIds = new Set(selectedEvent.steps.map((step) => step.id));
       const payload = await apiFetch<{ event: ExperienceEvent }>(
         `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/`,
@@ -4532,7 +4651,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           }),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
       const nextSortedSteps = sortedEventSteps(payload.event.steps);
       const newStep =
         nextSortedSteps.find((step) => !existingStepIds.has(step.id)) ??
@@ -4833,13 +4952,22 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      const persistedEvent =
+        lastPersistedEvent.current?.id === selectedEvent.id
+          ? lastPersistedEvent.current
+          : selectedEvent;
+      const undoDraft = eventDraftFromEvent(persistedEvent);
+      rememberEventDraftForUndo(undoDraft);
+      const resolvedStepId = eventStepIdRemap.current.get(stepId) ?? stepId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${stepId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${resolvedStepId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedEvent(payload.event);
+      eventStepIdRemap.current.delete(stepId);
+      eventStepIdRemap.current.delete(resolvedStepId);
+      applyUpdatedEvent(payload.event, false);
       closeExpandedItem(stepId);
     } catch (deleteError) {
       setError(
