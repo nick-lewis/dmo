@@ -11430,7 +11430,25 @@ function RuntimeInspectorPanel({
     (audio) => (audio?.scriptWords?.length ?? 0) > 0,
   );
   const tutor = experience?.tutor ?? null;
+  const realtimePromptDebug = recordFromUnknown(runtimeDebug.realtimePrompt);
+  const realtimePromptInstructions =
+    typeof realtimePromptDebug.instructions === "string"
+      ? realtimePromptDebug.instructions
+      : "";
+  const realtimePromptTools = Array.isArray(realtimePromptDebug.tools)
+    ? realtimePromptDebug.tools
+        .map((tool) => (typeof tool === "string" ? tool.trim() : ""))
+        .filter(Boolean)
+    : [];
   const promptContextRows = [
+    {
+      label: "Rendered realtime",
+      value: realtimePromptInstructions,
+    },
+    {
+      label: "Realtime tools",
+      value: realtimePromptTools.join(", "),
+    },
     {
       label: "Tutor system",
       value: tutor?.systemPrompt ?? "",

@@ -1293,6 +1293,67 @@ class ConversationRuntimeTests(TestCase):
         self.assertIn("Available function-call routes:", instructions)
         self.assertIn("student_done", instructions)
 
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_realtime_client_secret_records_prompt_debug(self):
+        self.chat_event.chat_instructions = "Use {{ learner_goal }}."
+        self.chat_event.save(update_fields=["chat_instructions"])
+        EventChatTool.objects.create(
+            event=self.chat_event,
+            name="student_done",
+            description="The learner says they are done.",
+            parameters={"type": "object", "properties": {}},
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_context={"learner_goal": "name fruits"},
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+
+        class FakeRealtimeResponse:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "client_secret": {
+                        "value": "secret-test-value",
+                    },
+                }
+
+        self.client.force_login(self.user)
+        with patch("core.views.requests.post") as post:
+            post.return_value = FakeRealtimeResponse()
+            response = self.client.post(
+                "/api/realtime/client-secret/",
+                data=json.dumps(
+                    {
+                        "model": "gpt-realtime-mini",
+                        "sessionId": str(session.id),
+                        "voice": "ash",
+                    }
+                ),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        prompt_debug = session.runtime_state["runtimeDebug"]["realtimePrompt"]
+        posted_payload = post.call_args.kwargs["json"]
+
+        self.assertEqual(prompt_debug["eventSlug"], "fruit-chat")
+        self.assertEqual(prompt_debug["model"], "gpt-realtime-mini")
+        self.assertEqual(prompt_debug["voice"], "ash")
+        self.assertEqual(prompt_debug["tools"], ["student_done"])
+        self.assertIn("Use name fruits.", prompt_debug["instructions"])
+        self.assertEqual(
+            posted_payload["session"]["instructions"],
+            prompt_debug["instructions"],
+        )
+        self.assertEqual(
+            posted_payload["session"]["tools"][0]["name"],
+            "student_done",
+        )
+
 
 class ExperienceContentMaturityTests(TestCase):
     def setUp(self):

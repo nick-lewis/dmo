@@ -3071,6 +3071,32 @@ def append_runtime_debug_trace(state, actions):
     return state
 
 
+def record_realtime_prompt_debug(session, model, voice, instructions, tools):
+    timestamp = timezone.now().isoformat()
+    state = dict(session.runtime_state or {})
+    debug = dict(state.get("runtimeDebug") or {})
+    current_event = get_session_current_event(session)
+    tool_names = [
+        str(tool.get("name", "") or "").strip()
+        for tool in tools
+        if str(tool.get("name", "") or "").strip()
+    ]
+
+    debug["realtimePrompt"] = {
+        "at": timestamp,
+        "eventSlug": current_event.slug if current_event else "",
+        "instructions": instructions,
+        "model": model,
+        "toolCount": len(tool_names),
+        "tools": tool_names,
+        "voice": voice,
+    }
+    debug["updatedAt"] = timestamp
+    state["runtimeDebug"] = debug
+    session.runtime_state = state
+    session.save(update_fields=["runtime_state", "updated_at"])
+
+
 def runtime_context_action_key(action):
     raw_key = action.get("key", "")
     if not isinstance(raw_key, str):
@@ -6408,14 +6434,22 @@ def create_realtime_client_secret(request):
         return JsonResponse({"detail": "Realtime voice is not supported."}, status=400)
 
     realtime_tools = realtime_tools_for_event(get_session_current_event(session))
+    realtime_instructions = build_realtime_instructions(
+        session,
+        exclude_message_id=data.get("excludeMessageId"),
+    )
+    record_realtime_prompt_debug(
+        session,
+        model,
+        voice,
+        realtime_instructions,
+        realtime_tools,
+    )
     payload = {
         "session": {
             "type": "realtime",
             "model": model,
-            "instructions": build_realtime_instructions(
-                session,
-                exclude_message_id=data.get("excludeMessageId"),
-            ),
+            "instructions": realtime_instructions,
             "output_modalities": ["audio"],
             "audio": {
                 "output": {
