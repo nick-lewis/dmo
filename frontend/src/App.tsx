@@ -517,6 +517,11 @@ type EventOutgoingLink = {
   source: string;
 };
 
+type EventGraphRouteRow = EventOutgoingLink & {
+  sourceEvent: string;
+  sourceEventId: string;
+};
+
 type VoiceSampleStatus = "idle" | "loading" | "playing";
 
 type VoiceSamplePayload = {
@@ -12870,6 +12875,16 @@ function EventGraphView({
   const allOutgoingLinks = sortedEvents.flatMap((event) =>
     eventOutgoingLinks(event),
   );
+  const routeRows: EventGraphRouteRow[] = sortedEvents.flatMap((event) =>
+    eventOutgoingLinks(event).map((link) => ({
+      ...link,
+      sourceEvent: event.title || event.slug,
+      sourceEventId: event.id,
+    })),
+  );
+  const visibleRouteRows = selectedRouteKind
+    ? routeRows.filter((link) => link.kind === selectedRouteKind)
+    : routeRows;
   const routeKindSummary = routeKindCounts(allOutgoingLinks);
   const conditionalRouteCount = sortedEvents.reduce(
     (total, event) =>
@@ -13087,6 +13102,80 @@ function EventGraphView({
           ) : null}
         </div>
       ) : null}
+      <EventGraphRouteCatalog
+        events={sortedEvents}
+        links={visibleRouteRows}
+        onSelectEvent={onSelectEvent}
+        title={selectedRouteKind ? `All ${selectedRouteKind} routes` : "All routes"}
+      />
+    </div>
+  );
+}
+
+function EventGraphRouteCatalog({
+  events,
+  links,
+  onSelectEvent,
+  title,
+}: {
+  events: ExperienceEvent[];
+  links: EventGraphRouteRow[];
+  onSelectEvent: (eventId: string) => void;
+  title: string;
+}) {
+  return (
+    <div className="event-graph-route-catalog">
+      <div className="event-graph-route-catalog-header">
+        <span>{title}</span>
+        <strong>{links.length}</strong>
+      </div>
+      {links.length ? (
+        <div className="event-graph-route-table">
+          {links.map((link, index) => {
+            const target = events.find(
+              (event) => event.slug === link.slug || event.id === link.slug,
+            );
+
+            return (
+              <div
+                className={[
+                  "event-graph-route-row",
+                  target ? "" : "is-unresolved",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={`${link.sourceEventId}-${link.slug}-${link.source}-${index}`}
+              >
+                <button
+                  className="event-graph-route-event"
+                  onClick={() => onSelectEvent(link.sourceEventId)}
+                  type="button"
+                >
+                  {link.sourceEvent}
+                </button>
+                <span className="event-graph-route-kind">{link.kind}</span>
+                {target ? (
+                  <button
+                    className="event-graph-route-event"
+                    onClick={() => onSelectEvent(target.id)}
+                    type="button"
+                  >
+                    {target.title || target.slug}
+                  </button>
+                ) : (
+                  <code>{link.slug || "missing event"}</code>
+                )}
+                <small>
+                  {link.source}
+                  {link.condition ? ` / if ${link.condition}` : ""}
+                </small>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="event-graph-route-empty">No routes</p>
+      )}
     </div>
   );
 }
