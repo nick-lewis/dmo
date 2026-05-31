@@ -59,11 +59,13 @@ DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
 OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
 REALTIME_MODELS = {
     "gpt-realtime",
+    "gpt-realtime-1.5",
+    "gpt-realtime-2",
     "gpt-realtime-mini",
 }
 LEGACY_REALTIME_MODEL_ALIASES = {
-    "gpt-realtime-1.5": "gpt-realtime",
-    "gpt-realtime-2": "gpt-realtime",
+    "gpt-4o-mini-realtime-preview": "gpt-realtime-mini",
+    "gpt-4o-realtime-preview": "gpt-realtime",
 }
 CLASSIFICATION_MODELS = {
     "gpt-5.5",

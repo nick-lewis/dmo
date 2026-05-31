@@ -1,11 +1,19 @@
 export const realtimeModelOptions = [
   {
-    id: "gpt-realtime",
-    label: "Realtime",
-  },
-  {
     id: "gpt-realtime-mini",
     label: "Mini",
+  },
+  {
+    id: "gpt-realtime-1.5",
+    label: "Realtime 1.5",
+  },
+  {
+    id: "gpt-realtime-2",
+    label: "Realtime 2",
+  },
+  {
+    id: "gpt-realtime",
+    label: "Realtime legacy",
   },
 ] as const;
 
@@ -29,6 +37,8 @@ export type RealtimeVoiceId = (typeof realtimeVoiceOptions)[number]["id"];
 const realtimeVoiceIds = realtimeVoiceOptions.map((voice) => voice.id);
 
 const realtimeVoicesByModel: Record<RealtimeModelId, RealtimeVoiceId[]> = {
+  "gpt-realtime-1.5": realtimeVoiceIds,
+  "gpt-realtime-2": realtimeVoiceIds,
   "gpt-realtime": realtimeVoiceIds,
   "gpt-realtime-mini": realtimeVoiceIds,
 };

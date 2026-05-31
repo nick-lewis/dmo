@@ -415,7 +415,7 @@ class RuntimeContextActionTests(TestCase):
 
 
 class RealtimeModelChoiceTests(TestCase):
-    def test_legacy_realtime_model_alias_normalizes_on_serialize(self):
+    def test_current_realtime_model_choices_are_preserved_on_serialize(self):
         User = get_user_model()
         user = User.objects.create_user(
             username="realtime-model-choice-test",
@@ -427,9 +427,36 @@ class RealtimeModelChoiceTests(TestCase):
             title="Realtime model choice test",
             slug="realtime-model-choice-test",
         )
+        tutor = TutorSettings.objects.create(
+            experience=experience,
+            realtime_model="gpt-realtime-1.5",
+        )
+
+        for model in ["gpt-realtime-1.5", "gpt-realtime-2"]:
+            tutor.realtime_model = model
+            tutor.save(update_fields=["realtime_model"])
+
+            payload = serialize_experience(experience)
+
+            experience.tutor_settings.refresh_from_db()
+            self.assertEqual(payload["tutor"]["realtimeModel"], model)
+            self.assertEqual(experience.tutor_settings.realtime_model, model)
+
+    def test_legacy_realtime_model_alias_normalizes_on_serialize(self):
+        User = get_user_model()
+        user = User.objects.create_user(
+            username="legacy-realtime-model-choice-test",
+            email="legacy-realtime-model-choice-test@example.com",
+            password="test-password",
+        )
+        experience = Experience.objects.create(
+            user=user,
+            title="Legacy realtime model choice test",
+            slug="legacy-realtime-model-choice-test",
+        )
         TutorSettings.objects.create(
             experience=experience,
-            realtime_model="gpt-realtime-2",
+            realtime_model="gpt-4o-realtime-preview",
         )
 
         payload = serialize_experience(experience)
@@ -907,7 +934,7 @@ class ExperienceContentMaturityTests(TestCase):
             "version": 1,
             "experience": serialize_experience(source),
         }
-        payload["experience"]["tutor"]["realtimeModel"] = "gpt-realtime-2"
+        payload["experience"]["tutor"]["realtimeModel"] = "gpt-4o-realtime-preview"
 
         imported, error = create_experience_from_export_payload(self.other_user, payload)
 
