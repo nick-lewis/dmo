@@ -16,6 +16,12 @@ from .audio_cache import (
     script_audio_metadata_path,
     script_audio_words_path,
 )
+from .slides import (
+    DeckReference,
+    SlideResolutionError,
+    candidate_page_ids,
+    discover_page_ids,
+)
 from .models import (
     EventActionStep,
     EventChatTool,
@@ -56,6 +62,62 @@ from .views import (
     run_action_sequence,
     serialize_experience,
 )
+
+
+class GoogleSlidesResolutionTests(TestCase):
+    def test_discover_page_ids_parses_modern_embed_docdata(self):
+        class Response:
+            text = """
+                <script>
+                var viewerData = {
+                  docData: [[365760,274320],[
+                    ["g3e5cbb864f5_0_8",0,"",[],[],[],[],[[],false,1000],[],"",[],
+                      [],1,{"g3e5cbb864f5_0_14":"nested-object-not-slide"}],
+                    ["g3e5cbb864f5_0_22",0,"",[],[],[],[],[[],false,1000],[],"",[]]
+                  ]]
+                };
+                </script>
+            """
+
+            def raise_for_status(self):
+                return None
+
+        with (
+            tempfile.TemporaryDirectory() as media_root,
+            override_settings(MEDIA_ROOT=media_root),
+            patch("core.slides.requests.get", return_value=Response()),
+        ):
+            page_ids = discover_page_ids(DeckReference("deck-id", False))
+
+        self.assertEqual(
+            page_ids,
+            ["g3e5cbb864f5_0_8", "g3e5cbb864f5_0_22"],
+        )
+
+    def test_numeric_slide_ref_uses_discovered_page_ids(self):
+        deck = DeckReference("deck-id", False)
+
+        with patch(
+            "core.slides.read_cached_page_ids",
+            return_value=["real-slide-1", "real-slide-2"],
+        ):
+            self.assertEqual(candidate_page_ids(deck, "2"), ["real-slide-2", "p1"])
+
+    def test_numeric_slide_ref_does_not_guess_past_discovered_slide_count(self):
+        deck = DeckReference("deck-id", False)
+
+        with (
+            patch(
+                "core.slides.read_cached_page_ids",
+                return_value=["real-slide-1"],
+            ),
+            patch("core.slides.discover_page_ids", return_value=["real-slide-1"]),
+        ):
+            with self.assertRaisesMessage(
+                SlideResolutionError,
+                "DMO discovered 1 slide",
+            ):
+                candidate_page_ids(deck, "2")
 
 
 class InteractiveRuntimeActionTests(TestCase):

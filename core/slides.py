@@ -194,6 +194,10 @@ def discover_page_ids(deck):
 
     patterns = [
         r'\["(i\d+)",\s*\d+\s*,\s*"',
+        # Modern Google Slides embed pages expose slide records in a docData
+        # payload. The actual page id is the first value in each slide record;
+        # nested object ids can look similar but do not appear in this position.
+        r'(?:\[\s*\[|,\s*\[)\s*"(g[A-Za-z0-9_]+_\d+_\d+)",\s*\d+\s*,',
         r'"slideId"\s*:\s*"([^"]+)"',
         r'data-slide-id=["\']([^"\']+)["\']',
         r'slide=id\.([A-Za-z0-9_.-]+)',
@@ -230,6 +234,13 @@ def candidate_page_ids(deck, slide_ref):
         discovered_ids = discover_page_ids(deck)
     if len(discovered_ids) >= slide_number:
         candidates.append(discovered_ids[slide_number - 1])
+    elif discovered_ids:
+        raise SlideResolutionError(
+            f"Slide {slide_number} was not found in that deck. "
+            f"DMO discovered {len(discovered_ids)} slide"
+            f"{'' if len(discovered_ids) == 1 else 's'}; use the Google "
+            "slide page id from the URL if this slide exists."
+        )
 
     standard_page_id = get_standard_page_id(slide_number)
     if standard_page_id not in candidates:
