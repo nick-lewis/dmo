@@ -21,6 +21,7 @@ class Migration(migrations.Migration):
                     ("interactive", "Interactive"),
                     ("interactive_update", "Update interactive"),
                     ("interactive_clear", "Clear interactive"),
+                    ("chat_availability", "Chat availability"),
                     ("set_ui_trigger", "Set UI trigger"),
                     ("goto_event", "Go to event"),
                     ("button_choice", "Button choice"),

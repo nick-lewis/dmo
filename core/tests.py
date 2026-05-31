@@ -385,6 +385,38 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertIsNone(state["uiRuntime"]["interactive"])
         self.assertEqual(state["uiRuntime"]["interactiveState"], {})
 
+    def test_chat_availability_action_can_run_in_action_sequence(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "actionType": EventActionStep.ActionType.CHAT_AVAILABILITY,
+                    "config": {"enabled": False},
+                    "enabled": True,
+                    "id": "chat-off",
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(messages, [])
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual([action["type"] for action in actions], ["chat_availability"])
+        self.assertFalse(actions[0]["enabled"])
+        state = apply_runtime_actions_to_state({}, actions)
+        self.assertFalse(state["uiRuntime"]["chatEnabled"])
+
     def test_script_image_and_overlay_markers_emit_runtime_cues(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,

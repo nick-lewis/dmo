@@ -81,6 +81,7 @@ const eventActionOptions = [
   { id: "interactive", label: "Main panel app" },
   { id: "interactive_update", label: "Update app" },
   { id: "interactive_clear", label: "Clear app" },
+  { id: "chat_availability", label: "Chat" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -229,6 +230,7 @@ type EventActionStep = {
     | "interactive"
     | "interactive_update"
     | "interactive_clear"
+    | "chat_availability"
     | "set_ui_trigger"
     | "goto_event"
     | "button_choice";
@@ -1252,6 +1254,9 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_clear") {
     return {};
   }
+  if (actionType === "chat_availability") {
+    return { enabled: false };
+  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
@@ -1298,6 +1303,7 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive") return "Show main-panel app";
   if (actionType === "interactive_update") return "Update app";
   if (actionType === "interactive_clear") return "Clear main-panel app";
+  if (actionType === "chat_availability") return "Set chat availability";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -1397,6 +1403,9 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_clear") {
     return "Clear the current main-panel app";
   }
+  if (actionType === "chat_availability") {
+    return "Enable or block learner typing";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -1430,7 +1439,8 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
     actionType === "highlight_off" ||
     actionType === "interactive" ||
     actionType === "interactive_update" ||
-    actionType === "interactive_clear"
+    actionType === "interactive_clear" ||
+    actionType === "chat_availability"
   ) {
     return "ui";
   }
@@ -2112,6 +2122,9 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
   if (step.actionType === "interactive_clear") {
     return "Clear main-panel app";
+  }
+  if (step.actionType === "chat_availability") {
+    return step.config.enabled === false ? "Chat off" : "Chat on";
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -6302,6 +6315,22 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </>
         ) : null}
 
+        {step.actionType === "chat_availability" ? (
+          <div className="event-context-line single-value">
+            <span className="event-detail-label">CHAT</span>
+            <select
+              aria-label="Chat availability"
+              onChange={(event) =>
+                updateConfig("enabled", event.target.value === "on")
+              }
+              value={step.config.enabled === false ? "off" : "on"}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+          </div>
+        ) : null}
+
         {step.actionType === "set_ui_trigger" ? (
           <div className="event-context-line">
             <span className="event-detail-label">WHEN</span>
@@ -7169,6 +7198,26 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 </select>
                               </div>
                             </>
+                          ) : null}
+
+                          {step.actionType === "chat_availability" ? (
+                            <div className="event-context-line single-value">
+                              <span className="event-detail-label">CHAT</span>
+                              <select
+                                aria-label="Chat availability"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "enabled",
+                                    event.target.value === "on",
+                                  )
+                                }
+                                value={step.config.enabled === false ? "off" : "on"}
+                              >
+                                <option value="off">Off</option>
+                                <option value="on">On</option>
+                              </select>
+                            </div>
                           ) : null}
 
                           {step.actionType === "set_ui_trigger" ? (

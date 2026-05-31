@@ -2540,6 +2540,9 @@ def validate_action_config(action_type, value):
     if action_type == EventActionStep.ActionType.INTERACTIVE_CLEAR:
         return {}, ""
 
+    if action_type == EventActionStep.ActionType.CHAT_AVAILABILITY:
+        return {"enabled": value.get("enabled") is not False}, ""
+
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
@@ -3524,6 +3527,18 @@ def run_action_sequence(
                     "type": "interactive_clear",
                     "eventId": str(event.id),
                     "stepId": step_id,
+                    **metadata,
+                }
+            )
+            continue
+
+        if action_type == EventActionStep.ActionType.CHAT_AVAILABILITY:
+            actions.append(
+                {
+                    "enabled": config.get("enabled") is not False,
+                    "eventId": str(event.id),
+                    "stepId": step_id,
+                    "type": "chat_availability",
                     **metadata,
                 }
             )
