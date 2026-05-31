@@ -2093,6 +2093,128 @@ function comparableClassifierGroup(group: EventClassifierGroup) {
   return comparableClassifierGroupDraft(classifierGroupDraftFromGroup(group));
 }
 
+function chatToolPayloadFromDraft(tool: EventChatToolDraft) {
+  const primaryCapture = tool.captures.find((capture) => capture.saveAs.trim());
+  return {
+    description: tool.description,
+    enabled: tool.enabled,
+    handlerActions: normalizedActionSequenceSteps(tool.handlerActions),
+    name: tool.name,
+    parameters: normalizedChatToolParameters(tool),
+    saveArgument: primaryCapture?.saveAs.trim() ?? "",
+    saveContextKey: primaryCapture?.saveAs.trim() ?? "",
+    sortOrder: tool.sortOrder,
+    triggersEvent: tool.triggersEvent,
+  };
+}
+
+function conversationCheckPayloadFromDraft(check: EventConversationCheckDraft) {
+  return {
+    enabled: check.enabled,
+    handlerActions: normalizedActionSequenceSteps(check.handlerActions),
+    instructions: check.instructions,
+    resultContextKey: check.resultContextKey,
+    sortOrder: check.sortOrder,
+    title: check.title,
+    triggersEvent: check.triggersEvent,
+  };
+}
+
+function classifierGroupPayloadFromDraft(group: EventClassifierGroupDraft) {
+  return {
+    condition: normalizedStepCondition(group.condition),
+    enabled: group.enabled,
+    handlerActions: normalizedActionSequenceSteps(group.handlerActions),
+    instructions: group.instructions,
+    resultContextKey: group.resultContextKey,
+    sortOrder: group.sortOrder,
+    title: group.title,
+    triggersEvent: group.triggersEvent,
+  };
+}
+
+function classifierPayloadFromDraft(classifier: EventClassifierDraft) {
+  return {
+    condition: normalizedStepCondition(classifier.condition),
+    enabled: classifier.enabled,
+    model: classifier.model,
+    name: classifier.name,
+    prompt: classifier.prompt,
+    schema: classifier.schema,
+    sortOrder: classifier.sortOrder,
+  };
+}
+
+function replaceEventStepInEvent(
+  event: ExperienceEvent,
+  nextStep: EventActionStep,
+) {
+  return {
+    ...event,
+    steps: event.steps
+      .map((step) => (step.id === nextStep.id ? nextStep : step))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+  };
+}
+
+function replaceEventToolInEvent(
+  event: ExperienceEvent,
+  nextTool: EventChatTool,
+) {
+  return {
+    ...event,
+    chatTools: event.chatTools
+      .map((tool) => (tool.id === nextTool.id ? nextTool : tool))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+  };
+}
+
+function replaceEventCheckInEvent(
+  event: ExperienceEvent,
+  nextCheck: EventConversationCheck,
+) {
+  return {
+    ...event,
+    conversationChecks: (event.conversationChecks ?? [])
+      .map((check) => (check.id === nextCheck.id ? nextCheck : check))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+  };
+}
+
+function replaceEventClassifierGroupInEvent(
+  event: ExperienceEvent,
+  nextGroup: EventClassifierGroup,
+) {
+  return {
+    ...event,
+    classifierGroups: (event.classifierGroups ?? [])
+      .map((group) => (group.id === nextGroup.id ? nextGroup : group))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+  };
+}
+
+function replaceEventClassifierInEvent(
+  event: ExperienceEvent,
+  groupId: string,
+  nextClassifier: EventClassifier,
+) {
+  return {
+    ...event,
+    classifierGroups: (event.classifierGroups ?? []).map((group) => {
+      if (group.id !== groupId) return group;
+
+      return {
+        ...group,
+        classifiers: (group.classifiers ?? [])
+          .map((classifier) =>
+            classifier.id === nextClassifier.id ? nextClassifier : classifier,
+          )
+          .sort((left, right) => left.sortOrder - right.sortOrder),
+      };
+    }),
+  };
+}
+
 function replaceExperienceEvent(
   experience: Experience,
   nextEvent: ExperienceEvent,
@@ -2127,12 +2249,7 @@ function replaceExperienceEventStep(
     events: experience.events.map((event) => {
       if (event.id !== eventId) return event;
 
-      return {
-        ...event,
-        steps: event.steps
-          .map((step) => (step.id === nextStep.id ? nextStep : step))
-          .sort((left, right) => left.sortOrder - right.sortOrder),
-      };
+      return replaceEventStepInEvent(event, nextStep);
     }),
   };
 }
@@ -2147,12 +2264,7 @@ function replaceExperienceEventTool(
     events: experience.events.map((event) => {
       if (event.id !== eventId) return event;
 
-      return {
-        ...event,
-        chatTools: event.chatTools
-          .map((tool) => (tool.id === nextTool.id ? nextTool : tool))
-          .sort((left, right) => left.sortOrder - right.sortOrder),
-      };
+      return replaceEventToolInEvent(event, nextTool);
     }),
   };
 }
@@ -2167,12 +2279,7 @@ function replaceExperienceEventCheck(
     events: experience.events.map((event) => {
       if (event.id !== eventId) return event;
 
-      return {
-        ...event,
-        conversationChecks: (event.conversationChecks ?? [])
-          .map((check) => (check.id === nextCheck.id ? nextCheck : check))
-          .sort((left, right) => left.sortOrder - right.sortOrder),
-      };
+      return replaceEventCheckInEvent(event, nextCheck);
     }),
   };
 }
@@ -2187,12 +2294,7 @@ function replaceExperienceClassifierGroup(
     events: experience.events.map((event) => {
       if (event.id !== eventId) return event;
 
-      return {
-        ...event,
-        classifierGroups: (event.classifierGroups ?? [])
-          .map((group) => (group.id === nextGroup.id ? nextGroup : group))
-          .sort((left, right) => left.sortOrder - right.sortOrder),
-      };
+      return replaceEventClassifierGroupInEvent(event, nextGroup);
     }),
   };
 }
@@ -2208,21 +2310,7 @@ function replaceExperienceClassifier(
     events: experience.events.map((event) => {
       if (event.id !== eventId) return event;
 
-      return {
-        ...event,
-        classifierGroups: (event.classifierGroups ?? []).map((group) => {
-          if (group.id !== groupId) return group;
-
-          return {
-            ...group,
-            classifiers: (group.classifiers ?? [])
-              .map((classifier) =>
-                classifier.id === nextClassifier.id ? nextClassifier : classifier,
-              )
-              .sort((left, right) => left.sortOrder - right.sortOrder),
-          };
-        }),
-      };
+      return replaceEventClassifierInEvent(event, groupId, nextClassifier);
     }),
   };
 }
@@ -3027,6 +3115,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const eventAutosaveVersion = useRef(0);
   const eventAutosaveInFlight = useRef<Promise<boolean> | null>(null);
   const eventStepIdRemap = useRef<Map<string, string>>(new Map());
+  const eventToolIdRemap = useRef<Map<string, string>>(new Map());
+  const eventCheckIdRemap = useRef<Map<string, string>>(new Map());
+  const eventGroupIdRemap = useRef<Map<string, string>>(new Map());
+  const eventClassifierIdRemap = useRef<Map<string, string>>(new Map());
   const lastPersistedEvent = useRef<ExperienceEvent | null>(null);
   const voiceSampleAudioRef = useRef<HTMLAudioElement | null>(null);
   const scriptAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
@@ -3779,6 +3871,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      let persistedEvent = selectedEvent;
       const currentSteps = sortedEventSteps(selectedEvent.steps);
       const currentTools = sortedEventChatTools(selectedEvent.chatTools);
       const currentChecks = sortedEventConversationChecks(
@@ -3804,7 +3897,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             }),
           },
         );
-        lastPersistedEvent.current = eventPayload.event;
+        persistedEvent = eventPayload.event;
 
         if (eventAutosaveVersion.current === version) {
           setExperience((current) =>
@@ -3883,7 +3976,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
         if (eventAutosaveVersion.current === version) {
           const structuralEvent = latestStructuralEvent;
-          lastPersistedEvent.current = structuralEvent;
+          persistedEvent = structuralEvent;
           setExperience((current) =>
             current && current.id === experience.id
               ? replaceExperienceEvent(current, structuralEvent)
@@ -3895,6 +3988,221 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
               : current,
           );
         }
+      }
+
+      let latestToolStructuralEvent: ExperienceEvent | null = null;
+      const knownToolIds = new Set(currentTools.map((tool) => tool.id));
+      const draftToolIds = new Set(draft.chatTools.map((tool) => tool.id));
+
+      for (const draftTool of draft.chatTools) {
+        if (knownToolIds.has(draftTool.id)) continue;
+
+        const toolPayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/`,
+          {
+            method: "POST",
+            body: JSON.stringify(chatToolPayloadFromDraft(draftTool)),
+          },
+        );
+        const createdTool = sortedEventChatTools(toolPayload.event.chatTools).find(
+          (tool) => !knownToolIds.has(tool.id),
+        );
+        if (createdTool) {
+          eventToolIdRemap.current.set(draftTool.id, createdTool.id);
+          knownToolIds.add(createdTool.id);
+        }
+        latestToolStructuralEvent = toolPayload.event;
+      }
+
+      for (const currentTool of currentTools) {
+        if (draftToolIds.has(currentTool.id)) continue;
+
+        const deletePayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${currentTool.id}/`,
+          {
+            method: "DELETE",
+          },
+        );
+        latestToolStructuralEvent = deletePayload.event;
+      }
+
+      if (latestToolStructuralEvent && eventAutosaveVersion.current === version) {
+        persistedEvent = latestToolStructuralEvent;
+        setExperience((current) =>
+          current && current.id === experience.id
+            ? replaceExperienceEvent(current, latestToolStructuralEvent)
+            : current,
+        );
+        setEventDraft((current) =>
+          JSON.stringify(current) === JSON.stringify(draft)
+            ? eventDraftFromEvent(latestToolStructuralEvent)
+            : current,
+        );
+      }
+
+      let latestCheckStructuralEvent: ExperienceEvent | null = null;
+      const knownCheckIds = new Set(currentChecks.map((check) => check.id));
+      const draftCheckIds = new Set(draft.conversationChecks.map((check) => check.id));
+
+      for (const draftCheck of draft.conversationChecks) {
+        if (knownCheckIds.has(draftCheck.id)) continue;
+
+        const checkPayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/`,
+          {
+            method: "POST",
+            body: JSON.stringify(conversationCheckPayloadFromDraft(draftCheck)),
+          },
+        );
+        const createdCheck = sortedEventConversationChecks(
+          checkPayload.event.conversationChecks ?? [],
+        ).find((check) => !knownCheckIds.has(check.id));
+        if (createdCheck) {
+          eventCheckIdRemap.current.set(draftCheck.id, createdCheck.id);
+          knownCheckIds.add(createdCheck.id);
+        }
+        latestCheckStructuralEvent = checkPayload.event;
+      }
+
+      for (const currentCheck of currentChecks) {
+        if (draftCheckIds.has(currentCheck.id)) continue;
+
+        const deletePayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${currentCheck.id}/`,
+          {
+            method: "DELETE",
+          },
+        );
+        latestCheckStructuralEvent = deletePayload.event;
+      }
+
+      if (latestCheckStructuralEvent && eventAutosaveVersion.current === version) {
+        persistedEvent = latestCheckStructuralEvent;
+        setExperience((current) =>
+          current && current.id === experience.id
+            ? replaceExperienceEvent(current, latestCheckStructuralEvent)
+            : current,
+        );
+        setEventDraft((current) =>
+          JSON.stringify(current) === JSON.stringify(draft)
+            ? eventDraftFromEvent(latestCheckStructuralEvent)
+            : current,
+        );
+      }
+
+      let latestGroupStructuralEvent: ExperienceEvent | null = null;
+      const knownGroupIds = new Set(currentGroups.map((group) => group.id));
+      const draftGroupIds = new Set(draft.classifierGroups.map((group) => group.id));
+
+      for (const draftGroup of draft.classifierGroups) {
+        if (knownGroupIds.has(draftGroup.id)) continue;
+
+        const groupPayload = await apiFetch<{
+          event: ExperienceEvent;
+          group: EventClassifierGroup;
+        }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/`,
+          {
+            method: "POST",
+            body: JSON.stringify(classifierGroupPayloadFromDraft(draftGroup)),
+          },
+        );
+        const createdGroupId = groupPayload.group.id;
+        eventGroupIdRemap.current.set(draftGroup.id, createdGroupId);
+        knownGroupIds.add(createdGroupId);
+        latestGroupStructuralEvent = groupPayload.event;
+
+        for (const draftClassifier of draftGroup.classifiers) {
+          const classifierPayload = await apiFetch<{
+            classifier: EventClassifier;
+            event: ExperienceEvent;
+          }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${createdGroupId}/classifiers/`,
+            {
+              method: "POST",
+              body: JSON.stringify(classifierPayloadFromDraft(draftClassifier)),
+            },
+          );
+          eventClassifierIdRemap.current.set(
+            `${draftGroup.id}:${draftClassifier.id}`,
+            classifierPayload.classifier.id,
+          );
+          latestGroupStructuralEvent = classifierPayload.event;
+        }
+      }
+
+      for (const currentGroup of currentGroups) {
+        if (draftGroupIds.has(currentGroup.id)) continue;
+
+        const deletePayload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${currentGroup.id}/`,
+          {
+            method: "DELETE",
+          },
+        );
+        latestGroupStructuralEvent = deletePayload.event;
+      }
+
+      for (const draftGroup of draft.classifierGroups) {
+        const currentGroup = currentGroups.find((group) => group.id === draftGroup.id);
+        if (!currentGroup) continue;
+
+        const currentClassifiers = sortedEventClassifiers(
+          currentGroup.classifiers ?? [],
+        );
+        const knownClassifierIds = new Set(
+          currentClassifiers.map((classifier) => classifier.id),
+        );
+        const draftClassifierIds = new Set(
+          draftGroup.classifiers.map((classifier) => classifier.id),
+        );
+
+        for (const draftClassifier of draftGroup.classifiers) {
+          if (knownClassifierIds.has(draftClassifier.id)) continue;
+
+          const classifierPayload = await apiFetch<{
+            classifier: EventClassifier;
+            event: ExperienceEvent;
+          }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${currentGroup.id}/classifiers/`,
+            {
+              method: "POST",
+              body: JSON.stringify(classifierPayloadFromDraft(draftClassifier)),
+            },
+          );
+          eventClassifierIdRemap.current.set(
+            `${draftGroup.id}:${draftClassifier.id}`,
+            classifierPayload.classifier.id,
+          );
+          knownClassifierIds.add(classifierPayload.classifier.id);
+          latestGroupStructuralEvent = classifierPayload.event;
+        }
+
+        for (const currentClassifier of currentClassifiers) {
+          if (draftClassifierIds.has(currentClassifier.id)) continue;
+
+          const deletePayload = await apiFetch<{ event: ExperienceEvent }>(
+            `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${currentGroup.id}/classifiers/${currentClassifier.id}/`,
+            {
+              method: "DELETE",
+            },
+          );
+          latestGroupStructuralEvent = deletePayload.event;
+        }
+      }
+
+      if (latestGroupStructuralEvent && eventAutosaveVersion.current === version) {
+        persistedEvent = latestGroupStructuralEvent;
+        setExperience((current) =>
+          current && current.id === experience.id
+            ? replaceExperienceEvent(current, latestGroupStructuralEvent)
+            : current,
+        );
+        setEventDraft((current) =>
+          JSON.stringify(current) === JSON.stringify(draft)
+            ? eventDraftFromEvent(latestGroupStructuralEvent)
+            : current,
+        );
       }
 
       for (const draftStep of draft.steps) {
@@ -3922,6 +4230,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             }),
           },
         );
+        persistedEvent = replaceEventStepInEvent(persistedEvent, stepPayload.step);
 
         if (eventAutosaveVersion.current === version) {
           setExperience((current) =>
@@ -3939,9 +4248,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       for (const draftTool of draft.chatTools) {
         const currentTool = currentTools.find((tool) => tool.id === draftTool.id);
         if (!currentTool) continue;
-        const primaryCapture = draftTool.captures.find((capture) =>
-          capture.saveAs.trim(),
-        );
 
         if (
           JSON.stringify(comparableChatToolDraft(draftTool)) ===
@@ -3954,21 +4260,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${draftTool.id}/`,
           {
             method: "PATCH",
-            body: JSON.stringify({
-              description: draftTool.description,
-              enabled: draftTool.enabled,
-              handlerActions: normalizedActionSequenceSteps(
-                draftTool.handlerActions,
-              ),
-              name: draftTool.name,
-              parameters: normalizedChatToolParameters(draftTool),
-              saveArgument: primaryCapture?.saveAs.trim() ?? "",
-              saveContextKey: primaryCapture?.saveAs.trim() ?? "",
-              sortOrder: draftTool.sortOrder,
-              triggersEvent: draftTool.triggersEvent,
-            }),
+            body: JSON.stringify(chatToolPayloadFromDraft(draftTool)),
           },
         );
+        persistedEvent = replaceEventToolInEvent(persistedEvent, toolPayload.tool);
 
         if (eventAutosaveVersion.current === version) {
           setExperience((current) =>
@@ -4000,19 +4295,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${draftCheck.id}/`,
           {
             method: "PATCH",
-            body: JSON.stringify({
-              enabled: draftCheck.enabled,
-              handlerActions: normalizedActionSequenceSteps(
-                draftCheck.handlerActions,
-              ),
-              instructions: draftCheck.instructions,
-              resultContextKey: draftCheck.resultContextKey,
-              sortOrder: draftCheck.sortOrder,
-              title: draftCheck.title,
-              triggersEvent: draftCheck.triggersEvent,
-            }),
+            body: JSON.stringify(conversationCheckPayloadFromDraft(draftCheck)),
           },
         );
+        persistedEvent = replaceEventCheckInEvent(persistedEvent, checkPayload.check);
 
         if (eventAutosaveVersion.current === version) {
           setExperience((current) =>
@@ -4041,19 +4327,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${draftGroup.id}/`,
             {
               method: "PATCH",
-              body: JSON.stringify({
-                condition: normalizedStepCondition(draftGroup.condition),
-                enabled: draftGroup.enabled,
-                handlerActions: normalizedActionSequenceSteps(
-                  draftGroup.handlerActions,
-                ),
-                instructions: draftGroup.instructions,
-                resultContextKey: draftGroup.resultContextKey,
-                sortOrder: draftGroup.sortOrder,
-                title: draftGroup.title,
-                triggersEvent: draftGroup.triggersEvent,
-              }),
+              body: JSON.stringify(classifierGroupPayloadFromDraft(draftGroup)),
             },
+          );
+          persistedEvent = replaceEventClassifierGroupInEvent(
+            persistedEvent,
+            groupPayload.group,
           );
 
           if (eventAutosaveVersion.current === version) {
@@ -4091,16 +4370,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${draftGroup.id}/classifiers/${draftClassifier.id}/`,
             {
               method: "PATCH",
-              body: JSON.stringify({
-                condition: normalizedStepCondition(draftClassifier.condition),
-                enabled: draftClassifier.enabled,
-                model: draftClassifier.model,
-                name: draftClassifier.name,
-                prompt: draftClassifier.prompt,
-                schema: draftClassifier.schema,
-                sortOrder: draftClassifier.sortOrder,
-              }),
+              body: JSON.stringify(classifierPayloadFromDraft(draftClassifier)),
             },
+          );
+          persistedEvent = replaceEventClassifierInEvent(
+            persistedEvent,
+            draftGroup.id,
+            classifierPayload.classifier,
           );
 
           if (eventAutosaveVersion.current === version) {
@@ -4116,6 +4392,20 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             );
           }
         }
+      }
+
+      if (eventAutosaveVersion.current === version) {
+        lastPersistedEvent.current = persistedEvent;
+        setExperience((current) =>
+          current && current.id === experience.id
+            ? replaceExperienceEvent(current, persistedEvent)
+            : current,
+        );
+        setEventDraft((current) =>
+          JSON.stringify(current) === JSON.stringify(draft)
+            ? eventDraftFromEvent(persistedEvent)
+            : current,
+        );
       }
 
       return true;
@@ -4670,6 +4960,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  function persistedDraftForUndo(selectedEvent: ExperienceEvent) {
+    const persistedEvent =
+      lastPersistedEvent.current?.id === selectedEvent.id
+        ? lastPersistedEvent.current
+        : selectedEvent;
+    return eventDraftFromEvent(persistedEvent);
+  }
+
   async function selectEditorEvent(nextEventId: string) {
     if (!experience || nextEventId === selectedEventId) return;
 
@@ -4783,6 +5081,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo();
       const existingNames = new Set(
         selectedEvent.chatTools.map((tool) => tool.name),
       );
@@ -4805,7 +5104,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           ),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
+      const nextTool = sortedEventChatTools(payload.event.chatTools).find(
+        (tool) => !selectedEvent.chatTools.some((current) => current.id === tool.id),
+      );
+      if (nextTool) {
+        openExpandedItem(nextTool.id);
+      }
       setIsConversationAddMenuOpen(false);
     } catch (createError) {
       setError(
@@ -4826,6 +5131,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo();
       const existingCheckIds = new Set(
         (selectedEvent.conversationChecks ?? []).map((check) => check.id),
       );
@@ -4838,7 +5144,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           ),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
       const nextCheck = sortedEventConversationChecks(
         payload.event.conversationChecks ?? [],
       ).find((check) => !existingCheckIds.has(check.id));
@@ -4865,6 +5171,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo();
       const existingGroupIds = new Set(
         (selectedEvent.classifierGroups ?? []).map((group) => group.id),
       );
@@ -4877,7 +5184,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           ),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
       const nextGroup = sortedEventClassifierGroups(
         payload.event.classifierGroups ?? [],
       ).find((group) => !existingGroupIds.has(group.id));
@@ -4904,8 +5211,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo();
+      const resolvedGroupId = eventGroupIdRemap.current.get(groupId) ?? groupId;
       const group = selectedEvent.classifierGroups.find(
-        (candidate) => candidate.id === groupId,
+        (candidate) =>
+          candidate.id === groupId || candidate.id === resolvedGroupId,
       );
       const existingNames = new Set(
         (group?.classifiers ?? []).map((classifier) => classifier.name),
@@ -4917,7 +5227,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         suffix += 1;
       }
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/classifiers/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${resolvedGroupId}/classifiers/`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -4930,7 +5240,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           }),
         },
       );
-      applyUpdatedEvent(payload.event);
+      applyUpdatedEvent(payload.event, false);
     } catch (createError) {
       setError(
         createError instanceof Error
@@ -4950,13 +5260,18 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
+      const resolvedToolId = eventToolIdRemap.current.get(toolId) ?? toolId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${toolId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/chat-tools/${resolvedToolId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedEvent(payload.event);
+      eventToolIdRemap.current.delete(toolId);
+      eventToolIdRemap.current.delete(resolvedToolId);
+      applyUpdatedEvent(payload.event, false);
+      closeExpandedItem(toolId);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -4976,13 +5291,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
+      const resolvedCheckId = eventCheckIdRemap.current.get(checkId) ?? checkId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${checkId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/conversation-checks/${resolvedCheckId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedEvent(payload.event);
+      eventCheckIdRemap.current.delete(checkId);
+      eventCheckIdRemap.current.delete(resolvedCheckId);
+      applyUpdatedEvent(payload.event, false);
       closeExpandedItem(checkId);
     } catch (deleteError) {
       setError(
@@ -5003,13 +5322,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
+      const resolvedGroupId = eventGroupIdRemap.current.get(groupId) ?? groupId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${resolvedGroupId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedEvent(payload.event);
+      eventGroupIdRemap.current.delete(groupId);
+      eventGroupIdRemap.current.delete(resolvedGroupId);
+      applyUpdatedEvent(payload.event, false);
       closeExpandedItem(groupId);
     } catch (deleteError) {
       setError(
@@ -5030,13 +5353,20 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
+      rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
+      const resolvedGroupId = eventGroupIdRemap.current.get(groupId) ?? groupId;
+      const classifierKey = `${groupId}:${classifierId}`;
+      const resolvedClassifierId =
+        eventClassifierIdRemap.current.get(classifierKey) ?? classifierId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${groupId}/classifiers/${classifierId}/`,
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/classifier-groups/${resolvedGroupId}/classifiers/${resolvedClassifierId}/`,
         {
           method: "DELETE",
         },
       );
-      applyUpdatedEvent(payload.event);
+      eventClassifierIdRemap.current.delete(classifierKey);
+      eventClassifierIdRemap.current.delete(`${resolvedGroupId}:${resolvedClassifierId}`);
+      applyUpdatedEvent(payload.event, false);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -5056,12 +5386,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      const persistedEvent =
-        lastPersistedEvent.current?.id === selectedEvent.id
-          ? lastPersistedEvent.current
-          : selectedEvent;
-      const undoDraft = eventDraftFromEvent(persistedEvent);
-      rememberEventDraftForUndo(undoDraft);
+      rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
       const resolvedStepId = eventStepIdRemap.current.get(stepId) ?? stepId;
       const payload = await apiFetch<{ event: ExperienceEvent }>(
         `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/${resolvedStepId}/`,
