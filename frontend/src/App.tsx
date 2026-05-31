@@ -110,6 +110,16 @@ const scriptMarkerOptions = [
     marker: "[pause: 500]",
     title: "Insert a timed pause marker.",
   },
+  {
+    label: "Chat off",
+    marker: "[chat_off]",
+    title: "Pause student typing at this point in the script.",
+  },
+  {
+    label: "Chat on",
+    marker: "[chat_on]",
+    title: "Allow student typing again at this point in the script.",
+  },
 ] as const;
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
@@ -1473,6 +1483,9 @@ function runtimeActionText(action: Record<string, unknown>) {
   }
   if (type === "interactive_clear") {
     return "clear main-panel app";
+  }
+  if (type === "chat_availability") {
+    return action.enabled === false ? "chat off" : "chat on";
   }
   if (type === "gslide") {
     return `slide ${compactRuntimeValue(action.slideRef, "1")}`;
@@ -7475,6 +7488,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     null,
   );
   const [notesVisible, setNotesVisible] = useState(false);
+  const [runtimeChatEnabled, setRuntimeChatEnabled] = useState(true);
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
   >({});
@@ -7700,6 +7714,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         setRuntimeInteractive(null);
         setRuntimeInteractiveState({});
       }
+
+      if (action.type === "chat_availability") {
+        setRuntimeChatEnabled(action.enabled !== false);
+      }
     }
 
     setRuntimeButtons((current) => {
@@ -7792,6 +7810,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const slideValue = uiRuntime.slide;
     const slideErrorValue = uiRuntime.slideError;
     const triggersValue = uiRuntime.triggers;
+    const chatEnabledValue = uiRuntime.chatEnabled;
     const nextHighlights: Record<string, RuntimeHighlight> = {};
     const nextButtons: RuntimeButton[] = [];
 
@@ -7851,6 +7870,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     }
 
     setRuntimeButtons(nextButtons);
+    setRuntimeChatEnabled(
+      typeof chatEnabledValue === "boolean" ? chatEnabledValue : true,
+    );
     setRuntimeHighlights(nextHighlights);
     setRuntimeTriggers(nextTriggers);
 
@@ -9585,6 +9607,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                 assistantName={tutorForm.assistantName}
                 avatarPath={tutorForm.avatarPath}
                 error={chatError}
+                isChatEnabled={runtimeChatEnabled}
                 isSending={isSendingMessage}
                 isTurnLocked={
                   isSendingMessage ||
@@ -9626,6 +9649,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           <RuntimeInspectorPanel
             actionLog={runtimeActionLog}
             buttons={runtimeButtons}
+            chatEnabled={runtimeChatEnabled}
             currentEvent={currentRuntimeEvent}
             currentEventSlug={currentRuntimeEventSlug}
             highlights={runtimeHighlights}
@@ -9646,6 +9670,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 function RuntimeInspectorPanel({
   actionLog,
   buttons,
+  chatEnabled,
   currentEvent,
   currentEventSlug,
   highlights,
@@ -9659,6 +9684,7 @@ function RuntimeInspectorPanel({
 }: {
   actionLog: RuntimeActionLogEntry[];
   buttons: RuntimeButton[];
+  chatEnabled: boolean;
   currentEvent: ExperienceEvent | null;
   currentEventSlug: string;
   highlights: Record<string, RuntimeHighlight>;
@@ -9717,6 +9743,10 @@ function RuntimeInspectorPanel({
           <div className="runtime-inspector-kv">
             <span>Event slug</span>
             <strong>{currentEvent?.slug || currentEventSlug || "---"}</strong>
+          </div>
+          <div className="runtime-inspector-kv">
+            <span>Chat</span>
+            <strong>{chatEnabled ? "on" : "off"}</strong>
           </div>
         </div>
 
@@ -11171,6 +11201,7 @@ type ChatPanelContentProps = {
   assistantName: string;
   avatarPath: string;
   error: string;
+  isChatEnabled: boolean;
   isSending: boolean;
   isTurnLocked: boolean;
   messages: ChatMessage[];
@@ -11188,6 +11219,7 @@ function ChatPanelContent({
   assistantName,
   avatarPath,
   error,
+  isChatEnabled,
   isSending,
   isTurnLocked,
   messages,
@@ -11234,7 +11266,16 @@ function ChatPanelContent({
     event.preventDefault();
 
     const nextMessage = draft.trim();
-    if (!nextMessage || !session || isSending || status === "loading") return;
+    if (
+      !nextMessage ||
+      !session ||
+      isSending ||
+      isTurnLocked ||
+      !isChatEnabled ||
+      status === "loading"
+    ) {
+      return;
+    }
 
     setDraft("");
 
@@ -11246,13 +11287,18 @@ function ChatPanelContent({
     }
   }
 
-  const isInputDisabled = !session || status === "loading" || isTurnLocked;
+  const isInputDisabled =
+    !session || status === "loading" || isTurnLocked || !isChatEnabled;
   const isSendDisabled = isInputDisabled || !draft.trim();
-  const inputPlaceholder = isTurnLocked
-    ? `${assistantDisplayName} is responding...`
-    : `Message ${assistantDisplayName}...`;
+  const inputPlaceholder = !isChatEnabled
+    ? "Chat is paused"
+    : isTurnLocked
+      ? `${assistantDisplayName} is responding...`
+      : `Message ${assistantDisplayName}...`;
   const sendButtonLabel =
-    realtimeStatus === "streaming" || isSending || isTurnLocked
+    !isChatEnabled
+      ? "Chat paused"
+      : realtimeStatus === "streaming" || isSending || isTurnLocked
       ? "dLU is responding"
       : "Send message";
 

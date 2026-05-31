@@ -370,6 +370,18 @@ def resolve_script_marker_action(marker, config, runtime_context):
             "type": "pause",
         }
 
+    if marker_type == "chat_off":
+        return {
+            "enabled": False,
+            "type": "chat_availability",
+        }
+
+    if marker_type == "chat_on":
+        return {
+            "enabled": True,
+            "type": "chat_availability",
+        }
+
     return None
 
 
@@ -2024,6 +2036,8 @@ def runtime_action_summary(action):
         return f"{action.get('interactiveId', 'app')} state saved"
     if action_type == "interactive_clear":
         return "clear main-panel app"
+    if action_type == "chat_availability":
+        return "chat on" if action.get("enabled", True) else "chat off"
     if action_type == "gslide":
         return f"slide {action.get('slideRef', '1')}"
     if action_type == "slide_error":
@@ -2047,6 +2061,7 @@ def runtime_action_debug_details(action):
         "interactiveId",
         "key",
         "label",
+        "enabled",
         "list",
         "mode",
         "reason",
@@ -2132,6 +2147,9 @@ def apply_runtime_actions_to_state(
     interactive_state = normalized_interactive_config(
         ui_runtime.get("interactiveState")
     )
+    chat_enabled = ui_runtime.get("chatEnabled")
+    if not isinstance(chat_enabled, bool):
+        chat_enabled = True
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -2215,6 +2233,10 @@ def apply_runtime_actions_to_state(
             interactive_state = {}
             continue
 
+        if action_type == "chat_availability":
+            chat_enabled = bool(action.get("enabled", True))
+            continue
+
         if action_type == "button_choice":
             step_id = str(action.get("stepId", ""))
             buttons = [button for button in buttons if button.get("stepId") != step_id]
@@ -2257,6 +2279,7 @@ def apply_runtime_actions_to_state(
             )
 
     ui_runtime["buttons"] = buttons
+    ui_runtime["chatEnabled"] = chat_enabled
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
