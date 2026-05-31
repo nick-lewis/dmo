@@ -2,11 +2,13 @@ import json
 import re
 import tempfile
 import wave
+from io import StringIO
 from threading import Event, Lock
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 
 from .audio_cache import (
@@ -729,6 +731,28 @@ class EventEditorApiTests(TestCase):
         self.assertEqual(event.steps.get().config["text"], "Restored line.")
         tool = event.chat_tools.get(name="student_done")
         self.assertEqual(tool.handler_actions[0]["config"]["key"], "done")
+
+
+class SeedLocalDemosCommandTests(TestCase):
+    def test_seed_local_demos_targets_requested_username(self):
+        User = get_user_model()
+        user = User.objects.create_user(
+            username="NickLewis",
+            email="nicklewis@deeplearning.ai",
+            password="test-password",
+        )
+
+        call_command(
+            "seed_local_demos",
+            usernames=["NickLewis"],
+            stdout=StringIO(),
+        )
+
+        slugs = set(
+            Experience.objects.filter(user=user).values_list("slug", flat=True)
+        )
+        self.assertIn("fruit-test", slugs)
+        self.assertIn("interactive-timing-demo", slugs)
 
 
 class RuntimeContextActionTests(TestCase):

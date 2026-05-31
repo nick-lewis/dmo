@@ -84,6 +84,13 @@ This demonstrates how multi-classifier parallel classification works:
 You can restart to try again, or explore other experiences.
 """
 
+DEFAULT_USERNAMES = [
+    "nick",
+    "nicklewis",
+    "NickLewis",
+    "nicky",
+]
+
 
 class Command(BaseCommand):
     help = "Create or refresh a Fruit test experience for local testing."
@@ -97,11 +104,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        usernames = options.get("usernames") or [
-            "nick",
-            "nicklewis",
-            "nicky",
-        ]
+        usernames = options.get("usernames") or DEFAULT_USERNAMES
         User = get_user_model()
         users = list(User.objects.filter(username__in=usernames).order_by("id"))
         if not users:
