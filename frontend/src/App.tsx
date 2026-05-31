@@ -523,6 +523,48 @@ type EventGraphRouteRow = EventOutgoingLink & {
   sourceEventId: string;
 };
 
+type ExperienceValidationRoute = {
+  dynamic: boolean;
+  kind: string;
+  source: string;
+  sourceEventId: string;
+  sourceEventSlug: string;
+  sourceEventTitle: string;
+  sourceItemId: string;
+  target: string;
+};
+
+type ExperienceValidationEvent = {
+  id: string;
+  isStart: boolean;
+  slug: string;
+  title: string;
+};
+
+type ExperienceValidationAppIssue = {
+  detail: string;
+  interactiveId: string;
+  source: string;
+  sourceEventId: string;
+  sourceEventSlug: string;
+  sourceEventTitle: string;
+  sourceItemId: string;
+};
+
+type ExperienceValidation = {
+  appIssues: ExperienceValidationAppIssue[];
+  dynamicRouteCount: number;
+  eventCount: number;
+  orphanedEvents: ExperienceValidationEvent[];
+  routeCount: number;
+  routes: ExperienceValidationRoute[];
+  unresolvedRoutes: ExperienceValidationRoute[];
+};
+
+type ExperienceValidationPayload = {
+  validation: ExperienceValidation;
+};
+
 type VoiceSampleStatus = "idle" | "loading" | "playing";
 
 type VoiceSamplePayload = {
@@ -1469,6 +1511,16 @@ function eventTitleForTrigger(events: ExperienceEvent[], eventSlug: string) {
   return target?.title ?? eventSlug;
 }
 
+function isDynamicRouteTarget(value: string) {
+  return value.includes("{{");
+}
+
+function eventTargetForRoute(events: ExperienceEvent[], targetSlug: string) {
+  return events.find(
+    (event) => event.slug === targetSlug || event.id === targetSlug,
+  );
+}
+
 function actionSequenceOutgoingLinks(
   steps: ActionSequenceStep[] = [],
   sourcePrefix = "Action",
@@ -1596,9 +1648,7 @@ function eventTransitionStats(events: ExperienceEvent[], event: ExperienceEvent)
   }, 0);
   const unresolvedCount = outgoingLinks.filter(
     (link) =>
-      !events.some(
-        (candidate) => candidate.slug === link.slug || candidate.id === link.slug,
-      ),
+      !isDynamicRouteTarget(link.slug) && !eventTargetForRoute(events, link.slug),
   ).length;
 
   return {
@@ -3349,6 +3399,8 @@ function ExperienceHome() {
 function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [user, setUser] = useState<ApiUser | null>(null);
   const [experience, setExperience] = useState<Experience | null>(null);
+  const [experienceValidation, setExperienceValidation] =
+    useState<ExperienceValidation | null>(null);
   const [experienceForm, setExperienceForm] = useState<ExperienceForm>({
     description: "",
     title: "",
@@ -3403,6 +3455,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     "idle" | "loading" | "generating"
   >("idle");
   const [scriptAudioError, setScriptAudioError] = useState("");
+  const [experienceValidationStatus, setExperienceValidationStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [experienceValidationError, setExperienceValidationError] = useState("");
   const [playingScriptAudioId, setPlayingScriptAudioId] = useState("");
   const overviewAutosaveTimer = useRef<number | null>(null);
   const overviewAutosaveVersion = useRef(0);
@@ -3411,6 +3467,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const eventAutosaveTimer = useRef<number | null>(null);
   const eventAutosaveVersion = useRef(0);
   const eventAutosaveInFlight = useRef<Promise<boolean> | null>(null);
+  const experienceValidationVersion = useRef(0);
   const eventStepIdRemap = useRef<Map<string, string>>(new Map());
   const eventToolIdRemap = useRef<Map<string, string>>(new Map());
   const eventCheckIdRemap = useRef<Map<string, string>>(new Map());
@@ -3753,6 +3810,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventStructuralRedo(null);
     setRecentCreatedEvent(null);
     setRecentDeletedEvent(null);
+    setExperienceValidation(null);
+    setExperienceValidationError("");
+    setExperienceValidationStatus("idle");
     clearEventUndoHistory();
   }
 
@@ -3781,6 +3841,37 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       if (showLoading) {
         setScriptAudioStatus("idle");
       }
+    }
+  }
+
+  async function loadExperienceValidation(
+    targetExperienceId = experience?.id ?? "",
+    showLoading = true,
+  ) {
+    if (!targetExperienceId) return;
+
+    const version = experienceValidationVersion.current + 1;
+    experienceValidationVersion.current = version;
+    if (showLoading) {
+      setExperienceValidationStatus("loading");
+    }
+    setExperienceValidationError("");
+
+    try {
+      const payload = await apiFetch<ExperienceValidationPayload>(
+        `/api/experiences/${targetExperienceId}/validation/`,
+      );
+      if (experienceValidationVersion.current !== version) return;
+      setExperienceValidation(payload.validation);
+      setExperienceValidationStatus("idle");
+    } catch (loadError) {
+      if (experienceValidationVersion.current !== version) return;
+      setExperienceValidationStatus("error");
+      setExperienceValidationError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not validate experience.",
+      );
     }
   }
 
@@ -3827,6 +3918,18 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       isCancelled = true;
     };
   }, [experienceId]);
+
+  useEffect(() => {
+    if (!experience?.id || !isEventGraphOpen || status !== "ready") return;
+
+    const timer = window.setTimeout(() => {
+      void loadExperienceValidation(experience.id, !experienceValidation);
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [experience?.id, experience?.events, isEventGraphOpen, status]);
 
   useEffect(() => {
     return () => {
@@ -6912,8 +7015,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       onOpenRouteSource={(eventId, itemId) =>
                         void openEditorRouteSource(eventId, itemId)
                       }
+                      onRefreshValidation={() =>
+                        void loadExperienceValidation(experience.id, true)
+                      }
                       onSelectEvent={(eventId) => void selectEditorEvent(eventId)}
                       selectedEventId={selectedEvent?.id ?? ""}
+                      validation={experienceValidation}
+                      validationError={experienceValidationError}
+                      validationStatus={experienceValidationStatus}
                     />
                   ) : null}
                 </aside>
@@ -12859,13 +12968,21 @@ function ScriptAudioPanel({
 function EventGraphView({
   events,
   onOpenRouteSource,
+  onRefreshValidation,
   onSelectEvent,
   selectedEventId,
+  validation,
+  validationError,
+  validationStatus,
 }: {
   events: ExperienceEvent[];
   onOpenRouteSource: (eventId: string, itemId?: string) => void;
+  onRefreshValidation: () => void;
   onSelectEvent: (eventId: string) => void;
   selectedEventId: string;
+  validation: ExperienceValidation | null;
+  validationError: string;
+  validationStatus: "idle" | "loading" | "error";
 }) {
   const [selectedRouteKind, setSelectedRouteKind] = useState("");
   const sortedEvents = sortedExperienceEvents(events);
@@ -12884,10 +13001,8 @@ function EventGraphView({
     eventOutgoingLinks(event)
       .filter(
         (link) =>
-          !sortedEvents.some(
-            (candidate) =>
-              candidate.slug === link.slug || candidate.id === link.slug,
-          ),
+          !isDynamicRouteTarget(link.slug) &&
+          !eventTargetForRoute(sortedEvents, link.slug),
       )
       .map((link) => ({
         ...link,
@@ -12963,9 +13078,8 @@ function EventGraphView({
     : incomingLinks;
   const unresolvedLinks = selectedOutgoingLinks.filter(
     (link) =>
-      !sortedEvents.some(
-        (event) => event.slug === link.slug || event.id === link.slug,
-      ),
+      !isDynamicRouteTarget(link.slug) &&
+      !eventTargetForRoute(sortedEvents, link.slug),
   );
   const visibleUnresolvedLinks = selectedRouteKind
     ? unresolvedLinks.filter((link) => link.kind === selectedRouteKind)
@@ -13033,6 +13147,14 @@ function EventGraphView({
           ) : null}
         </div>
       ) : null}
+      <EventGraphValidationPanel
+        onOpenRouteSource={onOpenRouteSource}
+        onRefresh={onRefreshValidation}
+        onSelectEvent={onSelectEvent}
+        status={validationStatus}
+        validation={validation}
+        validationError={validationError}
+      />
       {orphanEvents.length || unresolvedRoutes.length ? (
         <div className="event-graph-issues" aria-label="Graph issues">
           {orphanEvents.map((event) => (
@@ -13145,6 +13267,109 @@ function EventGraphView({
   );
 }
 
+function EventGraphValidationPanel({
+  onOpenRouteSource,
+  onRefresh,
+  onSelectEvent,
+  status,
+  validation,
+  validationError,
+}: {
+  onOpenRouteSource: (eventId: string, itemId?: string) => void;
+  onRefresh: () => void;
+  onSelectEvent: (eventId: string) => void;
+  status: "idle" | "loading" | "error";
+  validation: ExperienceValidation | null;
+  validationError: string;
+}) {
+  const appIssueCount = validation?.appIssues.length ?? 0;
+  const unresolvedCount = validation?.unresolvedRoutes.length ?? 0;
+  const orphanCount = validation?.orphanedEvents.length ?? 0;
+  const issueCount = appIssueCount + unresolvedCount + orphanCount;
+  const statusLabel =
+    status === "loading"
+      ? "Checking"
+      : status === "error"
+        ? "Error"
+        : validation
+          ? `${issueCount} issues`
+          : "Not checked";
+
+  return (
+    <div className="event-graph-validation" aria-label="Experience validation">
+      <div className="event-graph-validation-header">
+        <span>Validation</span>
+        <strong>{statusLabel}</strong>
+        <button onClick={onRefresh} type="button">
+          Refresh
+        </button>
+      </div>
+      {validation ? (
+        <div className="event-graph-validation-summary">
+          <span>{validation.eventCount} events</span>
+          <span>{validation.routeCount} routes</span>
+          <span>{validation.dynamicRouteCount} dynamic</span>
+          <span>{appIssueCount} app issues</span>
+        </div>
+      ) : null}
+      {validationError ? (
+        <p className="event-graph-validation-empty">{validationError}</p>
+      ) : null}
+      {validation && issueCount ? (
+        <div className="event-graph-validation-issues">
+          {validation.appIssues.map((issue, index) => (
+            <button
+              className="event-graph-validation-row is-app"
+              key={`${issue.sourceEventId}-${issue.interactiveId}-${index}`}
+              onClick={() =>
+                onOpenRouteSource(issue.sourceEventId, issue.sourceItemId)
+              }
+              title={issue.detail}
+              type="button"
+            >
+              <strong>{issue.interactiveId}</strong>
+              <span>
+                {issue.sourceEventTitle || issue.sourceEventSlug} / {issue.source}
+              </span>
+            </button>
+          ))}
+          {validation.unresolvedRoutes.map((route, index) => (
+            <button
+              className="event-graph-validation-row is-route"
+              key={`${route.sourceEventId}-${route.target}-${index}`}
+              onClick={() =>
+                onOpenRouteSource(route.sourceEventId, route.sourceItemId)
+              }
+              type="button"
+            >
+              <strong>{route.target || "missing event"}</strong>
+              <span>
+                {route.sourceEventTitle || route.sourceEventSlug} / {route.kind}
+              </span>
+            </button>
+          ))}
+          {validation.orphanedEvents.map((event) => (
+            <button
+              className="event-graph-validation-row is-orphan"
+              key={event.id}
+              onClick={() => onSelectEvent(event.id)}
+              type="button"
+            >
+              <strong>{event.title || event.slug}</strong>
+              <span>Orphaned event</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {validation && !issueCount ? (
+        <p className="event-graph-validation-empty">
+          No unresolved routes, orphaned events, or app registration issues.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function EventGraphRouteCatalog({
   events,
   links,
@@ -13167,15 +13392,15 @@ function EventGraphRouteCatalog({
       {links.length ? (
         <div className="event-graph-route-table">
           {links.map((link, index) => {
-            const target = events.find(
-              (event) => event.slug === link.slug || event.id === link.slug,
-            );
+            const target = eventTargetForRoute(events, link.slug);
+            const isDynamic = isDynamicRouteTarget(link.slug);
 
             return (
               <div
                 className={[
                   "event-graph-route-row",
-                  target ? "" : "is-unresolved",
+                  target || isDynamic ? "" : "is-unresolved",
+                  isDynamic ? "is-dynamic" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
@@ -13204,6 +13429,8 @@ function EventGraphRouteCatalog({
                   >
                     {target.title || target.slug}
                   </button>
+                ) : isDynamic ? (
+                  <code>{link.slug || "dynamic event"}</code>
                 ) : (
                   <code>{link.slug || "missing event"}</code>
                 )}
@@ -13242,12 +13469,12 @@ function EventGraphLinkList({
       <span>{title}</span>
       {links.length ? (
         links.map((link, index) => {
-          const target = events.find(
-            (event) => event.slug === link.slug || event.id === link.slug,
-          );
+          const target = eventTargetForRoute(events, link.slug);
+          const isDynamic = isDynamicRouteTarget(link.slug);
           const className = [
             "event-graph-link-row",
-            unresolved || !target ? "is-unresolved" : "",
+            unresolved || (!target && !isDynamic) ? "is-unresolved" : "",
+            isDynamic ? "is-dynamic" : "",
             target ? "is-clickable" : "",
           ]
             .filter(Boolean)
@@ -13256,7 +13483,7 @@ function EventGraphLinkList({
           if (!target) {
             return (
               <div className={className} key={`${link.slug}-${link.source}-${index}`}>
-                <strong>{link.slug || "Missing event"}</strong>
+                <strong>{link.slug || (isDynamic ? "Dynamic event" : "Missing event")}</strong>
                 <small>
                   {link.kind} / {link.source}
                   {link.condition ? ` / if ${link.condition}` : ""}

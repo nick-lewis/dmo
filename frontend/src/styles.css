@@ -1254,6 +1254,118 @@ button {
   color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
 }
 
+.event-graph-validation {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+  margin: 7px 9px 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 62%, transparent);
+}
+
+.event-graph-validation-header,
+.event-graph-validation-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.event-graph-validation-header span {
+  color: var(--muted-ink);
+  font-size: 0.61rem;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.event-graph-validation-header strong {
+  margin-left: auto;
+  color: var(--page-ink);
+  font-size: 0.64rem;
+  font-weight: 860;
+}
+
+.event-graph-validation-header button {
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 14%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: rgba(31, 37, 41, 0.56);
+  background: rgba(255, 255, 255, 0.38);
+  font-size: 0.57rem;
+  font-weight: 820;
+}
+
+.event-graph-validation-header button:hover {
+  border-color: color-mix(in srgb, var(--accent-2) 30%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+}
+
+.event-graph-validation-summary {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.event-graph-validation-summary span {
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: rgba(31, 37, 41, 0.5);
+  background: rgba(255, 255, 255, 0.34);
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.event-graph-validation-issues {
+  display: grid;
+  gap: 4px;
+}
+
+.event-graph-validation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.55fr) minmax(0, 1fr);
+  gap: 7px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-soft-border) 42%, transparent);
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.event-graph-validation-row strong,
+.event-graph-validation-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-graph-validation-row strong {
+  color: color-mix(in srgb, var(--accent-5) 68%, var(--page-ink));
+  font-size: 0.63rem;
+  font-weight: 850;
+}
+
+.event-graph-validation-row span,
+.event-graph-validation-empty {
+  color: var(--muted-ink);
+  font-size: 0.6rem;
+  font-weight: 730;
+}
+
+.event-graph-validation-row:hover strong,
+.event-graph-validation-row:hover span {
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+}
+
+.event-graph-validation-empty {
+  margin: 0;
+}
+
 .event-graph-nodes {
   position: relative;
   z-index: 1;
@@ -1365,6 +1477,10 @@ button {
   color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
 }
 
+.event-graph-link-row.is-dynamic strong {
+  color: color-mix(in srgb, var(--accent-2) 58%, var(--page-ink));
+}
+
 .event-graph-link-row.is-clickable {
   cursor: pointer;
 }
@@ -1474,6 +1590,10 @@ button {
 
 .event-graph-route-row.is-unresolved .event-graph-route-kind {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--panel-soft-border));
+}
+
+.event-graph-route-row.is-dynamic .event-graph-route-kind {
+  border-color: color-mix(in srgb, var(--accent-2) 22%, var(--panel-soft-border));
 }
 
 .event-graph-route-empty {
