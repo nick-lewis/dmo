@@ -1201,6 +1201,21 @@ def validate_action_config(action_type, value):
             return None, selector_error
         return {"selector": selector}, ""
 
+    if action_type == EventActionStep.ActionType.GSLIDE:
+        deck_url = str(value.get("deckUrl", "")).strip()
+        slide_ref = str(value.get("slideRef", "1")).strip() or "1"
+        if not deck_url:
+            return None, "Deck URL is required."
+        if len(deck_url) > 2048:
+            return None, "Deck URL is too long."
+        if len(slide_ref) > 120:
+            return None, "Slide reference is too long."
+        return {
+            "deckUrl": deck_url,
+            "forceRefresh": bool(value.get("forceRefresh", False)),
+            "slideRef": slide_ref,
+        }, ""
+
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
@@ -1458,6 +1473,8 @@ def apply_runtime_actions_to_state(
     ui_runtime = dict(state.get("uiRuntime") or {})
     buttons = list(ui_runtime.get("buttons") or [])
     highlights = dict(ui_runtime.get("highlights") or {})
+    slide = ui_runtime.get("slide")
+    slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
 
     if clear_buttons:
@@ -1473,6 +1490,23 @@ def apply_runtime_actions_to_state(
     for action in actions:
         action_type = action.get("type")
         selector = str(action.get("selector", "")).strip()
+
+        if action_type == "gslide":
+            slide = {
+                "cached": bool(action.get("cached", False)),
+                "deckUrl": str(action.get("deckUrl", "")),
+                "imageUrl": str(action.get("imageUrl", "")),
+                "pageId": str(action.get("pageId", "")),
+                "presentationId": str(action.get("presentationId", "")),
+                "slideRef": str(action.get("slideRef", "")),
+            }
+            slide_error = ""
+            continue
+
+        if action_type == "slide_error":
+            slide_error = str(action.get("detail", "Could not load that slide."))
+            slide = None
+            continue
 
         if action_type == "button_choice":
             step_id = str(action.get("stepId", ""))
@@ -1517,6 +1551,8 @@ def apply_runtime_actions_to_state(
 
     ui_runtime["buttons"] = buttons
     ui_runtime["highlights"] = highlights
+    ui_runtime["slide"] = slide
+    ui_runtime["slideError"] = slide_error
     ui_runtime["triggers"] = triggers
     state["uiRuntime"] = ui_runtime
     return state
@@ -1692,6 +1728,56 @@ def run_action_sequence(
                     "type": "highlight_off",
                     "eventId": str(event.id),
                     "selector": selector,
+                    "stepId": step_id,
+                    **metadata,
+                }
+            )
+            continue
+
+        if action_type == EventActionStep.ActionType.GSLIDE:
+            deck_url = render_context_template(
+                config.get("deckUrl", ""),
+                runtime_context,
+            ).strip()
+            slide_ref = render_context_template(
+                config.get("slideRef", "1"),
+                runtime_context,
+            ).strip() or "1"
+            if not deck_url:
+                continue
+
+            try:
+                resolved = resolve_slide_image(
+                    deck_url,
+                    slide_ref,
+                    force_refresh=bool(config.get("forceRefresh", False)),
+                )
+            except (SlideResolutionError, SlideFetchError) as error:
+                actions.append(
+                    {
+                        "type": "slide_error",
+                        "actionType": action_type,
+                        "deckUrl": deck_url,
+                        "detail": str(error),
+                        "eventId": str(event.id),
+                        "slideRef": slide_ref,
+                        "stepId": step_id,
+                        **metadata,
+                    }
+                )
+                continue
+
+            actions.append(
+                {
+                    "type": "gslide",
+                    "actionType": action_type,
+                    "cached": resolved.cache_hit,
+                    "deckUrl": deck_url,
+                    "eventId": str(event.id),
+                    "imageUrl": f"/api/slides/images/{resolved.filename}/",
+                    "pageId": resolved.page_id,
+                    "presentationId": resolved.presentation_id,
+                    "slideRef": slide_ref,
                     "stepId": step_id,
                     **metadata,
                 }

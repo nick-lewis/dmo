@@ -65,6 +65,7 @@ const eventActionOptions = [
   { id: "get_ui_state", label: "Read UI" },
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
+  { id: "gslide", label: "Google slide" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -132,6 +133,7 @@ type EventActionStep = {
     | "get_ui_state"
     | "highlight_on"
     | "highlight_off"
+    | "gslide"
     | "set_ui_trigger"
     | "goto_event"
     | "button_choice";
@@ -864,6 +866,9 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return { selector: ".runtime-notes-toggle" };
   }
+  if (actionType === "gslide") {
+    return { deckUrl: sampleSlideDeckUrl, slideRef: "1" };
+  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: ".runtime-notes-toggle",
@@ -906,6 +911,7 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "get_ui_state") return "Read UI state";
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
+  if (actionType === "gslide") return "Show Google slide";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -996,6 +1002,9 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "highlight_off") {
     return "Remove a highlight from an interface target";
   }
+  if (actionType === "gslide") {
+    return "Display a Google Slides page in the main panel";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -1025,6 +1034,7 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
     return "flow";
   }
   if (actionType === "highlight_on" || actionType === "highlight_off") return "ui";
+  if (actionType === "gslide") return "ui";
   return "speech";
 }
 
@@ -1191,6 +1201,12 @@ function runtimeActionText(action: Record<string, unknown>) {
   if (type === "highlight_on" || type === "highlight_off") {
     return compactRuntimeValue(action.selector, "selector");
   }
+  if (type === "gslide") {
+    return `slide ${compactRuntimeValue(action.slideRef, "1")}`;
+  }
+  if (type === "slide_error") {
+    return compactRuntimeValue(action.detail, "slide unavailable");
+  }
   if (type === "transition_missing") {
     return `missing ${compactRuntimeValue(action.triggersEvent, "event")}`;
   }
@@ -1199,6 +1215,24 @@ function runtimeActionText(action: Record<string, unknown>) {
   }
 
   return compactRuntimeValue(action, type);
+}
+
+function runtimeSlideFromRecord(value: unknown): (ResolvedSlide & { deckUrl: string }) | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const slide = value as Record<string, unknown>;
+  const imageUrl = typeof slide.imageUrl === "string" ? slide.imageUrl : "";
+  if (!imageUrl) return null;
+
+  return {
+    cached: Boolean(slide.cached),
+    deckUrl: typeof slide.deckUrl === "string" ? slide.deckUrl : "",
+    imageUrl,
+    pageId: typeof slide.pageId === "string" ? slide.pageId : "",
+    presentationId:
+      typeof slide.presentationId === "string" ? slide.presentationId : "",
+    slideRef: typeof slide.slideRef === "string" ? slide.slideRef : "1",
+  };
 }
 
 function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
@@ -1222,6 +1256,10 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
   if (step.actionType === "highlight_off") {
     return `clear ${stringConfigValue(step.config, "selector", "target")}`;
+  }
+  if (step.actionType === "gslide") {
+    const slideRef = stringConfigValue(step.config, "slideRef", "1");
+    return `slide ${slideRef || "1"}`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -4387,6 +4425,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </div>
         ) : null}
 
+        {step.actionType === "gslide" ? (
+          <div className="event-context-line event-slide-line">
+            <span className="event-detail-label">DECK</span>
+            <input
+              aria-label="Google Slides deck URL"
+              onChange={(event) => updateConfig("deckUrl", event.target.value)}
+              placeholder="Google Slides URL"
+              type="text"
+              value={stringConfigValue(step.config, "deckUrl")}
+            />
+            <span className="event-detail-label">SLIDE</span>
+            <input
+              aria-label="Google slide reference"
+              onChange={(event) => updateConfig("slideRef", event.target.value)}
+              placeholder="1"
+              type="text"
+              value={stringConfigValue(step.config, "slideRef")}
+            />
+          </div>
+        ) : null}
+
         {step.actionType === "set_ui_trigger" ? (
           <div className="event-context-line">
             <span className="event-detail-label">WHEN</span>
@@ -5078,6 +5137,39 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 placeholder=".runtime-notes-toggle"
                                 type="text"
                                 value={stringConfigValue(step.config, "selector")}
+                              />
+                            </div>
+                          ) : null}
+
+                          {step.actionType === "gslide" ? (
+                            <div className="event-context-line event-slide-line">
+                              <span className="event-detail-label">DECK</span>
+                              <input
+                                aria-label="Google Slides deck URL"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "deckUrl",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="Google Slides URL"
+                                type="text"
+                                value={stringConfigValue(step.config, "deckUrl")}
+                              />
+                              <span className="event-detail-label">SLIDE</span>
+                              <input
+                                aria-label="Google slide reference"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "slideRef",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="1"
+                                type="text"
+                                value={stringConfigValue(step.config, "slideRef")}
                               />
                             </div>
                           ) : null}
@@ -6639,6 +6731,35 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       ...current,
     ].slice(0, 48));
 
+    for (const action of actions) {
+      if (action.type === "gslide") {
+        const slide = runtimeSlideFromRecord(action);
+        if (!slide) continue;
+
+        setResolvedSlide({
+          cached: slide.cached,
+          imageUrl: `${slide.imageUrl}?v=${Date.now()}`,
+          pageId: slide.pageId,
+          presentationId: slide.presentationId,
+          slideRef: slide.slideRef,
+        });
+        setSlideDeckUrl(slide.deckUrl);
+        setSlideError("");
+        setSlideRef(slide.slideRef);
+        setSlideStatus("ready");
+      }
+
+      if (action.type === "slide_error") {
+        setResolvedSlide(null);
+        setSlideError(
+          typeof action.detail === "string"
+            ? action.detail
+            : "Could not load that slide.",
+        );
+        setSlideStatus("error");
+      }
+    }
+
     setRuntimeButtons((current) => {
       let next = [...current];
       for (const action of actions) {
@@ -6724,6 +6845,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         : {};
     const highlightsValue = uiRuntime.highlights;
     const buttonsValue = uiRuntime.buttons;
+    const slideValue = uiRuntime.slide;
+    const slideErrorValue = uiRuntime.slideError;
     const triggersValue = uiRuntime.triggers;
     const nextHighlights: Record<string, RuntimeHighlight> = {};
     const nextButtons: RuntimeButton[] = [];
@@ -6786,6 +6909,31 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setRuntimeButtons(nextButtons);
     setRuntimeHighlights(nextHighlights);
     setRuntimeTriggers(nextTriggers);
+
+    const nextSlide = runtimeSlideFromRecord(slideValue);
+    const nextSlideError =
+      typeof slideErrorValue === "string" ? slideErrorValue : "";
+    if (nextSlide) {
+      setResolvedSlide({
+        cached: nextSlide.cached,
+        imageUrl: nextSlide.imageUrl,
+        pageId: nextSlide.pageId,
+        presentationId: nextSlide.presentationId,
+        slideRef: nextSlide.slideRef,
+      });
+      setSlideDeckUrl(nextSlide.deckUrl);
+      setSlideError("");
+      setSlideRef(nextSlide.slideRef);
+      setSlideStatus("ready");
+    } else if (nextSlideError) {
+      setResolvedSlide(null);
+      setSlideError(nextSlideError);
+      setSlideStatus("error");
+    } else {
+      setResolvedSlide(null);
+      setSlideError("");
+      setSlideStatus("empty");
+    }
   }
 
   function getWorkspaceWidthRange() {
