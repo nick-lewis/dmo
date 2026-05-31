@@ -34,6 +34,8 @@ from .views import (
     create_experience_from_export_payload,
     duplicate_experience_for_user,
     evaluate_classifier_group,
+    EXPERIENCE_EXPORT_FORMAT,
+    EXPERIENCE_EXPORT_VERSION,
     REGISTERED_MAIN_PANEL_APP_IDS,
     run_action_sequence,
     serialize_experience,
@@ -1124,8 +1126,8 @@ class ExperienceContentMaturityTests(TestCase):
     def test_export_import_preserves_rich_experience_shape(self):
         source = self.create_rich_experience()
         payload = {
-            "format": "dlu.experience",
-            "version": 1,
+            "format": EXPERIENCE_EXPORT_FORMAT,
+            "version": EXPERIENCE_EXPORT_VERSION,
             "experience": serialize_experience(source),
         }
 
@@ -1136,11 +1138,27 @@ class ExperienceContentMaturityTests(TestCase):
         self.assertEqual(imported.title, "Rich experience")
         self.assert_rich_experience_shape(imported)
 
+    def test_export_endpoint_returns_versioned_dlu_payload(self):
+        source = self.create_rich_experience()
+        self.client.force_login(self.user)
+
+        response = self.client.get(f"/api/experiences/{source.id}/export/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["format"], EXPERIENCE_EXPORT_FORMAT)
+        self.assertEqual(payload["version"], EXPERIENCE_EXPORT_VERSION)
+        self.assertEqual(payload["experience"]["title"], "Rich experience")
+        self.assertIn(
+            ".dlu-experience.json",
+            response.headers["Content-Disposition"],
+        )
+
     def test_import_normalizes_legacy_realtime_model_alias(self):
         source = self.create_rich_experience()
         payload = {
-            "format": "dlu.experience",
-            "version": 1,
+            "format": EXPERIENCE_EXPORT_FORMAT,
+            "version": EXPERIENCE_EXPORT_VERSION,
             "experience": serialize_experience(source),
         }
         payload["experience"]["tutor"]["realtimeModel"] = "gpt-4o-realtime-preview"
@@ -1154,8 +1172,8 @@ class ExperienceContentMaturityTests(TestCase):
     def test_import_rejects_unregistered_interactive_app_and_rolls_back(self):
         source = self.create_rich_experience()
         payload = {
-            "format": "dlu.experience",
-            "version": 1,
+            "format": EXPERIENCE_EXPORT_FORMAT,
+            "version": EXPERIENCE_EXPORT_VERSION,
             "experience": serialize_experience(source),
         }
         payload["experience"]["events"][0]["steps"][1]["config"][

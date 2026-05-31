@@ -4015,7 +4015,7 @@ def export_experience(request, experience_id):
 
     payload = {
         "exportedAt": timezone.now().isoformat(),
-        "format": "dlu.experience",
+        "format": EXPERIENCE_EXPORT_FORMAT,
         "version": EXPERIENCE_EXPORT_VERSION,
         "experience": serialize_experience(experience),
     }
