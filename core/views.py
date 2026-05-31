@@ -713,6 +713,118 @@ def ensure_tutor_settings(experience):
     return tutor_settings
 
 
+def clone_json(value, fallback):
+    try:
+        return json.loads(json.dumps(value if value is not None else fallback))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def duplicate_experience_for_user(source, user):
+    source_tutor = ensure_tutor_settings(source)
+    copy_title = f"{source.title} copy"[:160]
+
+    with transaction.atomic():
+        duplicate = Experience.objects.create(
+            user=user,
+            title=copy_title,
+            slug=unique_experience_slug(user, copy_title),
+            description=source.description,
+        )
+        duplicate_tutor = ensure_tutor_settings(duplicate)
+        duplicate_tutor.assistant_name = source_tutor.assistant_name
+        duplicate_tutor.avatar_path = source_tutor.avatar_path
+        duplicate_tutor.realtime_model = source_tutor.realtime_model
+        duplicate_tutor.classification_model = source_tutor.classification_model
+        duplicate_tutor.voice = source_tutor.voice
+        duplicate_tutor.system_prompt = source_tutor.system_prompt
+        duplicate_tutor.voice_instructions = source_tutor.voice_instructions
+        duplicate_tutor.script_action_offset_ms = source_tutor.script_action_offset_ms
+        duplicate_tutor.save()
+
+        for source_event in source.events.order_by("sort_order", "created_at"):
+            duplicate_event = ExperienceEvent.objects.create(
+                experience=duplicate,
+                title=source_event.title,
+                slug=source_event.slug,
+                description=source_event.description,
+                chat_instructions=source_event.chat_instructions,
+                is_start=source_event.is_start,
+                sort_order=source_event.sort_order,
+            )
+            for source_step in source_event.steps.order_by("sort_order", "created_at"):
+                EventActionStep.objects.create(
+                    event=duplicate_event,
+                    action_type=source_step.action_type,
+                    label=source_step.label,
+                    config=clone_json(source_step.config, {}),
+                    condition=clone_json(source_step.condition, {}),
+                    enabled=source_step.enabled,
+                    sort_order=source_step.sort_order,
+                )
+            for source_tool in source_event.chat_tools.order_by(
+                "sort_order",
+                "created_at",
+            ):
+                EventChatTool.objects.create(
+                    event=duplicate_event,
+                    name=source_tool.name,
+                    description=source_tool.description,
+                    parameters=clone_json(source_tool.parameters, {}),
+                    handler_actions=clone_json(source_tool.handler_actions, []),
+                    triggers_event=source_tool.triggers_event,
+                    save_argument=source_tool.save_argument,
+                    save_context_key=source_tool.save_context_key,
+                    enabled=source_tool.enabled,
+                    sort_order=source_tool.sort_order,
+                )
+            for source_check in source_event.conversation_checks.order_by(
+                "sort_order",
+                "created_at",
+            ):
+                EventConversationCheck.objects.create(
+                    event=duplicate_event,
+                    title=source_check.title,
+                    instructions=source_check.instructions,
+                    result_context_key=source_check.result_context_key,
+                    handler_actions=clone_json(source_check.handler_actions, []),
+                    triggers_event=source_check.triggers_event,
+                    enabled=source_check.enabled,
+                    sort_order=source_check.sort_order,
+                )
+            for source_group in source_event.classifier_groups.order_by(
+                "sort_order",
+                "created_at",
+            ):
+                duplicate_group = EventClassifierGroup.objects.create(
+                    event=duplicate_event,
+                    title=source_group.title,
+                    instructions=source_group.instructions,
+                    result_context_key=source_group.result_context_key,
+                    handler_actions=clone_json(source_group.handler_actions, []),
+                    triggers_event=source_group.triggers_event,
+                    condition=clone_json(source_group.condition, {}),
+                    enabled=source_group.enabled,
+                    sort_order=source_group.sort_order,
+                )
+                for source_classifier in source_group.classifiers.order_by(
+                    "sort_order",
+                    "created_at",
+                ):
+                    EventClassifier.objects.create(
+                        group=duplicate_group,
+                        name=source_classifier.name,
+                        prompt=source_classifier.prompt,
+                        schema=clone_json(source_classifier.schema, {}),
+                        model=source_classifier.model,
+                        condition=clone_json(source_classifier.condition, {}),
+                        enabled=source_classifier.enabled,
+                        sort_order=source_classifier.sort_order,
+                    )
+
+    return duplicate
+
+
 def ensure_default_event_step(event):
     if event.steps.exists():
         return event.steps.order_by("sort_order", "created_at").first()
@@ -3273,6 +3385,20 @@ def update_experience(request, experience_id):
 
     experience.save()
     return JsonResponse({"experience": serialize_experience(experience)})
+
+
+@require_POST
+def duplicate_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    source = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not source:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    duplicate = duplicate_experience_for_user(source, request.user)
+    return JsonResponse({"experience": serialize_experience(duplicate)}, status=201)
 
 
 @require_http_methods(["GET", "POST"])

@@ -2357,6 +2357,7 @@ function ExperienceHome() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [duplicatingExperienceId, setDuplicatingExperienceId] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
   const autosaveTimers = useRef<Record<string, number>>({});
   const autosaveVersions = useRef<Record<string, number>>({});
@@ -2560,6 +2561,38 @@ function ExperienceHome() {
     window.location.assign(experienceEditPath(experience.id));
   }
 
+  async function duplicateExperience(experience: Experience) {
+    const didSave = await flushExperienceAutosave(experience);
+    if (!didSave) return;
+
+    setDuplicatingExperienceId(experience.id);
+    setError("");
+
+    try {
+      const payload = await apiFetch<{ experience: Experience }>(
+        `/api/experiences/${experience.id}/duplicate/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setExperiences((current) => [payload.experience, ...current]);
+      setDrafts((current) => ({
+        ...current,
+        [payload.experience.id]: draftFromExperience(payload.experience),
+      }));
+      writeSelectedExperienceId(payload.experience.id);
+    } catch (duplicateError) {
+      setError(
+        duplicateError instanceof Error
+          ? duplicateError.message
+          : "Could not duplicate experience.",
+      );
+    } finally {
+      setDuplicatingExperienceId("");
+    }
+  }
+
   async function deleteExperience(experience: Experience) {
     const didConfirm = window.confirm(`Delete "${experience.title}"?`);
     if (!didConfirm) return;
@@ -2737,6 +2770,16 @@ function ExperienceHome() {
                   />
                 </div>
                 <div className="experience-row-actions">
+                  <button
+                    className="header-action secondary"
+                    disabled={duplicatingExperienceId === experience.id}
+                    onClick={() => void duplicateExperience(experience)}
+                    type="button"
+                  >
+                    {duplicatingExperienceId === experience.id
+                      ? "Duplicating..."
+                      : "Duplicate"}
+                  </button>
                   <button
                     className="header-action secondary"
                     onClick={() => void editExperience(experience)}
