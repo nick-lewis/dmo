@@ -1504,6 +1504,27 @@ button {
   grid-template-columns: auto minmax(160px, 1fr);
 }
 
+.script-action-editor {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.script-marker-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.script-marker-bar .event-text-button {
+  min-height: 24px;
+  padding: 2px 7px;
+  font-size: 0.66rem;
+  color: color-mix(in srgb, var(--page-ink) 76%, var(--accent-2));
+  background: transparent;
+}
+
 .event-detail-label,
 .event-inline-operator {
   color: color-mix(in srgb, var(--muted-ink) 48%, transparent);

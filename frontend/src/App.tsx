@@ -74,6 +74,43 @@ const eventActionOptions = [
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
 ] as const;
+const scriptMarkerOptions = [
+  {
+    label: "Slide",
+    marker: "[gslide: 1]",
+    title: "Insert a timed Google slide change at the cursor.",
+  },
+  {
+    label: "Highlight",
+    marker: "[highlight_on: .runtime-notes-toggle, rgba(59, 130, 246, 0.6)]",
+    title: "Insert a timed highlight at the cursor.",
+  },
+  {
+    label: "Clear highlight",
+    marker: "[highlight_off: .runtime-notes-toggle]",
+    title: "Clear a highlight at this point in the script.",
+  },
+  {
+    label: "App",
+    marker: "[interactive: delivery_data, table]",
+    title: "Mount a main-panel app at this point in the script.",
+  },
+  {
+    label: "Update app",
+    marker: "[interactive_update: delivery_data, graph]",
+    title: "Update the current main-panel app at this point in the script.",
+  },
+  {
+    label: "Clear app",
+    marker: "[interactive_clear]",
+    title: "Clear the main-panel app at this point in the script.",
+  },
+  {
+    label: "Pause",
+    marker: "[pause: 500]",
+    title: "Insert a timed pause marker.",
+  },
+] as const;
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 const scriptMarkerPattern =
@@ -4957,27 +4994,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         </div>
 
         {step.actionType === "script" ? (
-          <>
-            <textarea
-              aria-label="Speech text"
-              className="event-script-textarea"
-              onChange={(event) => updateConfig("text", event.target.value)}
-              onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-              placeholder="What the agent says... [gslide: 1]"
-              ref={resizeTextareaToContent}
-              value={stringConfigValue(step.config, "text")}
-            />
-            <div className="event-context-line single-value script-deck-line">
-              <span className="event-detail-label">DECK</span>
-              <input
-                aria-label="Script Google Slides deck URL"
-                onChange={(event) => updateConfig("deckUrl", event.target.value)}
-                placeholder="Google Slides URL"
-                type="text"
-                value={stringConfigValue(step.config, "deckUrl")}
-              />
-            </div>
-          </>
+          <ScriptActionEditor
+            deckUrl={stringConfigValue(step.config, "deckUrl")}
+            onDeckUrlChange={(value) => updateConfig("deckUrl", value)}
+            onTextChange={(value) => updateConfig("text", value)}
+            text={stringConfigValue(step.config, "text")}
+          />
         ) : null}
 
         {step.actionType === "set_context" ? (
@@ -5697,44 +5719,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           </div>
 
                           {step.actionType === "script" ? (
-                            <>
-                              <textarea
-                                aria-label="Speech text"
-                                className="event-script-textarea"
-                                onChange={(event) =>
-                                  updateEventStepConfig(
-                                    step.id,
-                                    "text",
-                                    event.target.value,
-                                  )
-                                }
-                                onInput={(event) =>
-                                  resizeTextareaToContent(event.currentTarget)
-                                }
-                                placeholder="What the agent says... [gslide: 1]"
-                                ref={resizeTextareaToContent}
-                                value={stringConfigValue(step.config, "text")}
-                              />
-                              <div className="event-context-line single-value script-deck-line">
-                                <span className="event-detail-label">DECK</span>
-                                <input
-                                  aria-label="Script Google Slides deck URL"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "deckUrl",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="Google Slides URL"
-                                  type="text"
-                                  value={stringConfigValue(
-                                    step.config,
-                                    "deckUrl",
-                                  )}
-                                />
-                              </div>
-                            </>
+                            <ScriptActionEditor
+                              deckUrl={stringConfigValue(step.config, "deckUrl")}
+                              onDeckUrlChange={(value) =>
+                                updateEventStepConfig(step.id, "deckUrl", value)
+                              }
+                              onTextChange={(value) =>
+                                updateEventStepConfig(step.id, "text", value)
+                              }
+                              text={stringConfigValue(step.config, "text")}
+                            />
                           ) : null}
 
                           {step.actionType === "set_context" ? (
@@ -9873,6 +9867,84 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
     <article aria-label={ariaLabel} className={`panel-window panel-${density}`} style={style}>
       <div className="panel-body">{children}</div>
     </article>
+  );
+}
+
+function ScriptActionEditor({
+  deckUrl,
+  onDeckUrlChange,
+  onTextChange,
+  text,
+}: {
+  deckUrl: string;
+  onDeckUrlChange: (value: string) => void;
+  onTextChange: (value: string) => void;
+  text: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    resizeTextareaToContent(textareaRef.current);
+  }, [text]);
+
+  function insertMarker(marker: string) {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? text.length;
+    const end = textarea?.selectionEnd ?? start;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const lead = before && !/\s$/.test(before) ? " " : "";
+    const tail = after && !/^\s/.test(after) ? " " : "";
+    const inserted = `${lead}${marker}${tail}`;
+    const nextText = `${before}${inserted}${after}`;
+    const nextCursor = before.length + inserted.length;
+
+    onTextChange(nextText);
+
+    window.requestAnimationFrame(() => {
+      const nextTextarea = textareaRef.current;
+      if (!nextTextarea) return;
+      nextTextarea.focus();
+      nextTextarea.setSelectionRange(nextCursor, nextCursor);
+      resizeTextareaToContent(nextTextarea);
+    });
+  }
+
+  return (
+    <div className="script-action-editor">
+      <div className="script-marker-bar" aria-label="Insert timed script action">
+        {scriptMarkerOptions.map((option) => (
+          <button
+            className="event-text-button"
+            key={option.marker}
+            onClick={() => insertMarker(option.marker)}
+            title={option.title}
+            type="button"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        aria-label="Speech text"
+        className="event-script-textarea"
+        onChange={(event) => onTextChange(event.target.value)}
+        onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+        placeholder="What the agent says... [gslide: 1]"
+        ref={textareaRef}
+        value={text}
+      />
+      <div className="event-context-line single-value script-deck-line">
+        <span className="event-detail-label">DECK</span>
+        <input
+          aria-label="Script Google Slides deck URL"
+          onChange={(event) => onDeckUrlChange(event.target.value)}
+          placeholder="Google Slides URL"
+          type="text"
+          value={deckUrl}
+        />
+      </div>
+    </div>
   );
 }
 
