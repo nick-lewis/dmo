@@ -11068,6 +11068,17 @@ function RuntimeInspectorPanel({
     0,
     18,
   );
+  const conversationLogicEntries = runtimeDebugEntries(runtimeDebug.recentActions)
+    .filter((entry) =>
+      [
+        "classifier_group_result",
+        "classifier_group_skipped",
+        "classifier_result",
+        "classifier_skipped",
+        "conversation_check_result",
+      ].includes(entry.type),
+    )
+    .slice(0, 10);
   const transitionEntries = runtimeDebugEntries(runtimeDebug.transitions).slice(
     0,
     12,
@@ -11224,6 +11235,32 @@ function RuntimeInspectorPanel({
                   </code>
                 </div>
               ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Conversation logic</h2>
+          {conversationLogicEntries.length ? (
+            <div className="runtime-action-log">
+              {conversationLogicEntries.map((entry, index) => {
+                const detailsText = runtimeTraceDetailsText(entry.details);
+                return (
+                  <div
+                    className="runtime-action-row"
+                    key={`${entry.at}-${entry.type}-${index}`}
+                  >
+                    <span>{runtimeTraceTime(entry.at)}</span>
+                    <strong>{entry.type}</strong>
+                    <p>{entry.summary}</p>
+                    {detailsText ? (
+                      <code className="runtime-action-detail">{detailsText}</code>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p className="runtime-inspector-empty">---</p>
