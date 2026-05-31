@@ -11429,6 +11429,25 @@ function RuntimeInspectorPanel({
   const timedAudioMessages = cachedAudioMessages.filter(
     (audio) => (audio?.scriptWords?.length ?? 0) > 0,
   );
+  const tutor = experience?.tutor ?? null;
+  const promptContextRows = [
+    {
+      label: "Tutor system",
+      value: tutor?.systemPrompt ?? "",
+    },
+    {
+      label: "Event chat",
+      value: currentEvent?.chatInstructions ?? "",
+    },
+    {
+      label: "Voice/personality",
+      value: tutor?.voiceInstructions ?? "",
+    },
+    {
+      label: "Classification model",
+      value: tutor?.classificationModel ?? "",
+    },
+  ].filter((row) => row.value.trim());
   const currentEventLabel =
     currentEvent?.title || currentEventSlug || (session ? "Start" : "---");
   const events = experience?.events ?? [];
@@ -11590,6 +11609,27 @@ function RuntimeInspectorPanel({
                   </div>
                 );
               })}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Prompt context</h2>
+          {promptContextRows.length ? (
+            <div className="runtime-inspector-list">
+              {promptContextRows.map((row) => (
+                <div className="runtime-inspector-row" key={row.label}>
+                  <span>{row.label}</span>
+                  <code
+                    className="runtime-inspector-value"
+                    title={fullRuntimeValue(row.value)}
+                  >
+                    <span>{compactRuntimeValue(row.value)}</span>
+                  </code>
+                </div>
+              ))}
             </div>
           ) : (
             <p className="runtime-inspector-empty">---</p>
