@@ -10245,7 +10245,7 @@ function RuntimeInspectorPanel({
         </section>
 
         <section className="runtime-inspector-section">
-          <h2>Waiting</h2>
+          <h2>Pending triggers</h2>
           <div className="runtime-inspector-list">
             {triggers.map((trigger) => (
               <div
@@ -10261,10 +10261,19 @@ function RuntimeInspectorPanel({
                 className="runtime-inspector-row"
                 key={`${button.stepId}-${button.triggersEvent}`}
               >
-                <span>{button.label}</span>
+                <span>button: {button.label}</span>
                 <code>{button.triggersEvent}</code>
               </div>
             ))}
+          </div>
+          {!triggers.length && !buttons.length ? (
+            <p className="runtime-inspector-empty">---</p>
+          ) : null}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Highlights</h2>
+          <div className="runtime-inspector-list">
             {highlightEntries.map((highlight) => (
               <div
                 className="runtime-inspector-row"
@@ -10275,7 +10284,7 @@ function RuntimeInspectorPanel({
               </div>
             ))}
           </div>
-          {!triggers.length && !buttons.length && !highlightEntries.length ? (
+          {!highlightEntries.length ? (
             <p className="runtime-inspector-empty">---</p>
           ) : null}
         </section>
