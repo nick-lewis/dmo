@@ -11873,6 +11873,14 @@ function scriptAudioMetadataText(item: ScriptAudioItem) {
   return pieces.length ? pieces.join(" / ") : "---";
 }
 
+function scriptAudioItemIsReady(item: ScriptAudioItem) {
+  return item.cached && item.wordsCached;
+}
+
+function scriptAudioItemNeedsGeneration(item: ScriptAudioItem) {
+  return item.canGenerate && !scriptAudioItemIsReady(item);
+}
+
 function ScriptAudioPanel({
   error,
   isBusy,
@@ -11899,9 +11907,11 @@ function ScriptAudioPanel({
   status: "idle" | "loading" | "generating";
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const readyCount = items.filter((item) => item.cached && item.wordsCached).length;
+  const readyCount = items.filter(scriptAudioItemIsReady).length;
   const audioCount = items.filter((item) => item.cached).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
+  const generatableCount = items.filter((item) => item.canGenerate).length;
+  const missingCount = items.filter(scriptAudioItemNeedsGeneration).length;
   const timingCount = items.filter((item) => item.wordsCached).length;
   const statusLabel =
     status === "generating"
@@ -11920,16 +11930,20 @@ function ScriptAudioPanel({
         <div className="script-audio-actions">
           <button
             className="header-action"
-            disabled={isBusy || !items.some((item) => item.canGenerate)}
+            disabled={isBusy || !missingCount}
             onClick={onGenerateAll}
-            title="Generate audio and word timing for scripts that are missing either artifact."
+            title={
+              missingCount
+                ? "Generate only scripts missing audio or word timing."
+                : "No static scripts are missing audio or word timing."
+            }
             type="button"
           >
             Generate missing
           </button>
           <button
             className="header-action secondary"
-            disabled={isBusy || !items.some((item) => item.canGenerate)}
+            disabled={isBusy || !generatableCount}
             onClick={onRegenerateAll}
             title="Regenerate every static script's audio and word timing from the current tutor settings."
             type="button"
@@ -11949,6 +11963,7 @@ function ScriptAudioPanel({
 
       <div className="script-audio-summary">
         <span>{readyCount}/{items.length} ready</span>
+        {missingCount ? <span>{missingCount} missing</span> : null}
         <span>{audioCount}/{items.length} audio</span>
         <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
           {timingCount}/{items.length} timed subtitles
@@ -11965,6 +11980,8 @@ function ScriptAudioPanel({
         <div className="script-audio-list">
           {items.map((item) => {
             const isPlaying = playingId === item.id;
+            const isReady = scriptAudioItemIsReady(item);
+            const needsGeneration = scriptAudioItemNeedsGeneration(item);
             const preview = item.preview || "---";
             return (
               <div
@@ -12023,20 +12040,22 @@ function ScriptAudioPanel({
                 </button>
                 <button
                   aria-label={
-                    item.cached
+                    isReady
                       ? "Regenerate script audio and timing"
-                      : "Generate script audio and timing"
+                      : item.cached
+                        ? "Generate missing word timing"
+                        : "Generate script audio and timing"
                   }
                   className="event-icon-button"
                   disabled={isBusy || !item.canGenerate}
                   onClick={() =>
-                    item.cached ? onRegenerateOne(item.id) : onGenerateOne(item.id)
+                    isReady ? onRegenerateOne(item.id) : onGenerateOne(item.id)
                   }
                   title={
-                    item.cached
+                    isReady
                       ? "Regenerate this script's audio and timing"
-                      : item.canGenerate
-                        ? "Generate this script's audio and timing"
+                      : needsGeneration
+                        ? "Generate this script's missing audio or word timing"
                         : item.generationReason ||
                           "Dynamic scripts cannot be pregenerated yet."
                   }
