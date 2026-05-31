@@ -83,6 +83,7 @@ DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
+INITIAL_SCRIPT_CUE_PROGRESS = 0.001
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
 TOOL_DISPLAY_TITLE_KEY = "x-dluDisplayTitle"
 SCRIPT_AUDIO_MESSAGE_SOURCES = {
@@ -651,6 +652,7 @@ def get_current_session(user, experience=None):
 
 
 def session_payload(session):
+    hydrate_initial_script_runtime_state(session)
     return {
         "session": serialize_session(session),
         "messages": [serialize_message(message) for message in session.messages.all()],
@@ -1722,6 +1724,50 @@ def apply_runtime_actions_to_state(
     ui_runtime["triggers"] = triggers
     state["uiRuntime"] = ui_runtime
     return state
+
+
+def initial_script_cue_actions_from_messages(messages):
+    actions = []
+    for message in messages:
+        metadata = message.metadata or {}
+        cues = metadata.get("scriptCues", [])
+        if not isinstance(cues, list):
+            continue
+
+        for cue in cues:
+            if not isinstance(cue, dict):
+                continue
+            action = cue.get("action")
+            if not isinstance(action, dict):
+                continue
+
+            try:
+                progress = float(cue.get("progress", 0) or 0)
+            except (TypeError, ValueError):
+                progress = 0
+
+            if progress <= INITIAL_SCRIPT_CUE_PROGRESS:
+                actions.append(action)
+    return actions
+
+
+def hydrate_initial_script_runtime_state(session):
+    state = dict(session.runtime_state or {})
+    ui_runtime = dict(state.get("uiRuntime") or {})
+    if ui_runtime.get("slide") or ui_runtime.get("slideError"):
+        return
+
+    messages = list(session.messages.order_by("sequence"))
+    actions = initial_script_cue_actions_from_messages(messages)
+    if not actions:
+        return
+
+    next_state = apply_runtime_actions_to_state(state, actions)
+    if next_state == session.runtime_state:
+        return
+
+    session.runtime_state = next_state
+    session.save(update_fields=["runtime_state", "updated_at"])
 
 
 def run_action_sequence(
