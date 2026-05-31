@@ -1173,12 +1173,27 @@ button {
 }
 
 .event-graph-link-row {
+  width: 100%;
   padding: 4px 0;
   border-top: 1px solid color-mix(in srgb, var(--panel-soft-border) 46%, transparent);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
 }
 
 .event-graph-link-row.is-unresolved strong {
   color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+}
+
+.event-graph-link-row.is-clickable {
+  cursor: pointer;
+}
+
+.event-graph-link-row.is-clickable:hover strong {
+  color: color-mix(in srgb, var(--accent-2) 84%, var(--page-ink));
 }
 
 .event-graph-link-group p {

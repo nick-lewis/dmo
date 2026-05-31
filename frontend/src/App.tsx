@@ -11506,6 +11506,7 @@ function EventGraphView({
           )
           .map((link) => ({
             ...link,
+            sourceEventId: event.id,
             sourceEvent: event.title || event.slug,
           })),
       )
@@ -11585,11 +11586,13 @@ function EventGraphView({
             empty="No outgoing routes"
             events={sortedEvents}
             links={selectedOutgoingLinks}
+            onSelectEvent={onSelectEvent}
             title="Outgoing"
           />
           <EventGraphIncomingList
             empty={selectedEvent.isStart ? "Start event" : "No incoming routes"}
             links={incomingLinks}
+            onSelectEvent={onSelectEvent}
             title="Incoming"
           />
           {unresolvedLinks.length ? (
@@ -11597,6 +11600,7 @@ function EventGraphView({
               empty=""
               events={sortedEvents}
               links={unresolvedLinks}
+              onSelectEvent={onSelectEvent}
               title="Unresolved"
               unresolved
             />
@@ -11611,12 +11615,14 @@ function EventGraphLinkList({
   empty,
   events,
   links,
+  onSelectEvent,
   title,
   unresolved = false,
 }: {
   empty: string;
   events: ExperienceEvent[];
   links: EventOutgoingLink[];
+  onSelectEvent: (eventId: string) => void;
   title: string;
   unresolved?: boolean;
 }) {
@@ -11624,17 +11630,43 @@ function EventGraphLinkList({
     <div className="event-graph-link-group">
       <span>{title}</span>
       {links.length ? (
-        links.map((link, index) => (
-          <div
-            className={`event-graph-link-row ${unresolved ? "is-unresolved" : ""}`}
-            key={`${link.slug}-${link.source}-${index}`}
-          >
-            <strong>{eventTitleForTrigger(events, link.slug)}</strong>
-            <small>
-              {link.kind} / {link.source}
-            </small>
-          </div>
-        ))
+        links.map((link, index) => {
+          const target = events.find(
+            (event) => event.slug === link.slug || event.id === link.slug,
+          );
+          const className = [
+            "event-graph-link-row",
+            unresolved || !target ? "is-unresolved" : "",
+            target ? "is-clickable" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+
+          if (!target) {
+            return (
+              <div className={className} key={`${link.slug}-${link.source}-${index}`}>
+                <strong>{link.slug || "Missing event"}</strong>
+                <small>
+                  {link.kind} / {link.source}
+                </small>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              className={className}
+              key={`${link.slug}-${link.source}-${index}`}
+              onClick={() => onSelectEvent(target.id)}
+              type="button"
+            >
+              <strong>{target.title || target.slug}</strong>
+              <small>
+                {link.kind} / {link.source}
+              </small>
+            </button>
+          );
+        })
       ) : (
         <p>{empty}</p>
       )}
@@ -11645,10 +11677,12 @@ function EventGraphLinkList({
 function EventGraphIncomingList({
   empty,
   links,
+  onSelectEvent,
   title,
 }: {
   empty: string;
-  links: Array<EventOutgoingLink & { sourceEvent: string }>;
+  links: Array<EventOutgoingLink & { sourceEvent: string; sourceEventId: string }>;
+  onSelectEvent: (eventId: string) => void;
   title: string;
 }) {
   return (
@@ -11656,15 +11690,17 @@ function EventGraphIncomingList({
       <span>{title}</span>
       {links.length ? (
         links.map((link, index) => (
-          <div
-            className="event-graph-link-row"
+          <button
+            className="event-graph-link-row is-clickable"
             key={`${link.sourceEvent}-${link.slug}-${link.source}-${index}`}
+            onClick={() => onSelectEvent(link.sourceEventId)}
+            type="button"
           >
             <strong>{link.sourceEvent}</strong>
             <small>
               {link.kind} / {link.source}
             </small>
-          </div>
+          </button>
         ))
       ) : (
         <p>{empty}</p>
