@@ -1524,22 +1524,28 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
 }
 
 function eventTransitionStats(events: ExperienceEvent[], event: ExperienceEvent) {
-  const outgoingSlugs = eventOutgoingSlugs(event);
-  const incomingCount = events.filter((candidate) => {
-    if (candidate.id === event.id) return false;
-    return eventOutgoingSlugs(candidate).some(
-      (slug) => slug === event.slug || slug === event.id,
+  const outgoingLinks = eventOutgoingLinks(event);
+  const outgoingSlugs = [...new Set(outgoingLinks.map((link) => link.slug))];
+  const incomingCount = events.reduce((total, candidate) => {
+    if (candidate.id === event.id) return total;
+    return (
+      total +
+      eventOutgoingLinks(candidate).filter(
+        (link) => link.slug === event.slug || link.slug === event.id,
+      ).length
     );
-  }).length;
-  const unresolvedCount = outgoingSlugs.filter(
-    (slug) =>
-      !events.some((candidate) => candidate.slug === slug || candidate.id === slug),
+  }, 0);
+  const unresolvedCount = outgoingLinks.filter(
+    (link) =>
+      !events.some(
+        (candidate) => candidate.slug === link.slug || candidate.id === link.slug,
+      ),
   ).length;
 
   return {
     incomingCount,
     isUnlinked: !event.isStart && incomingCount === 0,
-    outgoingCount: outgoingSlugs.length,
+    outgoingCount: outgoingLinks.length,
     unresolvedCount,
   };
 }
@@ -12067,9 +12073,25 @@ function EventGraphView({
   const statsByEventId = new Map(
     sortedEvents.map((event) => [event.id, eventTransitionStats(events, event)]),
   );
-  const orphanCount = sortedEvents.filter(
+  const orphanEvents = sortedEvents.filter(
     (event) => statsByEventId.get(event.id)?.isUnlinked,
-  ).length;
+  );
+  const unresolvedRoutes = sortedEvents.flatMap((event) =>
+    eventOutgoingLinks(event)
+      .filter(
+        (link) =>
+          !sortedEvents.some(
+            (candidate) =>
+              candidate.slug === link.slug || candidate.id === link.slug,
+          ),
+      )
+      .map((link) => ({
+        ...link,
+        sourceEventId: event.id,
+        sourceEvent: event.title || event.slug,
+      })),
+  );
+  const orphanCount = orphanEvents.length;
   const unresolvedRouteCount = sortedEvents.reduce(
     (total, event) => total + (statsByEventId.get(event.id)?.unresolvedCount ?? 0),
     0,
@@ -12150,6 +12172,34 @@ function EventGraphView({
           <span>0 unresolved</span>
         )}
       </div>
+      {orphanEvents.length || unresolvedRoutes.length ? (
+        <div className="event-graph-issues" aria-label="Graph issues">
+          {orphanEvents.map((event) => (
+            <button
+              className="event-graph-issue"
+              key={`orphan-${event.id}`}
+              onClick={() => onSelectEvent(event.id)}
+              type="button"
+            >
+              <strong>Orphaned</strong>
+              <span>{event.title || event.slug}</span>
+            </button>
+          ))}
+          {unresolvedRoutes.map((link, index) => (
+            <button
+              className="event-graph-issue is-unresolved"
+              key={`missing-${link.sourceEventId}-${link.slug}-${index}`}
+              onClick={() => onSelectEvent(link.sourceEventId)}
+              type="button"
+            >
+              <strong>Missing target</strong>
+              <span>
+                {link.sourceEvent} {"->"} {link.slug}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="event-graph-nodes">
         {sortedEvents.map((event) => {
           const stats =

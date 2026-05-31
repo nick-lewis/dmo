@@ -1077,6 +1077,50 @@ button {
   color: color-mix(in srgb, var(--accent-5) 66%, var(--page-ink));
 }
 
+.event-graph-issues {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+  padding: 7px 9px 0;
+}
+
+.event-graph-issue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-5) 22%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: inherit;
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+  text-align: left;
+}
+
+.event-graph-issue strong {
+  color: color-mix(in srgb, var(--accent-5) 72%, var(--page-ink));
+  font-size: 0.62rem;
+  font-weight: 840;
+  white-space: nowrap;
+}
+
+.event-graph-issue span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-graph-issue:hover span,
+.event-graph-issue:hover strong {
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+}
+
 .event-graph-nodes {
   position: relative;
   z-index: 1;
