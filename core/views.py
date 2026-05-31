@@ -261,7 +261,10 @@ def build_interactive_action(
         "type": "interactive_update" if update else "interactive",
         **metadata,
     }
-    triggers_event = str(config.get("triggersEvent", "")).strip()
+    triggers_event = render_context_template(
+        config.get("triggersEvent", ""),
+        runtime_context,
+    ).strip()
     if triggers_event:
         action["triggersEvent"] = triggers_event
     return action
@@ -324,6 +327,9 @@ def resolve_script_marker_action(marker, config, runtime_context):
                 "mode": mode,
                 "prompt": config.get("interactivePrompt", ""),
                 "title": config.get("interactiveTitle", ""),
+                "triggersEvent": (
+                    args[2] if len(args) > 2 else config.get("triggersEvent", "")
+                ),
             },
             runtime_context=runtime_context,
             update=marker_type == "interactive_update",

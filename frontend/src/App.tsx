@@ -94,7 +94,8 @@ const scriptMarkerOptions = [
   {
     label: "App",
     marker: "[interactive: delivery_data, table]",
-    title: "Mount a main-panel app at this point in the script.",
+    title:
+      "Mount a registered app. Add a third argument to route on submit, like [interactive: delivery_data, table, next_event].",
   },
   {
     label: "Update app",
@@ -610,6 +611,8 @@ type ScriptAudioPayload = {
 
 type ScriptMarkerInstance = {
   args: string;
+  argList: string[];
+  detail: string;
   end: number;
   id: string;
   label: string;
@@ -784,6 +787,49 @@ function scriptMarkerLabel(type: string) {
   return labels[type] ?? type;
 }
 
+function parseScriptMarkerArgs(argsText: string) {
+  if (!argsText.trim()) return [];
+
+  const args: string[] = [];
+  let current = "";
+  let parenDepth = 0;
+  for (const char of argsText) {
+    if (char === "(") parenDepth += 1;
+    if (char === ")" && parenDepth > 0) parenDepth -= 1;
+
+    if (char === "," && parenDepth === 0) {
+      const arg = current.trim();
+      if (arg) args.push(arg);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  const arg = current.trim();
+  if (arg) args.push(arg);
+  return args;
+}
+
+function scriptMarkerDetail(type: string, args: string, argList: string[]) {
+  if (type === "interactive" || type === "interactive_update") {
+    const appId = argList[0] ?? "";
+    const view = argList[1] ?? "";
+    const destination = argList[2] ?? "";
+    const appDefinition = getMainPanelAppDefinition(appId);
+    const appLabel = appDefinition?.label ?? appId;
+    const viewLabel =
+      appDefinition?.views.find((item) => item.id === view)?.label ?? view;
+    const appDetail = [appLabel, viewLabel].filter(Boolean).join(" / ");
+    if (destination) return `${appDetail || "app"} -> ${destination}`;
+    return appDetail || args;
+  }
+
+  if (type === "interactive_clear") return "";
+  return args;
+}
+
 function parseScriptMarkerInstances(text: string) {
   const markers: ScriptMarkerInstance[] = [];
   const pattern = new RegExp(scriptMarkerParsePattern);
@@ -793,9 +839,12 @@ function parseScriptMarkerInstances(text: string) {
     const marker = match[0];
     const type = (match[1] ?? "").toLowerCase();
     const args = (match[2] ?? "").trim();
+    const argList = parseScriptMarkerArgs(args);
     const spokenBefore = text.slice(0, start).replace(scriptMarkerPattern, " ");
     markers.push({
       args,
+      argList,
+      detail: scriptMarkerDetail(type, args, argList),
       end: start + marker.length,
       id: `${start}-${marker}`,
       label: scriptMarkerLabel(type),
@@ -10899,7 +10948,7 @@ function ScriptActionEditor({
                   <small>
                     {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
                   </small>
-                  {marker.args ? <code>{marker.args}</code> : null}
+                  {marker.detail ? <code>{marker.detail}</code> : null}
                 </button>
                 <button
                   aria-label={`Remove ${marker.label} marker`}
