@@ -677,6 +677,14 @@ type SlideRecachePayload = {
   totalTargets: number;
 };
 
+type ScriptEditorViewMode = "text" | "chips" | "slides";
+
+type ScriptSlidePreview = {
+  detail?: string;
+  imageUrl?: string;
+  status: "error" | "idle" | "loading" | "ready";
+};
+
 type ScriptMarkerInstance = {
   args: string;
   argList: string[];
@@ -855,6 +863,28 @@ function scriptMarkerLabel(type: string) {
     slide: "Slide",
   };
   return labels[type] ?? type;
+}
+
+function scriptMarkerIcon(type: string) {
+  const icons: Record<string, string> = {
+    add_note: "N",
+    chat_off: "C-",
+    chat_on: "C+",
+    gslide: "S",
+    highlight: "H",
+    highlight_off: "H-",
+    highlight_on: "H",
+    interactive: "A",
+    interactive_clear: "A-",
+    interactive_update: "A+",
+    overlay: "O",
+    overlay_off: "O-",
+    pause: "P",
+    play_sound: "AU",
+    show_image: "I",
+    slide: "S",
+  };
+  return icons[type] ?? "M";
 }
 
 function parseScriptMarkerArgs(argsText: string) {
@@ -7200,7 +7230,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         {step.actionType === "script" ? (
           <ScriptActionEditor
             deckUrl={stringConfigValue(step.config, "deckUrl")}
-            events={editorEvents}
             onDeckUrlChange={(value) => updateConfig("deckUrl", value)}
             onTextChange={(value) => updateConfig("text", value)}
             text={stringConfigValue(step.config, "text")}
@@ -8045,7 +8074,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           {step.actionType === "script" ? (
                             <ScriptActionEditor
                               deckUrl={stringConfigValue(step.config, "deckUrl")}
-                              events={editorEvents}
                               onDeckUrlChange={(value) =>
                                 updateEventStepConfig(step.id, "deckUrl", value)
                               }
@@ -12973,23 +13001,130 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
 
 function ScriptActionEditor({
   deckUrl,
-  events,
   onDeckUrlChange,
   onTextChange,
   text,
 }: {
   deckUrl: string;
-  events: ExperienceEvent[];
   onDeckUrlChange: (value: string) => void;
   onTextChange: (value: string) => void;
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [viewMode, setViewMode] = useState<ScriptEditorViewMode>(() => {
+    try {
+      const saved = window.localStorage.getItem("dlu.script-editor-view.v1");
+      if (saved === "chips" || saved === "slides" || saved === "text") {
+        return saved;
+      }
+    } catch {
+      // Ignore storage failures.
+    }
+    return "text";
+  });
+  const [slidePreviews, setSlidePreviews] = useState<
+    Record<string, ScriptSlidePreview>
+  >({});
   const markers = parseScriptMarkerInstances(text);
+  const slidePreviewRefs = Array.from(
+    new Set(
+      markers
+        .filter((marker) => isSlideMarker(marker))
+        .map((marker) => marker.argList[0]?.trim() || "1"),
+    ),
+  );
+  const slidePreviewKey = slidePreviewRefs.join("\u001f");
 
   useEffect(() => {
     resizeTextareaToContent(textareaRef.current);
   }, [text]);
+
+  useEffect(() => {
+    if (viewMode === "text" || !deckUrl.trim() || !slidePreviewRefs.length) {
+      return;
+    }
+
+    let isCancelled = false;
+    slidePreviewRefs.forEach((slideRef) => {
+      const key = slidePreviewKeyFor(slideRef);
+      setSlidePreviews((current) => ({
+        ...current,
+        [key]: current[key]?.status === "ready" ? current[key] : { status: "loading" },
+      }));
+      void resolveSlidePreview(slideRef).catch(() => {
+        if (isCancelled) return;
+      });
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [deckUrl, slidePreviewKey, viewMode]);
+
+  function isSlideMarker(marker: ScriptMarkerInstance) {
+    return marker.type === "gslide" || marker.type === "slide";
+  }
+
+  function isVisualPanelMarker(marker: ScriptMarkerInstance) {
+    return isSlideMarker(marker) || marker.type === "show_image";
+  }
+
+  function slidePreviewKeyFor(slideRef: string) {
+    return `${deckUrl.trim()}::${slideRef.trim() || "1"}`;
+  }
+
+  function changeViewMode(nextMode: ScriptEditorViewMode) {
+    setViewMode(nextMode);
+    try {
+      window.localStorage.setItem("dlu.script-editor-view.v1", nextMode);
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  async function resolveSlidePreview(slideRef: string, forceRefresh = false) {
+    const normalizedSlideRef = slideRef.trim() || "1";
+    const key = slidePreviewKeyFor(normalizedSlideRef);
+    if (!deckUrl.trim()) {
+      setSlidePreviews((current) => ({
+        ...current,
+        [key]: { detail: "No deck URL", status: "idle" },
+      }));
+      return;
+    }
+
+    setSlidePreviews((current) => ({
+      ...current,
+      [key]: { status: "loading" },
+    }));
+
+    try {
+      const payload = await apiFetch<ResolvedSlide>("/api/slides/resolve/", {
+        method: "POST",
+        body: JSON.stringify({
+          deckUrl,
+          forceRefresh,
+          slideRef: normalizedSlideRef,
+        }),
+      });
+      setSlidePreviews((current) => ({
+        ...current,
+        [key]: {
+          detail: payload.pageId,
+          imageUrl: `${payload.imageUrl}?v=${Date.now()}`,
+          status: "ready",
+        },
+      }));
+    } catch (error) {
+      setSlidePreviews((current) => ({
+        ...current,
+        [key]: {
+          detail: error instanceof Error ? error.message : "Slide unavailable",
+          status: "error",
+        },
+      }));
+    }
+  }
 
   function insertMarker(marker: string) {
     const textarea = textareaRef.current;
@@ -13004,6 +13139,9 @@ function ScriptActionEditor({
     const nextCursor = before.length + inserted.length;
 
     onTextChange(nextText);
+    if (viewMode !== "text") {
+      changeViewMode("text");
+    }
 
     window.requestAnimationFrame(() => {
       const nextTextarea = textareaRef.current;
@@ -13015,10 +13153,17 @@ function ScriptActionEditor({
   }
 
   function focusMarker(marker: ScriptMarkerInstance) {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.focus();
-    textarea.setSelectionRange(marker.start, marker.end);
+    if (viewMode !== "text") {
+      changeViewMode("text");
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(marker.start, marker.end);
+      });
+    });
   }
 
   function removeMarker(marker: ScriptMarkerInstance) {
@@ -13040,327 +13185,283 @@ function ScriptActionEditor({
     });
   }
 
-  function replaceMarker(marker: ScriptMarkerInstance, nextMarker: string) {
-    const nextText = `${text.slice(0, marker.start)}${nextMarker}${text.slice(
-      marker.end,
-    )}`;
-    const nextCursor = marker.start + nextMarker.length;
-
-    onTextChange(nextText);
-    window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(nextCursor, nextCursor);
-      resizeTextareaToContent(textarea);
-    });
+  function slidePreviewFor(marker: ScriptMarkerInstance) {
+    const slideRef = marker.argList[0]?.trim() || "1";
+    return slidePreviews[slidePreviewKeyFor(slideRef)] ?? { status: "idle" };
   }
 
-  function updateMarkerArg(
-    marker: ScriptMarkerInstance,
-    argIndex: number,
-    value: string,
+  function renderMarkerChip(marker: ScriptMarkerInstance) {
+    const detail = marker.detail || marker.argList.join(", ");
+    const imagePath =
+      marker.type === "show_image"
+        ? marker.argList[0]
+        : marker.type === "overlay"
+          ? marker.argList[1]
+          : "";
+    const preview = isSlideMarker(marker) ? slidePreviewFor(marker) : null;
+    const imageUrl =
+      preview?.status === "ready"
+        ? preview.imageUrl
+        : imagePath
+          ? publicAsset(imagePath)
+          : "";
+
+    return (
+      <button
+        className={[
+          "script-marker-chip",
+          `marker-${marker.type}`,
+          imageUrl ? "has-thumbnail" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        key={marker.id}
+        onClick={() => focusMarker(marker)}
+        title={marker.marker}
+        type="button"
+      >
+        {imageUrl ? (
+          <img
+            alt=""
+            className="script-marker-thumbnail"
+            src={imageUrl}
+          />
+        ) : (
+          <span className="script-marker-chip-icon">
+            {scriptMarkerIcon(marker.type)}
+          </span>
+        )}
+        <span className="script-marker-chip-text">
+          {detail || marker.label}
+        </span>
+      </button>
+    );
+  }
+
+  function renderInlineScriptParts(
+    sourceText: string,
+    offset = 0,
+    emptyFallback = "---",
   ) {
-    const args = [...marker.argList];
-    while (args.length <= argIndex) args.push("");
-    args[argIndex] = value;
-    replaceMarker(marker, buildScriptMarker(marker.type, args));
+    const localMarkers = parseScriptMarkerInstances(sourceText);
+    if (!sourceText && !localMarkers.length) {
+      return <span className="script-empty-text">{emptyFallback}</span>;
+    }
+
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    localMarkers.forEach((marker) => {
+      if (marker.start > cursor) {
+        parts.push(
+          <Fragment key={`text-${offset}-${cursor}`}>
+            {sourceText.slice(cursor, marker.start)}
+          </Fragment>,
+        );
+      }
+      parts.push(
+        renderMarkerChip({
+          ...marker,
+          end: marker.end + offset,
+          id: `${offset}-${marker.id}`,
+          start: marker.start + offset,
+        }),
+      );
+      cursor = marker.end;
+    });
+    if (cursor < sourceText.length) {
+      parts.push(
+        <Fragment key={`text-${offset}-${cursor}`}>
+          {sourceText.slice(cursor)}
+        </Fragment>,
+      );
+    }
+    return parts;
   }
 
-  function renderMarkerControls(marker: ScriptMarkerInstance) {
-    if (marker.type === "gslide" || marker.type === "slide") {
-      return (
-        <div className="script-marker-controls">
-          <span className="event-detail-label">SLIDE</span>
-          <input
-            aria-label="Timed slide number"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="1"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-        </div>
-      );
+  function visualSegments() {
+    const visualMarkers = markers.filter(isVisualPanelMarker);
+    const segments: Array<{
+      content: string;
+      contentOffset: number;
+      key: string;
+      marker: ScriptMarkerInstance | null;
+    }> = [];
+    let currentMarker: ScriptMarkerInstance | null = null;
+    let cursor = 0;
+
+    visualMarkers.forEach((marker) => {
+      const content = text.slice(cursor, marker.start);
+      if (content.trim() || currentMarker) {
+        segments.push({
+          content,
+          contentOffset: cursor,
+          key: `${currentMarker?.id ?? "intro"}-${cursor}`,
+          marker: currentMarker,
+        });
+      }
+      currentMarker = marker;
+      cursor = marker.end;
+    });
+
+    const trailingContent = text.slice(cursor);
+    if (trailingContent.trim() || currentMarker || !segments.length) {
+      const markerId = (currentMarker as ScriptMarkerInstance | null)?.id ?? "empty";
+      segments.push({
+        content: trailingContent,
+        contentOffset: cursor,
+        key: `${markerId}-${cursor}`,
+        marker: currentMarker,
+      });
     }
 
-    if (marker.type === "interactive" || marker.type === "interactive_update") {
-      const appId = marker.argList[0] || defaultMainPanelApp.id;
-      const appDefinition =
-        getMainPanelAppDefinition(appId) ?? defaultMainPanelApp;
-      const view = marker.argList[1] || appDefinition.defaultView;
-      const destination = marker.argList[2] ?? "";
-      const hasCurrentView = appDefinition.views.some((item) => item.id === view);
-      const hasDestinationOption = events.some(
-        (event) => event.slug === destination,
-      );
+    return segments;
+  }
 
+  function renderSlideVisual(marker: ScriptMarkerInstance | null) {
+    if (!marker) {
+      return <span className="script-slide-placeholder">No visual</span>;
+    }
+
+    if (isSlideMarker(marker)) {
+      const slideRef = marker.argList[0]?.trim() || "1";
+      const preview = slidePreviewFor(marker);
       return (
-        <div className="script-marker-controls interactive-marker-controls">
-          <span className="event-detail-label">APP</span>
-          <select
-            aria-label="Timed main-panel app"
-            onChange={(event) => {
-              const nextApp =
-                getMainPanelAppDefinition(event.target.value) ??
-                defaultMainPanelApp;
-              replaceMarker(
-                marker,
-                buildScriptMarker(marker.type, [
-                  nextApp.id,
-                  nextApp.defaultView,
-                  marker.argList[2] ?? "",
-                ]),
-              );
-            }}
-            value={appDefinition.id}
+        <div className="script-slide-preview">
+          {preview.status === "ready" && preview.imageUrl ? (
+            <img alt={`Slide ${slideRef}`} src={preview.imageUrl} />
+          ) : (
+            <span className="script-slide-placeholder">
+              {preview.status === "loading"
+                ? "Loading slide..."
+                : `Slide ${slideRef}`}
+            </span>
+          )}
+          <button
+            className="script-slide-refresh"
+            disabled={!deckUrl.trim() || preview.status === "loading"}
+            onClick={() => void resolveSlidePreview(slideRef, true)}
+            title="Refresh this slide thumbnail."
+            type="button"
           >
-            {mainPanelAppDefinitions.map((app) => (
-              <option key={app.id} value={app.id}>
-                {app.label}
-              </option>
-            ))}
-          </select>
-          <span className="event-detail-label">VIEW</span>
-          <select
-            aria-label="Timed main-panel app view"
-            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
-            value={hasCurrentView ? view : ""}
-          >
-            {!hasCurrentView && view ? <option value="">{view}</option> : null}
-            {appDefinition.views.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <span className="event-detail-label">DESTINATION</span>
-          <select
-            aria-label="Timed main-panel app destination event"
-            onChange={(event) => updateMarkerArg(marker, 2, event.target.value)}
-            value={destination}
-          >
-            <option value="">No destination</option>
-            {destination && !hasDestinationOption ? (
-              <option value={destination}>{destination}</option>
-            ) : null}
-            {events.map((event) => (
-              <option key={event.id} value={event.slug}>
-                {event.title || event.slug}
-                {event.isStart ? " (start)" : ""}
-              </option>
-            ))}
-          </select>
+            Refresh
+          </button>
         </div>
       );
     }
 
-    if (marker.type === "show_image") {
-      return (
-        <div className="script-marker-controls image-marker-controls">
-          <span className="event-detail-label">IMAGE</span>
-          <input
-            aria-label="Timed agent image path"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="test-images/dLU-right.png"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-        </div>
-      );
+    const imagePath = marker.argList[0]?.trim() || "";
+    if (!imagePath) {
+      return <span className="script-slide-placeholder">Image</span>;
     }
-
-    if (marker.type === "overlay") {
-      return (
-        <div className="script-marker-controls overlay-marker-controls">
-          <span className="event-detail-label">ID</span>
-          <input
-            aria-label="Timed overlay id"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="default"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-          <span className="event-detail-label">IMAGE</span>
-          <input
-            aria-label="Timed overlay image path"
-            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
-            placeholder="test-images/dLU-left.png"
-            type="text"
-            value={marker.argList[1] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "overlay_off") {
-      return (
-        <div className="script-marker-controls">
-          <span className="event-detail-label">ID</span>
-          <input
-            aria-label="Timed clear-overlay id"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="blank clears all"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "add_note") {
-      return (
-        <div className="script-marker-controls note-marker-controls">
-          <span className="event-detail-label">NOTE</span>
-          <input
-            aria-label="Timed runtime note"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="Remember this moment"
-            type="text"
-            value={marker.argList.join(", ")}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "play_sound") {
-      return (
-        <div className="script-marker-controls sound-marker-controls">
-          <span className="event-detail-label">SOUND</span>
-          <input
-            aria-label="Timed sound path"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="sounds/chime.mp3"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-          <span className="event-detail-label">VOL</span>
-          <input
-            aria-label="Timed sound volume"
-            inputMode="decimal"
-            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
-            placeholder="1"
-            type="text"
-            value={marker.argList[1] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "highlight_on" || marker.type === "highlight") {
-      return (
-        <div className="script-marker-controls highlight-marker-controls">
-          <span className="event-detail-label">SELECTOR</span>
-          <input
-            aria-label="Timed highlight selector"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder=".selector"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-          <span className="event-detail-label">COLOR</span>
-          <input
-            aria-label="Timed highlight color"
-            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
-            placeholder="rgba(59, 130, 246, 0.6)"
-            type="text"
-            value={marker.argList[1] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "highlight_off") {
-      return (
-        <div className="script-marker-controls">
-          <span className="event-detail-label">SELECTOR</span>
-          <input
-            aria-label="Timed clear-highlight selector"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder=".selector"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    if (marker.type === "pause") {
-      return (
-        <div className="script-marker-controls">
-          <span className="event-detail-label">MS</span>
-          <input
-            aria-label="Timed pause milliseconds"
-            inputMode="numeric"
-            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
-            placeholder="500"
-            type="text"
-            value={marker.argList[0] ?? ""}
-          />
-        </div>
-      );
-    }
-
-    return null;
+    return (
+      <div className="script-slide-preview">
+        <img alt="" src={publicAsset(imagePath)} />
+      </div>
+    );
   }
 
   return (
     <div className="script-action-editor">
-      <div className="script-marker-bar" aria-label="Insert timed script action">
-        {scriptMarkerOptions.map((option) => (
-          <button
-            className="event-text-button"
-            key={option.marker}
-            onClick={() => insertMarker(option.marker)}
-            title={option.title}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
+      <div className="script-action-toolbar">
+        <div className="script-marker-bar" aria-label="Insert timed script action">
+          {scriptMarkerOptions.map((option) => (
+            <button
+              className="event-text-button"
+              key={option.marker}
+              onClick={() => insertMarker(option.marker)}
+              title={option.title}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="script-view-switch" role="tablist" aria-label="Script view">
+          {(["text", "chips", "slides"] as const).map((mode) => (
+            <button
+              aria-selected={viewMode === mode}
+              className={viewMode === mode ? "selected" : ""}
+              key={mode}
+              onClick={() => changeViewMode(mode)}
+              role="tab"
+              type="button"
+            >
+              {mode === "text" ? "Text" : mode === "chips" ? "Chips" : "Slides"}
+            </button>
+          ))}
+        </div>
       </div>
-      <textarea
-        aria-label="Speech text"
-        className="event-script-textarea"
-        onChange={(event) => onTextChange(event.target.value)}
-        onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-        placeholder="What the agent says... [gslide: 1]"
-        ref={textareaRef}
-        value={text}
-      />
-      {markers.length ? (
-        <div className="script-marker-outline" aria-label="Timed script actions">
-          <span className="event-detail-label">TIMED ACTIONS</span>
-          <div className="script-marker-list">
-            {markers.map((marker, index) => (
-              <div className="script-marker-item" key={marker.id}>
-                <div className="script-marker-main">
-                  <button
-                    className="script-marker-jump"
-                    onClick={() => focusMarker(marker)}
-                    title="Select this marker in the script text."
-                    type="button"
-                  >
-                    <span>{index + 1}</span>
-                    <strong>{marker.label}</strong>
-                    <small>
-                      {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
-                    </small>
-                    {marker.detail ? <code>{marker.detail}</code> : null}
-                  </button>
-                  {renderMarkerControls(marker)}
-                </div>
-                <button
-                  aria-label={`Remove ${marker.label} marker`}
-                  className="event-icon-button danger"
-                  onClick={() => removeMarker(marker)}
-                  title="Remove this timed action marker."
-                  type="button"
-                >
-                  <TrashIcon />
-                </button>
+
+      {viewMode === "text" ? (
+        <textarea
+          aria-label="Speech text"
+          className="event-script-textarea"
+          onChange={(event) => onTextChange(event.target.value)}
+          onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+          placeholder="What the agent says... [gslide: 1]"
+          ref={textareaRef}
+          value={text}
+        />
+      ) : viewMode === "chips" ? (
+        <div className="script-chip-view" aria-label="Script with marker chips">
+          {renderInlineScriptParts(text, 0, "No script text")}
+        </div>
+      ) : (
+        <div className="script-slide-table" aria-label="Script slide table">
+          {visualSegments().map((segment) => (
+            <div className="script-slide-row" key={segment.key}>
+              <div className="script-slide-cell">
+                {renderSlideVisual(segment.marker)}
               </div>
-            ))}
-          </div>
+              <div className="script-slide-script">
+                {renderInlineScriptParts(
+                  segment.content,
+                  segment.contentOffset,
+                  "No narration for this visual",
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {viewMode === "text" && markers.length ? (
+        <div className="script-marker-strip" aria-label="Timed script actions">
+          {markers.map((marker, index) => (
+            <div className="script-marker-token" key={marker.id}>
+              <button
+                className="script-marker-token-main"
+                onClick={() => focusMarker(marker)}
+                title="Select this marker in the script text."
+                type="button"
+              >
+                <span className="script-marker-chip-icon">
+                  {scriptMarkerIcon(marker.type)}
+                </span>
+                <strong>{marker.label}</strong>
+                {marker.detail ? <code>{marker.detail}</code> : null}
+                <small>
+                  {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
+                </small>
+              </button>
+              <button
+                aria-label={`Remove ${marker.label} marker ${index + 1}`}
+                className="script-marker-token-remove"
+                onClick={() => removeMarker(marker)}
+                title="Remove this timed action marker."
+                type="button"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {viewMode !== "text" && markers.length ? (
+        <div className="script-marker-strip compact" aria-label="Timed script actions">
+          {markers.map((marker) => (
+            <Fragment key={marker.id}>{renderMarkerChip(marker)}</Fragment>
+          ))}
         </div>
       ) : null}
       <div className="event-context-line single-value script-deck-line">
