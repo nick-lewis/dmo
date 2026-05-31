@@ -1853,6 +1853,185 @@ def validate_event_slug(value, label="Target event", required=True):
     return event_slug, ""
 
 
+def runtime_action_string(value, max_length=500):
+    text = str(value or "").strip()
+    if len(text) > max_length:
+        return ""
+    return text
+
+
+def rejected_emitted_runtime_action(action, reason):
+    action_type = ""
+    if isinstance(action, dict):
+        action_type = str(action.get("type", "") or "").strip()
+    return {
+        "actionType": action_type or "unknown",
+        "reason": reason,
+        "source": "interactive",
+        "type": "interactive_action_rejected",
+    }
+
+
+def normalize_emitted_runtime_action(action):
+    if not isinstance(action, dict):
+        return None, rejected_emitted_runtime_action(action, "not_an_object")
+
+    action_type = str(action.get("type", "") or "").strip()
+    if not action_type:
+        return None, rejected_emitted_runtime_action(action, "missing_type")
+
+    if action_type in {"set_context", "append_context_list"}:
+        key = runtime_context_action_key(action)
+        if not key:
+            return None, rejected_emitted_runtime_action(action, "invalid_context_key")
+        return {
+            "key": key,
+            "source": "interactive",
+            "type": action_type,
+            "value": action.get("value"),
+        }, None
+
+    if action_type == "goto_event":
+        triggers_event, error = validate_event_slug(action.get("triggersEvent"))
+        if error:
+            return None, rejected_emitted_runtime_action(action, "invalid_target_event")
+        return {
+            "source": "interactive",
+            "triggersEvent": triggers_event,
+            "type": "goto_event",
+        }, None
+
+    if action_type == "button_choice":
+        label = runtime_action_string(action.get("label"), max_length=120)
+        triggers_event, error = validate_event_slug(action.get("triggersEvent"))
+        if not label or error:
+            return None, rejected_emitted_runtime_action(action, "invalid_button")
+        return {
+            "label": label,
+            "source": "interactive",
+            "triggersEvent": triggers_event,
+            "type": "button_choice",
+        }, None
+
+    if action_type == "set_ui_trigger":
+        selector, selector_error = validate_selector(action.get("selector"))
+        triggers_event, event_error = validate_event_slug(action.get("triggersEvent"))
+        if selector_error or event_error:
+            return None, rejected_emitted_runtime_action(action, "invalid_ui_trigger")
+        return {
+            "selector": selector,
+            "source": "interactive",
+            "triggersEvent": triggers_event,
+            "type": "set_ui_trigger",
+        }, None
+
+    if action_type == "highlight_on":
+        selector, selector_error = validate_selector(action.get("selector"))
+        if selector_error:
+            return None, rejected_emitted_runtime_action(action, "invalid_selector")
+        color = runtime_action_string(
+            action.get("color") or "rgba(59, 130, 246, 0.6)",
+            max_length=120,
+        )
+        return {
+            "color": color or "rgba(59, 130, 246, 0.6)",
+            "selector": selector,
+            "source": "interactive",
+            "type": "highlight_on",
+        }, None
+
+    if action_type == "highlight_off":
+        selector, selector_error = validate_selector(action.get("selector"))
+        if selector_error:
+            return None, rejected_emitted_runtime_action(action, "invalid_selector")
+        return {
+            "selector": selector,
+            "source": "interactive",
+            "type": "highlight_off",
+        }, None
+
+    if action_type == "chat_availability":
+        if not isinstance(action.get("enabled"), bool):
+            return None, rejected_emitted_runtime_action(action, "invalid_chat_state")
+        return {
+            "enabled": action.get("enabled"),
+            "source": "interactive",
+            "type": "chat_availability",
+        }, None
+
+    if action_type == "interactive_clear":
+        return {"source": "interactive", "type": "interactive_clear"}, None
+
+    if action_type == "show_image":
+        image_path = runtime_action_string(action.get("imagePath"))
+        if not image_path:
+            return None, rejected_emitted_runtime_action(action, "invalid_image")
+        return {
+            "imagePath": image_path,
+            "source": "interactive",
+            "type": "show_image",
+        }, None
+
+    if action_type == "overlay":
+        image_path = runtime_action_string(action.get("imagePath"))
+        overlay_id = runtime_action_string(action.get("overlayId"), max_length=80)
+        if not image_path:
+            return None, rejected_emitted_runtime_action(action, "invalid_overlay")
+        return {
+            "imagePath": image_path,
+            "overlayId": overlay_id or "default",
+            "source": "interactive",
+            "type": "overlay",
+        }, None
+
+    if action_type == "overlay_off":
+        overlay_id = runtime_action_string(action.get("overlayId"), max_length=80)
+        return {
+            "overlayId": overlay_id,
+            "source": "interactive",
+            "type": "overlay_off",
+        }, None
+
+    if action_type == "add_note":
+        text = runtime_action_string(action.get("text"), max_length=1200)
+        if not text:
+            return None, rejected_emitted_runtime_action(action, "invalid_note")
+        note_id = runtime_action_string(action.get("noteId"), max_length=120)
+        normalized = {
+            "source": "interactive",
+            "text": text,
+            "type": "add_note",
+        }
+        if note_id:
+            normalized["noteId"] = note_id
+        return normalized, None
+
+    if action_type == "play_sound":
+        sound_path = runtime_action_string(action.get("soundPath"))
+        if not sound_path:
+            return None, rejected_emitted_runtime_action(action, "invalid_sound")
+        return {
+            "soundPath": sound_path,
+            "source": "interactive",
+            "type": "play_sound",
+            "volume": runtime_action_string(action.get("volume"), max_length=24),
+        }, None
+
+    return None, rejected_emitted_runtime_action(action, "unsupported_type")
+
+
+def normalize_emitted_runtime_actions(actions):
+    accepted_actions = []
+    rejected_actions = []
+    for action in actions:
+        accepted, rejected = normalize_emitted_runtime_action(action)
+        if accepted is not None:
+            accepted_actions.append(accepted)
+        if rejected is not None:
+            rejected_actions.append(rejected)
+    return accepted_actions, rejected_actions
+
+
 def validate_chat_tool_name(value):
     name = str(value or "").strip()
     if not name:
@@ -2656,6 +2835,8 @@ def runtime_action_summary(action):
         return f"{action.get('interactiveId', 'app')}: {action.get('detail', 'not registered')}"
     if action_type == "interactive_clear":
         return "clear main-panel app"
+    if action_type == "interactive_action_rejected":
+        return f"{action.get('actionType', 'action')}: {action.get('reason', 'rejected')}"
     if action_type == "chat_availability":
         return "chat on" if action.get("enabled", True) else "chat off"
     if action_type == "gslide":
@@ -5084,11 +5265,11 @@ def update_session_interactive(request, session_id):
         emitted_actions = []
     if len(emitted_actions) > 24:
         return JsonResponse({"detail": "Too many emitted actions."}, status=400)
-    emitted_actions = [
-        action for action in emitted_actions if isinstance(action, dict)
-    ]
     if len(json.dumps(emitted_actions, ensure_ascii=True)) > 16000:
         return JsonResponse({"detail": "Emitted actions are too large."}, status=400)
+    emitted_actions, rejected_emitted_actions = normalize_emitted_runtime_actions(
+        emitted_actions
+    )
 
     with transaction.atomic():
         session = (
@@ -5137,6 +5318,7 @@ def update_session_interactive(request, session_id):
             )
 
         actions.extend(emitted_actions)
+        actions.extend(rejected_emitted_actions)
         runtime_context = apply_runtime_actions_to_context(
             session.runtime_context,
             actions,

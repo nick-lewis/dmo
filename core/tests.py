@@ -117,6 +117,103 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual([action["appended"] for action in append_actions], [True, False])
         self.assertEqual(append_actions[-1]["list"], ["apple", "banana"])
 
+    def test_interactive_emitted_actions_are_normalized_before_runtime_apply(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={
+                "uiRuntime": {
+                    "interactive": {
+                        "config": {},
+                        "interactiveId": "delivery_data",
+                        "mode": "table",
+                        "title": "Delivery data",
+                    },
+                    "interactiveState": {},
+                },
+            },
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/interactive/",
+            data=json.dumps(
+                {
+                    "actions": [
+                        {
+                            "key": " learner_score ",
+                            "type": "set_context",
+                            "value": 3,
+                        },
+                        {
+                            "color": "rgba(10, 20, 30, 0.4)",
+                            "selector": ".workspace-shell",
+                            "type": "highlight_on",
+                        },
+                        {
+                            "noteId": "note-1",
+                            "text": "Remember this result.",
+                            "type": "add_note",
+                        },
+                        {
+                            "soundPath": "sounds/chime.mp3",
+                            "type": "play_sound",
+                            "volume": "0.5",
+                        },
+                        {
+                            "message": {"content": "fake assistant message"},
+                            "type": "chat_message",
+                        },
+                        {"key": "", "type": "set_context", "value": "bad"},
+                        5,
+                    ],
+                    "interactiveId": "delivery_data",
+                    "state": {"estimate": "22"},
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        self.assertEqual(session.runtime_context["learner_score"], 3)
+        ui_runtime = session.runtime_state["uiRuntime"]
+        self.assertEqual(
+            ui_runtime["highlights"][".workspace-shell"]["color"],
+            "rgba(10, 20, 30, 0.4)",
+        )
+        self.assertEqual(
+            ui_runtime["notes"],
+            [
+                {
+                    "id": "note-1",
+                    "source": "interactive",
+                    "text": "Remember this result.",
+                }
+            ],
+        )
+
+        payload = response.json()
+        action_types = [action["type"] for action in payload["actions"]]
+        self.assertNotIn("chat_message", action_types)
+        self.assertIn("play_sound", action_types)
+        rejected_reasons = [
+            action["reason"]
+            for action in payload["actions"]
+            if action["type"] == "interactive_action_rejected"
+        ]
+        self.assertCountEqual(
+            rejected_reasons,
+            ["unsupported_type", "invalid_context_key", "not_an_object"],
+        )
+        normalized_context_action = next(
+            action
+            for action in payload["actions"]
+            if action["type"] == "set_context"
+            and action.get("key") == "learner_score"
+        )
+        self.assertEqual(normalized_context_action["source"], "interactive")
+
     def test_emitted_goto_event_runs_target_event_after_context_actions(self):
         target_event = ExperienceEvent.objects.create(
             experience=self.experience,

@@ -1727,6 +1727,12 @@ function runtimeActionText(action: Record<string, unknown>) {
       "not registered",
     )}`;
   }
+  if (type === "interactive_action_rejected") {
+    return `${compactRuntimeValue(action.actionType, "action")}: ${compactRuntimeValue(
+      action.reason,
+      "rejected",
+    )}`;
+  }
   if (type === "interactive_clear") {
     return "clear main-panel app";
   }
