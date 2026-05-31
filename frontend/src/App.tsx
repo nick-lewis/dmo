@@ -3242,19 +3242,36 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setEventRedoStack([]);
   }
 
+  function cloneEventDraft(draft: EventDraft) {
+    return JSON.parse(JSON.stringify(draft)) as EventDraft;
+  }
+
+  function eventDraftSignature(draft: EventDraft) {
+    return JSON.stringify(draft);
+  }
+
   function rememberEventDraftForUndo(draft = eventDraft) {
-    setEventUndoStack((current) =>
-      [draft, ...current].slice(0, editorUndoLimit),
-    );
+    const snapshot = cloneEventDraft(draft);
+    const snapshotSignature = eventDraftSignature(snapshot);
+    setEventUndoStack((current) => {
+      if (current[0] && eventDraftSignature(current[0]) === snapshotSignature) {
+        return current;
+      }
+      return [snapshot, ...current].slice(0, editorUndoLimit);
+    });
     setEventRedoStack([]);
   }
 
   function stageEventDraft(nextDraft: EventDraft, recordHistory = true) {
+    if (eventDraftSignature(nextDraft) === eventDraftSignature(eventDraft)) {
+      return;
+    }
     if (recordHistory) {
       rememberEventDraftForUndo();
     }
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    const stagedDraft = cloneEventDraft(nextDraft);
+    setEventDraft(stagedDraft);
+    queueEventAutosave(stagedDraft);
   }
 
   function undoEventEdit() {
@@ -3263,10 +3280,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     setEventUndoStack((current) => current.slice(1));
     setEventRedoStack((current) =>
-      [eventDraft, ...current].slice(0, editorUndoLimit),
+      [cloneEventDraft(eventDraft), ...current].slice(0, editorUndoLimit),
     );
-    setEventDraft(previousDraft);
-    queueEventAutosave(previousDraft);
+    const nextDraft = cloneEventDraft(previousDraft);
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
   }
 
   function redoEventEdit() {
@@ -3275,10 +3293,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     setEventRedoStack((current) => current.slice(1));
     setEventUndoStack((current) =>
-      [eventDraft, ...current].slice(0, editorUndoLimit),
+      [cloneEventDraft(eventDraft), ...current].slice(0, editorUndoLimit),
     );
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    const restoredDraft = cloneEventDraft(nextDraft);
+    setEventDraft(restoredDraft);
+    queueEventAutosave(restoredDraft);
   }
 
   function applyExperience(nextExperience: Experience) {
@@ -6348,19 +6367,29 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     </div>
                     <div className="event-history-tools">
                       <button
+                        aria-label="Undo event edit or reordered action"
                         className="event-icon-button"
                         disabled={!eventUndoStack.length}
                         onClick={undoEventEdit}
-                        title="Undo event edit or reordered action"
+                        title={
+                          eventUndoStack.length
+                            ? `Undo event edit (${eventUndoStack.length} available)`
+                            : "Nothing to undo"
+                        }
                         type="button"
                       >
                         <UndoIcon />
                       </button>
                       <button
+                        aria-label="Redo event edit or reordered action"
                         className="event-icon-button"
                         disabled={!eventRedoStack.length}
                         onClick={redoEventEdit}
-                        title="Redo event edit or reordered action"
+                        title={
+                          eventRedoStack.length
+                            ? `Redo event edit (${eventRedoStack.length} available)`
+                            : "Nothing to redo"
+                        }
                         type="button"
                       >
                         <RedoIcon />
