@@ -1540,6 +1540,16 @@ function eventOutgoingSlugs(event: ExperienceEvent) {
   return [...slugs];
 }
 
+function routeKindCounts(links: EventOutgoingLink[]) {
+  const counts = new Map<string, number>();
+  links.forEach((link) => {
+    counts.set(link.kind, (counts.get(link.kind) ?? 0) + 1);
+  });
+  return [...counts.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+}
+
 function eventTransitionStats(events: ExperienceEvent[], event: ExperienceEvent) {
   const outgoingLinks = eventOutgoingLinks(event);
   const outgoingSlugs = [...new Set(outgoingLinks.map((link) => link.slug))];
@@ -12357,6 +12367,10 @@ function EventGraphView({
     (total, event) => total + (statsByEventId.get(event.id)?.outgoingCount ?? 0),
     0,
   );
+  const allOutgoingLinks = sortedEvents.flatMap((event) =>
+    eventOutgoingLinks(event),
+  );
+  const routeKindSummary = routeKindCounts(allOutgoingLinks);
   const conditionalRouteCount = sortedEvents.reduce(
     (total, event) =>
       total + eventOutgoingLinks(event).filter((link) => link.condition).length,
@@ -12378,6 +12392,7 @@ function EventGraphView({
   const selectedOutgoingLinks = selectedEvent
     ? eventOutgoingLinks(selectedEvent)
     : [];
+  const selectedRouteKindSummary = routeKindCounts(selectedOutgoingLinks);
   const incomingLinks = selectedEvent
     ? sortedEvents.flatMap((event) =>
         eventOutgoingLinks(event)
@@ -12429,6 +12444,16 @@ function EventGraphView({
           <span>0 unresolved</span>
         )}
       </div>
+      {routeKindSummary.length ? (
+        <div className="event-graph-route-kinds" aria-label="Route source counts">
+          {routeKindSummary.map(([kind, count]) => (
+            <span key={kind}>
+              <strong>{kind}</strong>
+              {count}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {orphanEvents.length || unresolvedRoutes.length ? (
         <div className="event-graph-issues" aria-label="Graph issues">
           {orphanEvents.map((event) => (
@@ -12492,6 +12517,19 @@ function EventGraphView({
               {incomingLinks.length} in / {selectedOutgoingLinks.length} out
             </span>
           </div>
+          {selectedRouteKindSummary.length ? (
+            <div
+              className="event-graph-route-kinds is-selected-event"
+              aria-label="Selected event route sources"
+            >
+              {selectedRouteKindSummary.map(([kind, count]) => (
+                <span key={kind}>
+                  <strong>{kind}</strong>
+                  {count}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <EventGraphLinkList
             empty="No outgoing routes"
             events={sortedEvents}
