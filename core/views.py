@@ -1820,6 +1820,8 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "realtimeModel": tutor_settings.realtime_model,
         "script": script,
         "source": source,
+        "sourceCount": 1,
+        "sources": [source],
         "timedMarkerCount": timed_marker_count,
         "timingPreview": timing_preview,
         "timingWordCount": timing_word_count,
@@ -1849,71 +1851,79 @@ def iter_script_audio_texts_from_action_sequence(actions, source_prefix):
 def collect_experience_script_audio_items(experience):
     tutor_settings = ensure_tutor_settings(experience)
     items = []
-    seen_scripts = set()
+    items_by_script = {}
+
+    def append_item(item):
+        if not item:
+            return
+        existing_item = items_by_script.get(item["script"])
+        if existing_item:
+            if item["source"] not in existing_item["sources"]:
+                existing_item["sources"].append(item["source"])
+                existing_item["sourceCount"] = len(existing_item["sources"])
+            return
+        items_by_script[item["script"]] = item
+        items.append(item)
 
     for event in experience.events.order_by("sort_order", "created_at"):
         event_source = event.title or event.slug or "Event"
         for step in event.steps.order_by("sort_order", "created_at"):
             if step.action_type == EventActionStep.ActionType.SCRIPT:
                 source = f"{event_source} / {step.label or DEFAULT_SCRIPT_STEP_LABEL}"
-                item = script_audio_item_from_text(
-                    experience,
-                    tutor_settings,
-                    source,
-                    str((step.config or {}).get("text", "")),
-                    len(items),
+                append_item(
+                    script_audio_item_from_text(
+                        experience,
+                        tutor_settings,
+                        source,
+                        str((step.config or {}).get("text", "")),
+                        len(items),
+                    )
                 )
-                if item and item["script"] not in seen_scripts:
-                    seen_scripts.add(item["script"])
-                    items.append(item)
 
         for tool in event.chat_tools.order_by("sort_order", "created_at"):
             for source, raw_text in iter_script_audio_texts_from_action_sequence(
                 tool.handler_actions,
                 f"{event_source} / FC route {tool.name}",
             ):
-                item = script_audio_item_from_text(
-                    experience,
-                    tutor_settings,
-                    source,
-                    raw_text,
-                    len(items),
+                append_item(
+                    script_audio_item_from_text(
+                        experience,
+                        tutor_settings,
+                        source,
+                        raw_text,
+                        len(items),
+                    )
                 )
-                if item and item["script"] not in seen_scripts:
-                    seen_scripts.add(item["script"])
-                    items.append(item)
 
         for check in event.conversation_checks.order_by("sort_order", "created_at"):
             for source, raw_text in iter_script_audio_texts_from_action_sequence(
                 check.handler_actions,
                 f"{event_source} / Check {check.title}",
             ):
-                item = script_audio_item_from_text(
-                    experience,
-                    tutor_settings,
-                    source,
-                    raw_text,
-                    len(items),
+                append_item(
+                    script_audio_item_from_text(
+                        experience,
+                        tutor_settings,
+                        source,
+                        raw_text,
+                        len(items),
+                    )
                 )
-                if item and item["script"] not in seen_scripts:
-                    seen_scripts.add(item["script"])
-                    items.append(item)
 
         for group in event.classifier_groups.order_by("sort_order", "created_at"):
             for source, raw_text in iter_script_audio_texts_from_action_sequence(
                 group.handler_actions,
                 f"{event_source} / Classifiers {group.title}",
             ):
-                item = script_audio_item_from_text(
-                    experience,
-                    tutor_settings,
-                    source,
-                    raw_text,
-                    len(items),
+                append_item(
+                    script_audio_item_from_text(
+                        experience,
+                        tutor_settings,
+                        source,
+                        raw_text,
+                        len(items),
+                    )
                 )
-                if item and item["script"] not in seen_scripts:
-                    seen_scripts.add(item["script"])
-                    items.append(item)
 
     return items
 

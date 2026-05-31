@@ -608,6 +608,8 @@ type ScriptAudioItem = {
   realtimeModel?: RealtimeModelId;
   script?: string;
   source: string;
+  sourceCount?: number;
+  sources?: string[];
   timedMarkerCount?: number;
   timingPreview?: ScriptWord[];
   timingWordCount?: number;
@@ -12912,6 +12914,15 @@ function scriptAudioMetadataText(item: ScriptAudioItem) {
   return pieces.length ? pieces.join(" / ") : "---";
 }
 
+function scriptAudioSourceList(item: ScriptAudioItem) {
+  const sources = Array.isArray(item.sources) ? item.sources : [];
+  const normalizedSources = sources
+    .map((source) => (typeof source === "string" ? source.trim() : ""))
+    .filter(Boolean);
+  if (!normalizedSources.length && item.source) return [item.source];
+  return [...new Set(normalizedSources)];
+}
+
 function scriptAudioItemIsReady(item: ScriptAudioItem) {
   return item.cached && item.wordsCached;
 }
@@ -13060,6 +13071,12 @@ function ScriptAudioPanel({
             const artifactTags = scriptAudioArtifactTags(item);
             const isDetailExpanded = expandedItemId === item.id;
             const timingPreviewText = scriptAudioTimingPreviewText(item);
+            const sources = scriptAudioSourceList(item);
+            const sourceCount = item.sourceCount ?? sources.length;
+            const sourceLabel =
+              sourceCount > 1
+                ? `${item.source} +${sourceCount - 1}`
+                : item.source;
             return (
               <div
                 className={[
@@ -13072,8 +13089,11 @@ function ScriptAudioPanel({
                   .join(" ")}
                 key={item.id}
               >
-                <span className="script-audio-source" title={item.source}>
-                  {item.source}
+                <span
+                  className="script-audio-source"
+                  title={sources.join("\n")}
+                >
+                  {sourceLabel}
                 </span>
                 <span className="script-audio-preview" title={item.script || preview}>
                   {preview}
@@ -13178,6 +13198,16 @@ function ScriptAudioPanel({
                       <div className="script-audio-artifacts">
                         {artifactTags.map((tag) => (
                           <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {sources.length > 1 ? (
+                      <div
+                        aria-label="Script audio source locations"
+                        className="script-audio-artifacts"
+                      >
+                        {sources.map((source) => (
+                          <span key={source}>{source}</span>
                         ))}
                       </div>
                     ) : null}

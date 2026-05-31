@@ -1101,6 +1101,37 @@ class ScriptAudioCachePayloadTests(TestCase):
         self.assertEqual(items[0]["timingWordCount"], 2)
         self.assertEqual(items[0]["timingPreview"][1]["word"], "second")
 
+    def test_script_audio_inventory_groups_duplicate_sources(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            config={"text": "The same reusable line."},
+            label="First use",
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            config={"text": "The same reusable line."},
+            label="Second use",
+            sort_order=1,
+        )
+
+        items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["sourceCount"], 2)
+        self.assertEqual(
+            items[0]["sources"],
+            ["Start / First use", "Start / Second use"],
+        )
+
 
 class ConversationRuntimeTests(TestCase):
     def setUp(self):
