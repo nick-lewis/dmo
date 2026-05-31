@@ -87,6 +87,9 @@ DEFAULT_EXPERIENCE_TITLE = "Untitled experience"
 DEFAULT_START_EVENT_TITLE = "Start"
 DEFAULT_SCRIPT_STEP_LABEL = "Say"
 MAX_EVENT_CHAIN_DEPTH = 12
+RUNTIME_ACTION_TRACE_LIMIT = 80
+RUNTIME_TRANSITION_TRACE_LIMIT = 40
+RUNTIME_DEBUG_VALUE_LIMIT = 600
 INITIAL_SCRIPT_CUE_PROGRESS = 0.001
 SCRIPT_ACTION_OFFSET_LIMIT_MS = 3000
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
@@ -1973,6 +1976,149 @@ def create_message_for_runtime(session, role, content, metadata=None):
     )
 
 
+def compact_runtime_debug_value(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:RUNTIME_DEBUG_VALUE_LIMIT]
+
+    try:
+        compact = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        compact = str(value)
+    if len(compact) > RUNTIME_DEBUG_VALUE_LIMIT:
+        compact = f"{compact[: RUNTIME_DEBUG_VALUE_LIMIT - 3]}..."
+    return compact
+
+
+def runtime_action_summary(action):
+    action_type = str(action.get("type", "action") or "action")
+    if action_type == "chat_message":
+        message = action.get("message")
+        if isinstance(message, dict):
+            return str(message.get("content", "") or "assistant message")[:180]
+        return "assistant message"
+    if action_type == "set_context":
+        return f"{action.get('key', 'context')} = {compact_runtime_debug_value(action.get('value'))}"
+    if action_type == "append_context_list":
+        return f"{action.get('key', 'context')} += {compact_runtime_debug_value(action.get('value'))}"
+    if action_type == "get_ui_state":
+        return f"{action.get('stateKey', 'ui')} -> {action.get('contextKey', 'context')}"
+    if action_type in {"goto_event", "set_ui_trigger", "transition_missing"}:
+        return f"-> {action.get('triggersEvent', 'event')}"
+    if action_type == "button_choice":
+        return f"{action.get('label', 'button')} -> {action.get('triggersEvent', 'event')}"
+    if action_type == "chat_tool_call":
+        return str(action.get("toolName", "function call"))
+    if action_type == "classifier_result":
+        return f"{action.get('classifierName', 'classifier')}: {compact_runtime_debug_value(action.get('result'))}"
+    if action_type == "classifier_group_result":
+        return f"{action.get('classifierGroupTitle', 'classifiers')}: {compact_runtime_debug_value(action.get('results'))}"
+    if action_type == "conversation_check_result":
+        result = "matched" if action.get("result") else "missed"
+        reason = str(action.get("reason", "") or "")
+        return f"{result}: {reason}" if reason else result
+    if action_type in {"interactive", "interactive_update"}:
+        return f"{action.get('interactiveId', 'app')} {action.get('mode', '')}".strip()
+    if action_type == "interactive_state":
+        return f"{action.get('interactiveId', 'app')} state saved"
+    if action_type == "interactive_clear":
+        return "clear main-panel app"
+    if action_type == "gslide":
+        return f"slide {action.get('slideRef', '1')}"
+    if action_type == "slide_error":
+        return str(action.get("detail", "slide unavailable"))
+    if action_type in {"highlight_on", "highlight_off"}:
+        return str(action.get("selector", "selector"))
+    if action_type in {"event_skipped", "classifier_skipped", "classifier_group_skipped", "skipped"}:
+        return str(action.get("reason", "skipped"))
+    return action_type
+
+
+def runtime_action_debug_details(action):
+    detail_keys = (
+        "actionType",
+        "arguments",
+        "appended",
+        "classifierGroupTitle",
+        "classifierName",
+        "contextKey",
+        "eventId",
+        "interactiveId",
+        "key",
+        "label",
+        "list",
+        "mode",
+        "reason",
+        "result",
+        "resultContextKey",
+        "savedValues",
+        "selector",
+        "slideRef",
+        "source",
+        "stateKey",
+        "stepId",
+        "toolName",
+        "triggersEvent",
+        "value",
+    )
+    details = {}
+    for key in detail_keys:
+        if key in action:
+            details[key] = compact_runtime_debug_value(action.get(key))
+    return details
+
+
+def runtime_action_trace_entry(action, timestamp):
+    action_type = str(action.get("type", "action") or "action")
+    return {
+        "at": timestamp,
+        "details": runtime_action_debug_details(action),
+        "summary": runtime_action_summary(action),
+        "type": action_type,
+    }
+
+
+def is_transition_trace_action(action):
+    action_type = str(action.get("type", "") or "")
+    return action_type in {
+        "goto_event",
+        "transition_missing",
+        "transition_depth_exceeded",
+        "event_skipped",
+    }
+
+
+def append_runtime_debug_trace(state, actions):
+    actions = [action for action in actions if isinstance(action, dict)]
+    if not actions:
+        return state
+
+    timestamp = timezone.now().isoformat()
+    debug = dict(state.get("runtimeDebug") or {})
+    existing_actions = list(debug.get("recentActions") or [])
+    existing_transitions = list(debug.get("transitions") or [])
+    trace_entries = [
+        runtime_action_trace_entry(action, timestamp)
+        for action in actions
+    ]
+    transition_entries = [
+        runtime_action_trace_entry(action, timestamp)
+        for action in actions
+        if is_transition_trace_action(action)
+    ]
+
+    debug["recentActions"] = (
+        trace_entries + existing_actions
+    )[:RUNTIME_ACTION_TRACE_LIMIT]
+    debug["transitions"] = (
+        transition_entries + existing_transitions
+    )[:RUNTIME_TRANSITION_TRACE_LIMIT]
+    debug["updatedAt"] = timestamp
+    state["runtimeDebug"] = debug
+    return state
+
+
 def apply_runtime_actions_to_state(
     state,
     actions,
@@ -2118,7 +2264,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["slideError"] = slide_error
     ui_runtime["triggers"] = triggers
     state["uiRuntime"] = ui_runtime
-    return state
+    return append_runtime_debug_trace(state, actions)
 
 
 def initial_script_cue_actions_from_messages(messages):

@@ -406,6 +406,13 @@ type RuntimeActionLogEntry = {
   type: string;
 };
 
+type RuntimeDebugTraceEntry = {
+  at: string;
+  details: Record<string, unknown>;
+  summary: string;
+  type: string;
+};
+
 type MainPanelAppHost = {
   context: Record<string, unknown>;
   emitActions: (actions: Array<Record<string, unknown>>) => void;
@@ -1371,6 +1378,10 @@ function runtimeActionText(action: Record<string, unknown>) {
     )}`;
   }
   if (type === "chat_message") {
+    const message = recordFromUnknown(action.message);
+    if (typeof message.content === "string") {
+      return compactRuntimeValue(message.content, "message");
+    }
     return compactRuntimeValue(action.content, "message");
   }
   if (type === "goto_event" || type === "set_ui_trigger") {
@@ -1420,6 +1431,42 @@ function runtimeActionText(action: Record<string, unknown>) {
   }
 
   return compactRuntimeValue(action, type);
+}
+
+function runtimeDebugEntries(value: unknown): RuntimeDebugTraceEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type : "action";
+    const at = typeof record.at === "string" ? record.at : "";
+    const summary =
+      typeof record.summary === "string"
+        ? record.summary
+        : compactRuntimeValue(record, type);
+    return [
+      {
+        at,
+        details: recordFromUnknown(record.details),
+        summary,
+        type,
+      },
+    ];
+  });
+}
+
+function runtimeTraceTime(value: string) {
+  if (!value) return "---";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function runtimeSlideFromRecord(value: unknown): (ResolvedSlide & { deckUrl: string }) | null {
@@ -9570,6 +9617,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             highlights={runtimeHighlights}
             interactive={runtimeInteractive}
             interactiveState={runtimeInteractiveState}
+            messages={messages}
+            runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}
             session={session}
             triggers={runtimeTriggers}
@@ -9588,6 +9637,8 @@ function RuntimeInspectorPanel({
   highlights,
   interactive,
   interactiveState,
+  messages,
+  runtimeDebug,
   runtimeContext,
   session,
   triggers,
@@ -9599,6 +9650,8 @@ function RuntimeInspectorPanel({
   highlights: Record<string, RuntimeHighlight>;
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
+  messages: ChatMessage[];
+  runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
   session: TutoringSession | null;
   triggers: RuntimeUiTrigger[];
@@ -9606,6 +9659,31 @@ function RuntimeInspectorPanel({
   const contextEntries = Object.entries(runtimeContext);
   const interactiveStateEntries = Object.entries(interactiveState);
   const highlightEntries = Object.values(highlights);
+  const serverActionEntries = runtimeDebugEntries(runtimeDebug.recentActions).slice(
+    0,
+    18,
+  );
+  const transitionEntries = runtimeDebugEntries(runtimeDebug.transitions).slice(
+    0,
+    12,
+  );
+  const scriptedMessages = messages.filter((message) => {
+    const source =
+      typeof message.metadata?.source === "string"
+        ? message.metadata.source
+        : "";
+    return (
+      message.role === "assistant" &&
+      message.content.trim().length > 0 &&
+      scriptAudioSources.has(source)
+    );
+  });
+  const cachedAudioMessages = scriptedMessages
+    .map(cachedScriptAudioFromMessage)
+    .filter(Boolean);
+  const timedAudioMessages = cachedAudioMessages.filter(
+    (audio) => (audio?.scriptWords?.length ?? 0) > 0,
+  );
   const currentEventLabel =
     currentEvent?.title || currentEventSlug || (session ? "Start" : "---");
 
@@ -9705,7 +9783,65 @@ function RuntimeInspectorPanel({
         </section>
 
         <section className="runtime-inspector-section">
-          <h2>Recent actions</h2>
+          <h2>Audio cache</h2>
+          <div className="runtime-inspector-list">
+            <div className="runtime-inspector-row">
+              <span>Scripted lines</span>
+              <code>{scriptedMessages.length}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Cached audio</span>
+              <code>{cachedAudioMessages.length}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Word timing</span>
+              <code>{timedAudioMessages.length}</code>
+            </div>
+          </div>
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Transitions</h2>
+          {transitionEntries.length ? (
+            <div className="runtime-action-log">
+              {transitionEntries.map((entry, index) => (
+                <div
+                  className="runtime-action-row"
+                  key={`${entry.at}-${entry.type}-${index}`}
+                >
+                  <span>{runtimeTraceTime(entry.at)}</span>
+                  <strong>{entry.type}</strong>
+                  <p>{entry.summary}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Server actions</h2>
+          {serverActionEntries.length ? (
+            <div className="runtime-action-log">
+              {serverActionEntries.map((entry, index) => (
+                <div
+                  className="runtime-action-row"
+                  key={`${entry.at}-${entry.type}-${index}`}
+                >
+                  <span>{runtimeTraceTime(entry.at)}</span>
+                  <strong>{entry.type}</strong>
+                  <p>{entry.summary}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="runtime-inspector-empty">---</p>
+          )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Client actions</h2>
           {actionLog.length ? (
             <div className="runtime-action-log">
               {actionLog.map((entry) => (
