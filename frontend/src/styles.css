@@ -467,6 +467,20 @@ button {
   letter-spacing: 0;
 }
 
+.experience-home-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.visually-hidden-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .experience-list {
   display: grid;
   align-content: start;

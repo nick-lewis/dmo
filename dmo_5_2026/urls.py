@@ -28,6 +28,7 @@ from core.views import (
     experiences,
     frontend_index,
     health,
+    import_experience,
     logout_user,
     resolve_google_slide,
     reorder_event_action_steps,
@@ -56,6 +57,11 @@ urlpatterns = [
     path("api/auth/me/", current_user, name="current-user"),
     path("api/auth/logout/", logout_user, name="logout-user"),
     path("api/experiences/", experiences, name="experiences"),
+    path(
+        "api/experiences/import/",
+        import_experience,
+        name="import-experience",
+    ),
     path(
         "api/experiences/<uuid:experience_id>/",
         update_experience,

@@ -2359,9 +2359,11 @@ function ExperienceHome() {
   const [isCreating, setIsCreating] = useState(false);
   const [duplicatingExperienceId, setDuplicatingExperienceId] = useState("");
   const [exportingExperienceId, setExportingExperienceId] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const autosaveTimers = useRef<Record<string, number>>({});
   const autosaveVersions = useRef<Record<string, number>>({});
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   function draftFromExperience(experience: Experience): ExperienceForm {
     return {
@@ -2716,6 +2718,42 @@ function ExperienceHome() {
     }
   }
 
+  async function importExperienceFile(file: File | null) {
+    if (!file) return;
+
+    setIsImporting(true);
+    setError("");
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const payload = await apiFetch<{ experience: Experience }>(
+        "/api/experiences/import/",
+        {
+          method: "POST",
+          body: JSON.stringify(parsed),
+        },
+      );
+      setExperiences((current) => [payload.experience, ...current]);
+      setDrafts((current) => ({
+        ...current,
+        [payload.experience.id]: draftFromExperience(payload.experience),
+      }));
+      writeSelectedExperienceId(payload.experience.id);
+    } catch (importError) {
+      setError(
+        importError instanceof Error
+          ? importError.message
+          : "Could not import experience.",
+      );
+    } finally {
+      setIsImporting(false);
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    }
+  }
+
   async function signOut() {
     setIsSigningOut(true);
 
@@ -2753,14 +2791,34 @@ function ExperienceHome() {
       <section className="experience-home">
         <div className="experience-home-title">
           <h1>Experiences</h1>
-          <button
-            className="header-action"
-            disabled={isCreating}
-            onClick={createExperience}
-            type="button"
-          >
-            {isCreating ? "Creating..." : "New"}
-          </button>
+          <div className="experience-home-actions">
+            <input
+              accept="application/json,.json,.dlu-experience.json"
+              aria-label="Import experience file"
+              className="visually-hidden-file-input"
+              onChange={(event) =>
+                void importExperienceFile(event.currentTarget.files?.[0] ?? null)
+              }
+              ref={importFileInputRef}
+              type="file"
+            />
+            <button
+              className="header-action secondary"
+              disabled={isImporting}
+              onClick={() => importFileInputRef.current?.click()}
+              type="button"
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </button>
+            <button
+              className="header-action"
+              disabled={isCreating}
+              onClick={createExperience}
+              type="button"
+            >
+              {isCreating ? "Creating..." : "New"}
+            </button>
+          </div>
         </div>
 
         {status === "loading" ? (
