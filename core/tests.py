@@ -995,6 +995,108 @@ class EventEditorApiTests(TestCase):
             "Event order must include every event exactly once.",
         )
 
+    def test_recache_slides_endpoint_refreshes_static_script_markers_once(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Intro",
+            config={
+                "deckUrl": "https://docs.google.com/presentation/d/test-deck/",
+                "text": "One [gslide: 2] two [gslide: 2] three [slide: 3].",
+            },
+            sort_order=0,
+        )
+        EventChatTool.objects.create(
+            event=event,
+            name="student_done",
+            handler_actions=[
+                {
+                    "actionType": "script",
+                    "config": {
+                        "deckUrl": "https://docs.google.com/presentation/d/other-deck/",
+                        "text": "Done [gslide: 1].",
+                    },
+                    "label": "Tool script",
+                }
+            ],
+        )
+
+        class ResolvedSlide:
+            cache_hit = False
+            filename = "slide.png"
+            page_id = "p"
+            presentation_id = "presentation"
+
+        with patch("core.views.resolve_slide_image", return_value=ResolvedSlide()) as resolve:
+            response = self.client.post(
+                f"/api/experiences/{self.experience.id}/slides/recache/",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["recachedCount"], 3)
+        self.assertEqual(payload["skippedCount"], 0)
+        self.assertEqual(payload["errorCount"], 0)
+        self.assertEqual(
+            [
+                (call.args[0], call.args[1], call.args[2])
+                for call in resolve.call_args_list
+            ],
+            [
+                ("https://docs.google.com/presentation/d/test-deck/", "2", True),
+                ("https://docs.google.com/presentation/d/test-deck/", "3", True),
+                ("https://docs.google.com/presentation/d/other-deck/", "1", True),
+            ],
+        )
+
+    def test_recache_slides_endpoint_skips_missing_or_dynamic_slide_targets(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Dynamic",
+            config={
+                "deckUrl": "{{ deck_url }}",
+                "text": "One [gslide: 2].",
+            },
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Missing deck",
+            config={
+                "deckUrl": "",
+                "text": "Two [gslide: 3].",
+            },
+            sort_order=1,
+        )
+
+        with patch("core.views.resolve_slide_image") as resolve:
+            response = self.client.post(
+                f"/api/experiences/{self.experience.id}/slides/recache/",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["recachedCount"], 0)
+        self.assertEqual(payload["skippedCount"], 2)
+        self.assertEqual(payload["errorCount"], 0)
+        resolve.assert_not_called()
+
 
 class SeedLocalDemosCommandTests(TestCase):
     def test_seed_local_demos_targets_requested_username(self):

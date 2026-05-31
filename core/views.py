@@ -2009,6 +2009,139 @@ def collect_experience_script_audio_items(experience):
     return items
 
 
+def iter_script_slide_recache_targets(experience):
+    seen = set()
+
+    def append_targets(source, raw_text, deck_url):
+        _, markers = parse_script_markers(raw_text)
+        for marker in markers:
+            marker_type = marker.get("markerType")
+            if marker_type not in {"gslide", "slide"}:
+                continue
+
+            args = marker.get("args") or []
+            slide_ref = str(args[0]).strip() if args else "1"
+            slide_ref = slide_ref or "1"
+            target = {
+                "deckUrl": deck_url,
+                "dynamic": validation_template_is_dynamic(deck_url)
+                or validation_template_is_dynamic(slide_ref),
+                "slideRef": slide_ref,
+                "source": source,
+            }
+            key = (target["deckUrl"], target["slideRef"])
+            if key in seen:
+                continue
+            seen.add(key)
+            yield target
+
+    for event in experience.events.order_by("sort_order", "created_at"):
+        event_source = event.title or event.slug or "Event"
+        for step in event.steps.order_by("sort_order", "created_at"):
+            if step.action_type != EventActionStep.ActionType.SCRIPT:
+                continue
+            config = step.config or {}
+            source = f"{event_source} / {step.label or DEFAULT_SCRIPT_STEP_LABEL}"
+            yield from append_targets(
+                source,
+                str(config.get("text", "")),
+                str(config.get("deckUrl", "") or "").strip(),
+            )
+        for tool in event.chat_tools.order_by("sort_order", "created_at"):
+            for source, raw_text, deck_url in iter_script_slide_sources(
+                tool.handler_actions,
+                f"{event_source} / FC route {tool.name}",
+            ):
+                yield from append_targets(source, raw_text, deck_url)
+        for check in event.conversation_checks.order_by("sort_order", "created_at"):
+            for source, raw_text, deck_url in iter_script_slide_sources(
+                check.handler_actions,
+                f"{event_source} / Check {check.title}",
+            ):
+                yield from append_targets(source, raw_text, deck_url)
+        for group in event.classifier_groups.order_by("sort_order", "created_at"):
+            for source, raw_text, deck_url in iter_script_slide_sources(
+                group.handler_actions,
+                f"{event_source} / Classifiers {group.title}",
+            ):
+                yield from append_targets(source, raw_text, deck_url)
+
+
+def iter_script_slide_sources(actions, source_prefix):
+    for source, raw_text, config in iter_script_action_configs(actions, source_prefix):
+        deck_url = str(config.get("deckUrl", "") or "").strip()
+        yield source, raw_text, deck_url
+
+
+def iter_script_action_configs(actions, source_prefix):
+    if not isinstance(actions, list):
+        return
+
+    for index, action in enumerate(actions, start=1):
+        if not isinstance(action, dict):
+            continue
+        action_type = str(action.get("actionType", "")).strip()
+        config = action.get("config") if isinstance(action.get("config"), dict) else {}
+        label = str(action.get("label", "")).strip()
+        source = f"{source_prefix} / {label or action_type or f'action {index}'}"
+        if action_type == EventActionStep.ActionType.SCRIPT:
+            yield source, str(config.get("text", "")), config
+
+
+def recache_experience_slide_images(experience):
+    recached = []
+    skipped = []
+    errors = []
+
+    for target in iter_script_slide_recache_targets(experience):
+        deck_url = target["deckUrl"]
+        slide_ref = target["slideRef"]
+        if not deck_url:
+            skipped.append(
+                {
+                    **target,
+                    "detail": "Script slide marker has no deck URL.",
+                }
+            )
+            continue
+        if target["dynamic"]:
+            skipped.append(
+                {
+                    **target,
+                    "detail": "Dynamic deck URLs or slide refs need runtime context.",
+                }
+            )
+            continue
+
+        try:
+            resolved = resolve_slide_image(deck_url, slide_ref, True)
+        except (SlideResolutionError, SlideFetchError) as error:
+            errors.append(
+                {
+                    **target,
+                    "detail": str(error),
+                }
+            )
+            continue
+
+        recached.append(
+            {
+                **target,
+                "cached": resolved.cache_hit,
+                "imageUrl": f"/api/slides/images/{resolved.filename}/",
+                "pageId": resolved.page_id,
+                "presentationId": resolved.presentation_id,
+            }
+        )
+
+    return {
+        "errors": errors,
+        "recached": recached,
+        "skipped": skipped,
+        "totalTargets": len(recached) + len(skipped) + len(errors),
+    }
+
+
 def generate_script_audio_item(request, experience, tutor_settings, item, force=False):
     if not item.get("canGenerate"):
         return False, "Dynamic scripts with template variables cannot be pregenerated yet."
@@ -5159,6 +5292,28 @@ def experience_script_audio(request, experience_id):
             "totalScripts": len(refreshed_items),
         },
         status=207 if errors else 200,
+    )
+
+
+@require_POST
+def recache_experience_slides(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    payload = recache_experience_slide_images(experience)
+    return JsonResponse(
+        {
+            **payload,
+            "errorCount": len(payload["errors"]),
+            "recachedCount": len(payload["recached"]),
+            "skippedCount": len(payload["skipped"]),
+        },
+        status=207 if payload["errors"] else 200,
     )
 
 

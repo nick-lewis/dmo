@@ -2634,6 +2634,16 @@ button {
   white-space: nowrap;
 }
 
+.study-status {
+  max-width: 220px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 820px) {
   .experience-home-page {
     height: auto;

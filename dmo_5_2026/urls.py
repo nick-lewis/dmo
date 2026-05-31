@@ -35,6 +35,7 @@ from core.views import (
     import_experience,
     logout_user,
     main_panel_apps,
+    recache_experience_slides,
     resolve_google_slide,
     reorder_experience_events,
     reorder_event_action_steps,
@@ -124,6 +125,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/script-audio/",
         experience_script_audio,
         name="experience-script-audio",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/slides/recache/",
+        recache_experience_slides,
+        name="recache-experience-slides",
     ),
     path(
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/",
