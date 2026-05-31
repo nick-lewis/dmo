@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import wave
 from threading import Event, Lock
@@ -33,6 +34,7 @@ from .views import (
     create_experience_from_export_payload,
     duplicate_experience_for_user,
     evaluate_classifier_group,
+    REGISTERED_MAIN_PANEL_APP_IDS,
     run_action_sequence,
     serialize_experience,
 )
@@ -371,6 +373,25 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(cue_action["type"], "interactive_error")
         self.assertEqual(cue_action["interactiveId"], "missing_app")
         self.assertEqual(cue_action["detail"], "Main-panel app is not registered.")
+
+    def test_backend_registered_apps_match_frontend_registry(self):
+        registry_path = (
+            settings.BASE_DIR / "frontend" / "src" / "mainPanelApps.tsx"
+        )
+        source = registry_path.read_text(encoding="utf-8")
+        definitions_block = source.split("export const mainPanelAppDefinitions", 1)[1]
+        definitions_block = definitions_block.split(
+            "export const defaultMainPanelApp",
+            1,
+        )[0]
+        frontend_ids = set(
+            re.findall(
+                r'defaultView:\s*"[^"]+",\s*id:\s*"([^"]+)"',
+                definitions_block,
+            )
+        )
+
+        self.assertEqual(REGISTERED_MAIN_PANEL_APP_IDS, frontend_ids)
 
 
 class EventEditorApiTests(TestCase):
