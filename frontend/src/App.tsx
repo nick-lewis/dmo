@@ -10570,6 +10570,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}
             session={session}
+            slide={resolvedSlide}
+            slideError={slideError}
             triggers={runtimeTriggers}
           />
         </aside>
@@ -10591,6 +10593,8 @@ function RuntimeInspectorPanel({
   runtimeDebug,
   runtimeContext,
   session,
+  slide,
+  slideError,
   triggers,
 }: {
   actionLog: RuntimeActionLogEntry[];
@@ -10605,6 +10609,8 @@ function RuntimeInspectorPanel({
   runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
   session: TutoringSession | null;
+  slide: ResolvedSlide | null;
+  slideError: string;
   triggers: RuntimeUiTrigger[];
 }) {
   const contextEntries = Object.entries(runtimeContext);
@@ -10695,6 +10701,28 @@ function RuntimeInspectorPanel({
                   <code>{compactRuntimeValue(value)}</code>
                 </div>
               ))}
+            </div>
+          ) : slide ? (
+            <div className="runtime-inspector-list">
+              <div className="runtime-inspector-row">
+                <span>Slide</span>
+                <code>{slide.slideRef || "---"}</code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Page</span>
+                <code>{slide.pageId || "---"}</code>
+              </div>
+              <div className="runtime-inspector-row">
+                <span>Cache</span>
+                <code>{slide.cached ? "hit" : "miss"}</code>
+              </div>
+            </div>
+          ) : slideError ? (
+            <div className="runtime-inspector-list">
+              <div className="runtime-inspector-row">
+                <span>Slide error</span>
+                <code>{slideError}</code>
+              </div>
             </div>
           ) : (
             <p className="runtime-inspector-empty">---</p>
