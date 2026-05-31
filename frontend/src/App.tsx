@@ -50,6 +50,7 @@ const panelLayoutStorageKey = "dlu.panel-layout.v1";
 const slideSettingsStorageKey = "dlu.slide-settings.v1";
 const experienceSelectionStorageKey = "dlu.selected-experience.v1";
 const experienceAutosaveDelayMs = 700;
+const editorUndoLimit = 80;
 const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
 const scriptTextStreamMaxMs = 16000;
@@ -67,8 +68,8 @@ const eventActionOptions = [
   { id: "get_ui_state", label: "Read UI" },
   { id: "highlight_on", label: "Highlight" },
   { id: "highlight_off", label: "Clear highlight" },
-  { id: "interactive", label: "Interactive" },
-  { id: "interactive_update", label: "Update interactive" },
+  { id: "interactive", label: "Main panel app" },
+  { id: "interactive_update", label: "Update app" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
@@ -979,9 +980,9 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive") {
     return {
       interactiveId: "delivery_data",
-      mode: "table",
-      prompt: "Review the delivery data and submit an estimate.",
-      title: "Delivery data",
+      mode: "default",
+      prompt: "",
+      title: "",
       triggersEvent: "",
     };
   }
@@ -1036,8 +1037,8 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "get_ui_state") return "Read UI state";
   if (actionType === "highlight_on") return "Highlight UI";
   if (actionType === "highlight_off") return "Clear highlight";
-  if (actionType === "interactive") return "Show interactive";
-  if (actionType === "interactive_update") return "Update interactive";
+  if (actionType === "interactive") return "Show main-panel app";
+  if (actionType === "interactive_update") return "Update app";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -1129,10 +1130,10 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
     return "Remove a highlight from an interface target";
   }
   if (actionType === "interactive") {
-    return "Show a main-panel interactive";
+    return "Mount a registered main-panel app";
   }
   if (actionType === "interactive_update") {
-    return "Update the current interactive";
+    return "Send an update to the mounted app";
   }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
@@ -1339,19 +1340,22 @@ function runtimeActionText(action: Record<string, unknown>) {
     return compactRuntimeValue(action.selector, "selector");
   }
   if (type === "interactive") {
-    return `${compactRuntimeValue(action.title, "interactive")} ${compactRuntimeValue(
+    return `mount ${compactRuntimeValue(
+      action.interactiveId,
+      "app",
+    )} ${compactRuntimeValue(
       action.mode,
-      "default",
+      "",
     )}`;
   }
   if (type === "interactive_update") {
     return `${compactRuntimeValue(
       action.interactiveId,
-      "interactive",
+      "app",
     )} -> ${compactRuntimeValue(action.mode, "update")}`;
   }
   if (type === "interactive_clear") {
-    return "clear interactive";
+    return "clear main-panel app";
   }
   if (type === "gslide") {
     return `slide ${compactRuntimeValue(action.slideRef, "1")}`;
@@ -1581,19 +1585,18 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     return `clear ${stringConfigValue(step.config, "selector", "target")}`;
   }
   if (step.actionType === "interactive") {
-    const title = stringConfigValue(step.config, "title");
     const interactiveId = stringConfigValue(
       step.config,
       "interactiveId",
-      "interactive",
+      "app",
     );
     const mode = stringConfigValue(step.config, "mode");
     const triggersEvent = stringConfigValue(step.config, "triggersEvent");
     const targetEvent = eventTitleForTrigger(events, triggersEvent);
     return [
-      title || interactiveId || "interactive",
-      mode ? `(${mode})` : "",
-      triggersEvent ? `-> ${targetEvent || triggersEvent}` : "",
+      interactiveId || "app",
+      mode ? `view ${mode}` : "",
+      triggersEvent ? `completion: ${targetEvent || triggersEvent}` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -1602,10 +1605,10 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     const interactiveId = stringConfigValue(
       step.config,
       "interactiveId",
-      "interactive",
+      "app",
     );
     const mode = stringConfigValue(step.config, "mode", "mode");
-    return `${interactiveId || "interactive"} -> ${mode || "mode"}`;
+    return `${interactiveId || "app"} view ${mode || "mode"}`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -2598,6 +2601,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [eventSearch, setEventSearch] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
+  const [eventRedoStack, setEventRedoStack] = useState<EventDraft[]>([]);
+  const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
   const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
@@ -2672,6 +2677,46 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     openExpandedItem(parentId);
   }
 
+  function clearEventUndoHistory() {
+    setEventUndoStack([]);
+    setEventRedoStack([]);
+  }
+
+  function stageEventDraft(nextDraft: EventDraft, recordHistory = true) {
+    if (recordHistory) {
+      setEventUndoStack((current) =>
+        [eventDraft, ...current].slice(0, editorUndoLimit),
+      );
+      setEventRedoStack([]);
+    }
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
+  function undoEventEdit() {
+    const previousDraft = eventUndoStack[0];
+    if (!previousDraft) return;
+
+    setEventUndoStack((current) => current.slice(1));
+    setEventRedoStack((current) =>
+      [eventDraft, ...current].slice(0, editorUndoLimit),
+    );
+    setEventDraft(previousDraft);
+    queueEventAutosave(previousDraft);
+  }
+
+  function redoEventEdit() {
+    const nextDraft = eventRedoStack[0];
+    if (!nextDraft) return;
+
+    setEventRedoStack((current) => current.slice(1));
+    setEventUndoStack((current) =>
+      [eventDraft, ...current].slice(0, editorUndoLimit),
+    );
+    setEventDraft(nextDraft);
+    queueEventAutosave(nextDraft);
+  }
+
   function applyExperience(nextExperience: Experience) {
     const selectedEvent = getSelectedExperienceEvent(
       nextExperience,
@@ -2685,6 +2730,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setTutorForm(nextExperience.tutor);
     setSelectedEventId(selectedEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(selectedEvent));
+    clearEventUndoHistory();
   }
 
   async function loadScriptAudioItems(targetExperienceId = experience?.id ?? "") {
@@ -2773,6 +2819,52 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   useEffect(() => {
     resizeTextareaToContent(overviewDescriptionRef.current);
   }, [experienceForm.description]);
+
+  useEffect(() => {
+    function stopScriptAudioPreview(event: KeyboardEvent) {
+      if (event.key !== "Escape" || !scriptAudioPreviewRef.current) return;
+
+      scriptAudioPreviewRef.current.pause();
+      scriptAudioPreviewRef.current = null;
+      event.preventDefault();
+    }
+
+    document.addEventListener("keydown", stopScriptAudioPreview, true);
+    return () =>
+      document.removeEventListener("keydown", stopScriptAudioPreview, true);
+  }, []);
+
+  useEffect(() => {
+    function handleEditorHistoryShortcut(event: KeyboardEvent) {
+      const target = event.target;
+      const isTypingTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (isTypingTarget || (!event.ctrlKey && !event.metaKey)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redoEventEdit();
+        return;
+      }
+      if (key === "z") {
+        event.preventDefault();
+        undoEventEdit();
+        return;
+      }
+      if (key === "y") {
+        event.preventDefault();
+        redoEventEdit();
+      }
+    }
+
+    document.addEventListener("keydown", handleEditorHistoryShortcut);
+    return () =>
+      document.removeEventListener("keydown", handleEditorHistoryShortcut);
+  }, [eventDraft, eventRedoStack, eventUndoStack]);
 
   useEffect(() => {
     if (!isEventAddMenuOpen) return;
@@ -3555,8 +3647,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       [field]: value,
     };
 
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    stageEventDraft(nextDraft);
   }
 
   function updateEventStepDraft(
@@ -3570,8 +3661,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       ),
     };
 
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    stageEventDraft(nextDraft);
   }
 
   function updateEventStepConfig(
@@ -3611,8 +3701,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       ),
     };
 
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    stageEventDraft(nextDraft);
   }
 
   function updateEventChatToolDraftField<K extends keyof EventChatToolDraft>(
@@ -3753,8 +3842,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       ),
     };
 
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    stageEventDraft(nextDraft);
   }
 
   function updateEventConversationCheckDraftField<
@@ -3863,8 +3951,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       ),
     };
 
-    setEventDraft(nextDraft);
-    queueEventAutosave(nextDraft);
+    stageEventDraft(nextDraft);
   }
 
   function updateEventClassifierGroupDraftField<
@@ -4003,6 +4090,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setExperience(nextExperience);
     setSelectedEventId(nextEvent.id);
     setEventDraft(eventDraftFromEvent(nextEvent));
+    clearEventUndoHistory();
   }
 
   async function selectEditorEvent(nextEventId: string) {
@@ -4014,6 +4102,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const nextEvent = getSelectedExperienceEvent(experience, nextEventId);
     setSelectedEventId(nextEvent?.id ?? "");
     setEventDraft(eventDraftFromEvent(nextEvent));
+    clearEventUndoHistory();
     resetExpandedItems();
     setDraggingStepId("");
     setIsEventAddMenuOpen(false);
@@ -4046,6 +4135,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
+      clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
       setIsEventAddMenuOpen(false);
@@ -4894,9 +4984,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         {step.actionType === "interactive" ? (
           <>
             <div className="event-context-line interactive-action-line">
-              <span className="event-detail-label">INTERACTIVE</span>
+              <span className="event-detail-label">APP</span>
               <input
-                aria-label="Interactive id"
+                aria-label="Main-panel app id"
                 onChange={(event) =>
                   updateConfig("interactiveId", event.target.value)
                 }
@@ -4904,27 +4994,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 type="text"
                 value={stringConfigValue(step.config, "interactiveId")}
               />
-              <span className="event-detail-label">MODE</span>
+              <span className="event-detail-label">VIEW</span>
               <input
-                aria-label="Interactive mode"
+                aria-label="Main-panel app view"
                 onChange={(event) => updateConfig("mode", event.target.value)}
-                placeholder="table"
+                placeholder="default"
                 type="text"
                 value={stringConfigValue(step.config, "mode")}
               />
             </div>
-            <div className="event-context-line interactive-action-line">
-              <span className="event-detail-label">TITLE</span>
-              <input
-                aria-label="Interactive title"
-                onChange={(event) => updateConfig("title", event.target.value)}
-                placeholder="Delivery data"
-                type="text"
-                value={stringConfigValue(step.config, "title")}
-              />
-              <span className="event-inline-operator">{"->"}</span>
+            <div className="event-context-line single-value">
+              <span className="event-detail-label">COMPLETION</span>
               <select
-                aria-label="Interactive completion event"
+                aria-label="Main-panel app completion event"
                 onChange={(event) =>
                   updateConfig("triggersEvent", event.target.value)
                 }
@@ -4942,25 +5024,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 ))}
               </select>
             </div>
-            <div className="event-context-line single-value">
-              <span className="event-detail-label">PROMPT</span>
-              <input
-                aria-label="Interactive prompt"
-                onChange={(event) => updateConfig("prompt", event.target.value)}
-                placeholder="What the learner should do here."
-                type="text"
-                value={stringConfigValue(step.config, "prompt")}
-              />
-            </div>
           </>
         ) : null}
 
         {step.actionType === "interactive_update" ? (
           <>
             <div className="event-context-line interactive-action-line">
-              <span className="event-detail-label">UPDATE</span>
+              <span className="event-detail-label">APP</span>
               <input
-                aria-label="Interactive id"
+                aria-label="Main-panel app id"
                 onChange={(event) =>
                   updateConfig("interactiveId", event.target.value)
                 }
@@ -4968,33 +5040,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 type="text"
                 value={stringConfigValue(step.config, "interactiveId")}
               />
-              <span className="event-detail-label">MODE</span>
+              <span className="event-detail-label">VIEW</span>
               <input
-                aria-label="Interactive mode"
+                aria-label="Main-panel app view"
                 onChange={(event) => updateConfig("mode", event.target.value)}
                 placeholder="graph"
                 type="text"
                 value={stringConfigValue(step.config, "mode")}
-              />
-            </div>
-            <div className="event-context-line single-value">
-              <span className="event-detail-label">TITLE</span>
-              <input
-                aria-label="Interactive title"
-                onChange={(event) => updateConfig("title", event.target.value)}
-                placeholder="Optional display title"
-                type="text"
-                value={stringConfigValue(step.config, "title")}
-              />
-            </div>
-            <div className="event-context-line single-value">
-              <span className="event-detail-label">PROMPT</span>
-              <input
-                aria-label="Interactive prompt"
-                onChange={(event) => updateConfig("prompt", event.target.value)}
-                placeholder="Optional updated prompt."
-                type="text"
-                value={stringConfigValue(step.config, "prompt")}
               />
             </div>
           </>
@@ -5200,7 +5252,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onGenerateAll={() => void generateScriptAudio()}
                 onGenerateOne={(scriptId) => void generateScriptAudio(scriptId)}
                 onPlay={playScriptAudioPreview}
-                onRefresh={() => void loadScriptAudioItems(experience.id)}
+                onRegenerateAll={() => void generateScriptAudio("", true)}
+                onRegenerateOne={(scriptId) => void generateScriptAudio(scriptId, true)}
                 status={scriptAudioStatus}
               />
             </section>
@@ -5301,42 +5354,62 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
                 <div className="event-workspace">
                   <div className="event-document-header">
-                <div className="event-title-stack">
-                  <div className="event-title-line">
-                    <input
-                      aria-label="Event title"
-                      className="event-title-text"
-                      onChange={(event) =>
-                        updateEventDraft("title", event.target.value)
-                      }
-                      style={inlineFieldWidthStyle(
-                        eventDraft.title,
-                        "Start",
-                        6,
-                        32,
-                      )}
-                      type="text"
-                      value={eventDraft.title}
-                    />
-                    <input
-                      aria-label="Event description"
-                      className="event-description-text"
-                      onChange={(event) =>
-                        updateEventDraft("description", event.target.value)
-                      }
-                      placeholder="---"
-                      style={inlineFieldWidthStyle(
-                        eventDraft.description,
-                        "---",
-                        4,
-                        54,
-                      )}
-                      type="text"
-                      value={eventDraft.description}
-                    />
+                    <div className="event-title-stack">
+                      <div className="event-title-line">
+                        <input
+                          aria-label="Event title"
+                          className="event-title-text"
+                          onChange={(event) =>
+                            updateEventDraft("title", event.target.value)
+                          }
+                          style={inlineFieldWidthStyle(
+                            eventDraft.title,
+                            "Start",
+                            6,
+                            32,
+                          )}
+                          type="text"
+                          value={eventDraft.title}
+                        />
+                        <input
+                          aria-label="Event description"
+                          className="event-description-text"
+                          onChange={(event) =>
+                            updateEventDraft("description", event.target.value)
+                          }
+                          placeholder="---"
+                          style={inlineFieldWidthStyle(
+                            eventDraft.description,
+                            "---",
+                            4,
+                            54,
+                          )}
+                          type="text"
+                          value={eventDraft.description}
+                        />
+                      </div>
+                    </div>
+                    <div className="event-history-tools">
+                      <button
+                        className="event-icon-button"
+                        disabled={!eventUndoStack.length}
+                        onClick={undoEventEdit}
+                        title="Undo event edit"
+                        type="button"
+                      >
+                        <UndoIcon />
+                      </button>
+                      <button
+                        className="event-icon-button"
+                        disabled={!eventRedoStack.length}
+                        onClick={redoEventEdit}
+                        title="Redo event edit"
+                        type="button"
+                      >
+                        <RedoIcon />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
 
               {selectedEventRoutes.length ? (
                 <div className="event-route-strip" aria-label="Event routes">
@@ -5748,11 +5821,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           {step.actionType === "interactive" ? (
                             <>
                               <div className="event-context-line interactive-action-line">
-                                <span className="event-detail-label">
-                                  INTERACTIVE
-                                </span>
+                                <span className="event-detail-label">APP</span>
                                 <input
-                                  aria-label="Interactive id"
+                                  aria-label="Main-panel app id"
                                   onChange={(event) =>
                                     updateEventStepConfig(
                                       step.id,
@@ -5767,9 +5838,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     "interactiveId",
                                   )}
                                 />
-                                <span className="event-detail-label">MODE</span>
+                                <span className="event-detail-label">VIEW</span>
                                 <input
-                                  aria-label="Interactive mode"
+                                  aria-label="Main-panel app view"
                                   onChange={(event) =>
                                     updateEventStepConfig(
                                       step.id,
@@ -5777,31 +5848,17 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       event.target.value,
                                     )
                                   }
-                                  placeholder="table"
+                                  placeholder="default"
                                   type="text"
                                   value={stringConfigValue(step.config, "mode")}
                                 />
                               </div>
-                              <div className="event-context-line interactive-action-line">
-                                <span className="event-detail-label">TITLE</span>
-                                <input
-                                  aria-label="Interactive title"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "title",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="Delivery data"
-                                  type="text"
-                                  value={stringConfigValue(step.config, "title")}
-                                />
-                                <span className="event-inline-operator">
-                                  {"->"}
+                              <div className="event-context-line single-value">
+                                <span className="event-detail-label">
+                                  COMPLETION
                                 </span>
                                 <select
-                                  aria-label="Interactive completion event"
+                                  aria-label="Main-panel app completion event"
                                   onChange={(event) =>
                                     updateEventStepConfig(
                                       step.id,
@@ -5825,31 +5882,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   ))}
                                 </select>
                               </div>
-                              <div className="event-context-line single-value">
-                                <span className="event-detail-label">PROMPT</span>
-                                <input
-                                  aria-label="Interactive prompt"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "prompt",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="What the learner should do here."
-                                  type="text"
-                                  value={stringConfigValue(step.config, "prompt")}
-                                />
-                              </div>
                             </>
                           ) : null}
 
                           {step.actionType === "interactive_update" ? (
                             <>
                               <div className="event-context-line interactive-action-line">
-                                <span className="event-detail-label">UPDATE</span>
+                                <span className="event-detail-label">APP</span>
                                 <input
-                                  aria-label="Interactive id"
+                                  aria-label="Main-panel app id"
                                   onChange={(event) =>
                                     updateEventStepConfig(
                                       step.id,
@@ -5864,9 +5905,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                     "interactiveId",
                                   )}
                                 />
-                                <span className="event-detail-label">MODE</span>
+                                <span className="event-detail-label">VIEW</span>
                                 <input
-                                  aria-label="Interactive mode"
+                                  aria-label="Main-panel app view"
                                   onChange={(event) =>
                                     updateEventStepConfig(
                                       step.id,
@@ -5877,38 +5918,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   placeholder="graph"
                                   type="text"
                                   value={stringConfigValue(step.config, "mode")}
-                                />
-                              </div>
-                              <div className="event-context-line single-value">
-                                <span className="event-detail-label">TITLE</span>
-                                <input
-                                  aria-label="Interactive title"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "title",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="Optional display title"
-                                  type="text"
-                                  value={stringConfigValue(step.config, "title")}
-                                />
-                              </div>
-                              <div className="event-context-line single-value">
-                                <span className="event-detail-label">PROMPT</span>
-                                <input
-                                  aria-label="Interactive prompt"
-                                  onChange={(event) =>
-                                    updateEventStepConfig(
-                                      step.id,
-                                      "prompt",
-                                      event.target.value,
-                                    )
-                                  }
-                                  placeholder="Optional updated prompt."
-                                  type="text"
-                                  value={stringConfigValue(step.config, "prompt")}
                                 />
                               </div>
                             </>
@@ -9787,7 +9796,8 @@ function ScriptAudioPanel({
   onGenerateAll,
   onGenerateOne,
   onPlay,
-  onRefresh,
+  onRegenerateAll,
+  onRegenerateOne,
   status,
 }: {
   error: string;
@@ -9796,16 +9806,20 @@ function ScriptAudioPanel({
   onGenerateAll: () => void;
   onGenerateOne: (scriptId: string) => void;
   onPlay: (item: ScriptAudioItem) => void;
-  onRefresh: () => void;
+  onRegenerateAll: () => void;
+  onRegenerateOne: (scriptId: string) => void;
   status: "idle" | "loading" | "generating";
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const cachedCount = items.filter((item) => item.cached && item.wordsCached).length;
+  const audioCount = items.filter((item) => item.cached).length;
+  const timingCount = items.filter((item) => item.wordsCached).length;
   const statusLabel =
     status === "generating"
       ? "Generating"
       : status === "loading"
         ? "Loading"
-        : `${cachedCount}/${items.length}`;
+        : `${items.length} scripts`;
 
   return (
     <div className="script-audio-panel">
@@ -9821,52 +9835,79 @@ function ScriptAudioPanel({
             onClick={onGenerateAll}
             type="button"
           >
-            Generate
+            Generate missing
           </button>
           <button
             className="header-action secondary"
-            disabled={isBusy}
-            onClick={onRefresh}
+            disabled={isBusy || !items.some((item) => item.canGenerate)}
+            onClick={onRegenerateAll}
             type="button"
           >
-            Refresh
+            Regenerate
+          </button>
+          <button
+            aria-expanded={isExpanded}
+            className="header-action secondary"
+            onClick={() => setIsExpanded((current) => !current)}
+            type="button"
+          >
+            {isExpanded ? "Hide scripts" : "Show scripts"}
           </button>
         </div>
       </div>
 
-      <div className="script-audio-list">
-        {items.map((item) => (
-          <div className="script-audio-row" key={item.id}>
-            <span className="script-audio-source">{item.source}</span>
-            <span className="script-audio-preview">{item.preview || "---"}</span>
-            <span className={`script-audio-pill ${item.cached ? "ready" : ""}`}>
-              {item.cached ? "audio" : "new"}
-            </span>
-            <span className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}>
-              {item.wordsCached ? "words" : "timing"}
-            </span>
-            <button
-              className="event-icon-button"
-              disabled={!item.audioUrl}
-              onClick={() => onPlay(item)}
-              title="Play cached audio"
-              type="button"
-            >
-              <PlayIcon />
-            </button>
-            <button
-              className="event-icon-button"
-              disabled={isBusy || !item.canGenerate}
-              onClick={() => onGenerateOne(item.id)}
-              title="Generate this script"
-              type="button"
-            >
-              <RefreshIcon />
-            </button>
-          </div>
-        ))}
-        {!items.length ? <div className="script-audio-empty">---</div> : null}
+      <div className="script-audio-summary">
+        <span>{audioCount}/{items.length} audio</span>
+        <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
+          {timingCount}/{items.length} timed subtitles
+        </span>
+        {cachedCount === items.length && items.length ? <span>ready</span> : null}
       </div>
+
+      {isExpanded ? (
+        <div className="script-audio-list">
+          {items.map((item) => (
+            <div className="script-audio-row" key={item.id}>
+              <span className="script-audio-source">{item.source}</span>
+              <span className="script-audio-preview">{item.preview || "---"}</span>
+              <span className={`script-audio-pill ${item.cached ? "ready" : ""}`}>
+                {item.cached ? "audio" : "missing"}
+              </span>
+              <span
+                className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}
+                title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text."
+              >
+                {item.wordsCached ? "subtitle timing" : "no timing"}
+              </span>
+              <button
+                className="event-icon-button"
+                disabled={!item.audioUrl}
+                onClick={() => onPlay(item)}
+                title="Play cached audio. Press Escape to stop."
+                type="button"
+              >
+                <PlayIcon />
+              </button>
+              <button
+                className="event-icon-button"
+                disabled={isBusy || !item.canGenerate}
+                onClick={() =>
+                  item.cached ? onRegenerateOne(item.id) : onGenerateOne(item.id)
+                }
+                title={
+                  item.cached
+                    ? "Regenerate this script's audio and timing"
+                    : "Generate this script's audio and timing"
+                }
+                type="button"
+              >
+                <RefreshIcon />
+              </button>
+            </div>
+          ))}
+          {!items.length ? <div className="script-audio-empty">---</div> : null}
+        </div>
+      ) : null}
       {error ? <p className="control-error">{error}</p> : null}
     </div>
   );
@@ -10538,15 +10579,18 @@ function DeliveryDataInteractive({
     typeof state.estimate === "string" ? state.estimate : String(state.estimate ?? "");
   const mode = interactive.mode || "table";
   const maxMinutes = Math.max(...rows.map((row) => row.minutes));
+  const appTitle = interactive.title || "Delivery data";
+  const appPrompt =
+    interactive.prompt || "Estimate the delivery time for a 3.9 mile order.";
 
   return (
     <div className="interactive-workspace">
       <div className="interactive-shell delivery-interactive">
         <div className="interactive-header">
           <span>{mode}</span>
-          <strong>{interactive.title}</strong>
+          <strong>{appTitle}</strong>
         </div>
-        {interactive.prompt ? <p>{interactive.prompt}</p> : null}
+        <p>{appPrompt}</p>
 
         {mode === "graph" ? (
           <div className="delivery-bars" aria-label="Delivery data graph">
@@ -10861,6 +10905,46 @@ function RefreshIcon() {
     >
       <path
         d="M20 12a8 8 0 0 1-13.7 5.7M4 12a8 8 0 0 1 13.7-5.7M18 3v4h-4M6 21v-4h4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function UndoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M9 7 4 12l5 5M5 12h9a5 5 0 0 1 0 10h-1"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function RedoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="m15 7 5 5-5 5M19 12h-9a5 5 0 0 0 0 10h1"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"

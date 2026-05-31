@@ -730,9 +730,27 @@ button {
 }
 
 .script-audio-actions .header-action {
-  min-width: 82px;
+  min-width: 88px;
   min-height: 28px;
   padding-block: 4px;
+}
+
+.script-audio-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.script-audio-summary span {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--page-ink) 74%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 50%, transparent);
+  font-size: 0.66rem;
+  font-weight: 820;
 }
 
 .script-audio-list {
@@ -746,7 +764,7 @@ button {
 
 .script-audio-row {
   display: grid;
-  grid-template-columns: minmax(130px, 0.5fr) minmax(0, 1fr) auto auto 28px 28px;
+  grid-template-columns: minmax(130px, 0.5fr) minmax(0, 1fr) minmax(54px, auto) minmax(88px, auto) 28px 28px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -1058,8 +1076,16 @@ button {
 
 .event-document-header {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 4px;
   min-width: 0;
+}
+
+.event-history-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .event-route-strip {
