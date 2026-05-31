@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,6 +96,55 @@ def slide_cache_dir():
     return path
 
 
+def slide_index_path(deck):
+    suffix = "published" if deck.is_published else "standard"
+    return slide_cache_dir() / (
+        f"{safe_filename_part(deck.presentation_id)}_{suffix}_index.json"
+    )
+
+
+def read_cached_page_ids(deck):
+    path = slide_index_path(deck)
+    if not path.exists():
+        return []
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+    page_ids = payload.get("pageIds") if isinstance(payload, dict) else None
+    if not isinstance(page_ids, list):
+        return []
+
+    return [
+        str(page_id)
+        for page_id in page_ids
+        if isinstance(page_id, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", page_id)
+    ]
+
+
+def write_cached_page_ids(deck, page_ids):
+    if not page_ids:
+        return
+
+    path = slide_index_path(deck)
+    try:
+        path.write_text(
+            json.dumps(
+                {
+                    "isPublished": deck.is_published,
+                    "pageIds": page_ids,
+                    "presentationId": deck.presentation_id,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def get_slide_image_path(filename):
     if filename != Path(filename).name or not filename.endswith(".png"):
         raise SlideResolutionError("Slide image filename is invalid.")
@@ -162,6 +212,7 @@ def discover_page_ids(deck):
             page_ids.append(page_id)
 
         if page_ids:
+            write_cached_page_ids(deck, page_ids)
             return page_ids
 
     return []
@@ -174,7 +225,9 @@ def candidate_page_ids(deck, slide_ref):
 
     slide_number = int(normalized_ref)
     candidates = []
-    discovered_ids = discover_page_ids(deck)
+    discovered_ids = read_cached_page_ids(deck)
+    if len(discovered_ids) < slide_number:
+        discovered_ids = discover_page_ids(deck)
     if len(discovered_ids) >= slide_number:
         candidates.append(discovered_ids[slide_number - 1])
 
