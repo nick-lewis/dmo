@@ -5170,6 +5170,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     return eventDraftFromEvent(persistedEvent);
   }
 
+  function rememberPersistedEventForUndo(selectedEvent: ExperienceEvent) {
+    rememberEventDraftForUndo(persistedDraftForUndo(selectedEvent));
+  }
+
   async function selectEditorEvent(nextEventId: string) {
     if (!experience || nextEventId === selectedEventId) return;
 
@@ -5289,7 +5293,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      rememberEventDraftForUndo();
+      rememberPersistedEventForUndo(selectedEvent);
       const existingStepIds = new Set(selectedEvent.steps.map((step) => step.id));
       const payload = await apiFetch<{ event: ExperienceEvent }>(
         `/api/experiences/${experience.id}/events/${selectedEvent.id}/steps/`,
@@ -5334,7 +5338,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      rememberEventDraftForUndo();
+      rememberPersistedEventForUndo(selectedEvent);
       const existingNames = new Set(
         selectedEvent.chatTools.map((tool) => tool.name),
       );
@@ -5384,7 +5388,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      rememberEventDraftForUndo();
+      rememberPersistedEventForUndo(selectedEvent);
       const existingCheckIds = new Set(
         (selectedEvent.conversationChecks ?? []).map((check) => check.id),
       );
@@ -5424,7 +5428,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      rememberEventDraftForUndo();
+      rememberPersistedEventForUndo(selectedEvent);
       const existingGroupIds = new Set(
         (selectedEvent.classifierGroups ?? []).map((group) => group.id),
       );
@@ -5464,7 +5468,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setError("");
 
     try {
-      rememberEventDraftForUndo();
+      rememberPersistedEventForUndo(selectedEvent);
       const resolvedGroupId = eventGroupIdRemap.current.get(groupId) ?? groupId;
       const group = selectedEvent.classifierGroups.find(
         (candidate) =>
@@ -5683,7 +5687,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       sortOrder: index,
     }));
 
-    rememberEventDraftForUndo();
+    rememberPersistedEventForUndo(selectedEvent);
     clearEventAutosaveTimer();
     setEventDraft({
       ...eventDraft,
