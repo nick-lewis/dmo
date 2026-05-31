@@ -1325,6 +1325,52 @@ def create_experience_from_export_payload(user, payload):
     return experience, ""
 
 
+def create_experience_event_from_payload(experience, event_data):
+    if not isinstance(event_data, dict):
+        raise ExperienceImportError("Event restore payload must be an object.")
+
+    next_sort_order = (
+        experience.events.aggregate(Max("sort_order"))["sort_order__max"] or 0
+    ) + 1
+    event_title = import_string(
+        event_data.get("title"),
+        "New event",
+        max_length=160,
+    )
+    event_slug = import_slug(event_data.get("slug"), event_title)
+    event = ExperienceEvent.objects.create(
+        experience=experience,
+        title=event_title,
+        slug=unique_event_slug(experience, event_slug),
+        description=import_string(
+            event_data.get("description"),
+            "",
+            max_length=4000,
+            strip=False,
+        ),
+        chat_instructions=import_string(
+            event_data.get("chatInstructions"),
+            "",
+            max_length=12000,
+            strip=False,
+        ),
+        is_start=import_bool(event_data.get("isStart"), False),
+        sort_order=import_int(event_data.get("sortOrder"), next_sort_order),
+    )
+    if event.is_start:
+        ExperienceEvent.objects.filter(experience=experience).exclude(
+            id=event.id,
+        ).update(is_start=False)
+
+    import_event_steps(event, event_data.get("steps"))
+    if not event.steps.exists():
+        ensure_default_event_step(event)
+    import_chat_tools(event, event_data.get("chatTools"))
+    import_conversation_checks(event, event_data.get("conversationChecks"))
+    import_classifier_groups(event, event_data.get("classifierGroups"))
+    return event
+
+
 def ensure_default_event_step(event):
     if event.steps.exists():
         return event.steps.order_by("sort_order", "created_at").first()
@@ -4459,6 +4505,19 @@ def experience_events(request, experience_id):
     data = parse_json_body(request)
     if data is None:
         return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    if isinstance(data.get("event"), dict):
+        try:
+            with transaction.atomic():
+                event = create_experience_event_from_payload(
+                    experience,
+                    data.get("event"),
+                )
+                ensure_start_event(experience)
+        except ExperienceImportError as error:
+            return JsonResponse({"detail": str(error)}, status=400)
+
+        return JsonResponse({"event": serialize_experience_event(event)}, status=201)
 
     title = str(data.get("title", "")).strip() or "New event"
     description = str(data.get("description", "")).strip()

@@ -3367,6 +3367,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [eventRedoStack, setEventRedoStack] = useState<EventDraft[]>([]);
   const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
+  const [recentDeletedEvent, setRecentDeletedEvent] =
+    useState<ExperienceEvent | null>(null);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
   const [deletingEventId, setDeletingEventId] = useState("");
@@ -3464,6 +3466,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }
 
   function rememberEventDraftForUndo(draft = eventDraft) {
+    setRecentDeletedEvent(null);
     const snapshot = cloneEventDraft(draft);
     const snapshotSignature = eventDraftSignature(snapshot);
     setEventUndoStack((current) => {
@@ -3511,6 +3514,64 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const restoredDraft = cloneEventDraft(nextDraft);
     setEventDraft(restoredDraft);
     queueEventAutosave(restoredDraft);
+  }
+
+  async function restoreRecentDeletedEvent() {
+    if (!experience || !recentDeletedEvent) return;
+
+    setError("");
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experience.id}/events/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ event: recentDeletedEvent }),
+        },
+      );
+
+      setExperience((current) => {
+        if (!current || current.id !== experience.id) return current;
+        const baseExperience = payload.event.isStart
+          ? {
+              ...current,
+              events: current.events.map((event) => ({
+                ...event,
+                isStart: false,
+              })),
+            }
+          : current;
+        return addExperienceEvent(baseExperience, payload.event);
+      });
+      lastPersistedEvent.current = payload.event;
+      setSelectedEventId(payload.event.id);
+      setEventDraft(eventDraftFromEvent(payload.event));
+      setRecentDeletedEvent(null);
+      clearEventUndoHistory();
+      resetExpandedItems();
+      setDraggingStepId("");
+      setIsEventAddMenuOpen(false);
+      setIsConversationAddMenuOpen(false);
+      setConversationAddMenuToolId("");
+      setConversationAddMenuCheckId("");
+    } catch (restoreError) {
+      setError(
+        restoreError instanceof Error
+          ? restoreError.message
+          : "Could not restore deleted event.",
+      );
+    }
+  }
+
+  function undoEditorHistory() {
+    if (eventUndoStack.length) {
+      undoEventEdit();
+      return;
+    }
+    void restoreRecentDeletedEvent();
+  }
+
+  function redoEditorHistory() {
+    redoEventEdit();
   }
 
   function applyExperience(nextExperience: Experience) {
@@ -3641,24 +3702,24 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       const key = event.key.toLowerCase();
       if (key === "z" && event.shiftKey) {
         event.preventDefault();
-        redoEventEdit();
+        redoEditorHistory();
         return;
       }
       if (key === "z") {
         event.preventDefault();
-        undoEventEdit();
+        undoEditorHistory();
         return;
       }
       if (key === "y") {
         event.preventDefault();
-        redoEventEdit();
+        redoEditorHistory();
       }
     }
 
     document.addEventListener("keydown", handleEditorHistoryShortcut);
     return () =>
       document.removeEventListener("keydown", handleEditorHistoryShortcut);
-  }, [eventDraft, eventRedoStack, eventUndoStack]);
+  }, [eventDraft, eventRedoStack, eventUndoStack, recentDeletedEvent]);
 
   useEffect(() => {
     if (!isEventAddMenuOpen) return;
@@ -5311,6 +5372,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
       setSelectedEventId(payload.event.id);
       setEventDraft(eventDraftFromEvent(payload.event));
+      setRecentDeletedEvent(null);
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
@@ -5360,6 +5422,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       lastPersistedEvent.current = nextSelectedEvent;
       setSelectedEventId(nextSelectedEvent?.id ?? "");
       setEventDraft(eventDraftFromEvent(nextSelectedEvent));
+      setRecentDeletedEvent(selectedEvent);
       clearEventUndoHistory();
       resetExpandedItems();
       setDraggingStepId("");
@@ -6072,6 +6135,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           "No direct route",
       })),
     );
+  const canUndoEditorHistory =
+    eventUndoStack.length > 0 || Boolean(recentDeletedEvent);
+  const undoEditorTitle = eventUndoStack.length
+    ? `Undo event edit (${eventUndoStack.length} available)`
+    : recentDeletedEvent
+      ? `Restore deleted event: ${recentDeletedEvent.title || recentDeletedEvent.slug}`
+      : "Nothing to undo";
 
   function renderActionStepDetail(
     step: EventStepDraft,
@@ -6675,13 +6745,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       <button
                         aria-label="Undo event edit or reordered action"
                         className="event-icon-button"
-                        disabled={!eventUndoStack.length}
-                        onClick={undoEventEdit}
-                        title={
-                          eventUndoStack.length
-                            ? `Undo event edit (${eventUndoStack.length} available)`
-                            : "Nothing to undo"
-                        }
+                        disabled={!canUndoEditorHistory}
+                        onClick={undoEditorHistory}
+                        title={undoEditorTitle}
                         type="button"
                       >
                         <UndoIcon />
@@ -6690,7 +6756,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         aria-label="Redo event edit or reordered action"
                         className="event-icon-button"
                         disabled={!eventRedoStack.length}
-                        onClick={redoEventEdit}
+                        onClick={redoEditorHistory}
                         title={
                           eventRedoStack.length
                             ? `Redo event edit (${eventRedoStack.length} available)`

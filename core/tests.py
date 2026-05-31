@@ -663,6 +663,73 @@ class EventEditorApiTests(TestCase):
             "An experience needs at least one event.",
         )
 
+    def test_restore_event_from_serialized_payload_preserves_nested_shape(self):
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        event_payload = {
+            "chatInstructions": "Stay focused on the restored event.",
+            "chatTools": [
+                {
+                    "description": "Learner is done.",
+                    "enabled": True,
+                    "handlerActions": [
+                        {
+                            "actionType": "set_context",
+                            "condition": {},
+                            "config": {"key": "done", "value": "yes"},
+                            "enabled": True,
+                            "id": "save-done",
+                            "label": "Save done",
+                            "sortOrder": 0,
+                        }
+                    ],
+                    "name": "student_done",
+                    "parameters": {"type": "object", "properties": {}},
+                    "saveArgument": "",
+                    "saveContextKey": "",
+                    "sortOrder": 0,
+                    "triggersEvent": "start",
+                }
+            ],
+            "classifierGroups": [],
+            "conversationChecks": [],
+            "description": "Restored from undo.",
+            "isStart": False,
+            "slug": "restored-event",
+            "sortOrder": 3,
+            "steps": [
+                {
+                    "actionType": "script",
+                    "condition": {},
+                    "config": {"text": "Restored line."},
+                    "enabled": True,
+                    "id": "script-step",
+                    "label": "Restored script",
+                    "sortOrder": 0,
+                }
+            ],
+            "title": "Restored event",
+        }
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/",
+            data=json.dumps({"event": event_payload}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        event = self.experience.events.get(slug="restored-event")
+        self.assertEqual(event.title, "Restored event")
+        self.assertEqual(event.chat_instructions, "Stay focused on the restored event.")
+        self.assertEqual(event.steps.get().config["text"], "Restored line.")
+        tool = event.chat_tools.get(name="student_done")
+        self.assertEqual(tool.handler_actions[0]["config"]["key"], "done")
+
 
 class RuntimeContextActionTests(TestCase):
     def setUp(self):
