@@ -1561,14 +1561,6 @@ function eventOutgoingLinks(event: ExperienceEvent) {
   return links;
 }
 
-function eventOutgoingSlugs(event: ExperienceEvent) {
-  const slugs = new Set<string>();
-  for (const link of eventOutgoingLinks(event)) {
-    slugs.add(link.slug);
-  }
-  return [...slugs];
-}
-
 function routeKindCounts(links: EventOutgoingLink[]) {
   const counts = new Map<string, number>();
   links.forEach((link) => {
@@ -12838,6 +12830,7 @@ function EventGraphView({
   onSelectEvent: (eventId: string) => void;
   selectedEventId: string;
 }) {
+  const [selectedRouteKind, setSelectedRouteKind] = useState("");
   const sortedEvents = sortedExperienceEvents(events);
   const indexBySlug = new Map<string, number>();
   sortedEvents.forEach((event, index) => {
@@ -12888,17 +12881,21 @@ function EventGraphView({
   const rowHeight = 44;
   const height = Math.max(74, sortedEvents.length * rowHeight + 28);
   const links = sortedEvents.flatMap((event, sourceIndex) =>
-    eventOutgoingSlugs(event)
-      .map((slug) => ({
-        slug,
+    eventOutgoingLinks(event)
+      .filter((link) => !selectedRouteKind || link.kind === selectedRouteKind)
+      .map((link) => ({
+        slug: link.slug,
         sourceIndex,
-        targetIndex: indexBySlug.get(slug) ?? -1,
+        targetIndex: indexBySlug.get(link.slug) ?? -1,
       }))
       .filter((link) => link.targetIndex >= 0),
   );
   const selectedOutgoingLinks = selectedEvent
     ? eventOutgoingLinks(selectedEvent)
     : [];
+  const visibleSelectedOutgoingLinks = selectedRouteKind
+    ? selectedOutgoingLinks.filter((link) => link.kind === selectedRouteKind)
+    : selectedOutgoingLinks;
   const selectedRouteKindSummary = routeKindCounts(selectedOutgoingLinks);
   const incomingLinks = selectedEvent
     ? sortedEvents.flatMap((event) =>
@@ -12914,12 +12911,18 @@ function EventGraphView({
           })),
       )
     : [];
+  const visibleIncomingLinks = selectedRouteKind
+    ? incomingLinks.filter((link) => link.kind === selectedRouteKind)
+    : incomingLinks;
   const unresolvedLinks = selectedOutgoingLinks.filter(
     (link) =>
       !sortedEvents.some(
         (event) => event.slug === link.slug || event.id === link.slug,
       ),
   );
+  const visibleUnresolvedLinks = selectedRouteKind
+    ? unresolvedLinks.filter((link) => link.kind === selectedRouteKind)
+    : unresolvedLinks;
 
   return (
     <div className="event-graph-view" aria-label="Event graph">
@@ -12954,11 +12957,33 @@ function EventGraphView({
       {routeKindSummary.length ? (
         <div className="event-graph-route-kinds" aria-label="Route source counts">
           {routeKindSummary.map(([kind, count]) => (
-            <span key={kind}>
+            <button
+              aria-pressed={selectedRouteKind === kind}
+              className={selectedRouteKind === kind ? "is-selected" : ""}
+              key={kind}
+              onClick={() =>
+                setSelectedRouteKind((current) => (current === kind ? "" : kind))
+              }
+              title={
+                selectedRouteKind === kind
+                  ? `Show all route types`
+                  : `Only show ${kind} routes`
+              }
+              type="button"
+            >
               <strong>{kind}</strong>
               {count}
-            </span>
+            </button>
           ))}
+          {selectedRouteKind ? (
+            <button
+              className="event-graph-clear-filter"
+              onClick={() => setSelectedRouteKind("")}
+              type="button"
+            >
+              All
+            </button>
+          ) : null}
         </div>
       ) : null}
       {orphanEvents.length || unresolvedRoutes.length ? (
@@ -13040,21 +13065,21 @@ function EventGraphView({
           <EventGraphLinkList
             empty="No outgoing routes"
             events={sortedEvents}
-            links={selectedOutgoingLinks}
+            links={visibleSelectedOutgoingLinks}
             onSelectEvent={onSelectEvent}
-            title="Outgoing"
+            title={selectedRouteKind ? `Outgoing ${selectedRouteKind}` : "Outgoing"}
           />
           <EventGraphIncomingList
             empty={selectedEvent.isStart ? "Start event" : "No incoming routes"}
-            links={incomingLinks}
+            links={visibleIncomingLinks}
             onSelectEvent={onSelectEvent}
-            title="Incoming"
+            title={selectedRouteKind ? `Incoming ${selectedRouteKind}` : "Incoming"}
           />
-          {unresolvedLinks.length ? (
+          {visibleUnresolvedLinks.length ? (
             <EventGraphLinkList
               empty=""
               events={sortedEvents}
-              links={unresolvedLinks}
+              links={visibleUnresolvedLinks}
               onSelectEvent={onSelectEvent}
               title="Unresolved"
               unresolved
