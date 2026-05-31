@@ -91,6 +91,21 @@ const scriptMarkerOptions = [
     title: "Insert a timed Google slide change at the cursor.",
   },
   {
+    label: "Image",
+    marker: "[show_image: test-images/dLU-right.png]",
+    title: "Change the agent image at this point in the script.",
+  },
+  {
+    label: "Overlay",
+    marker: "[overlay: default, test-images/dLU-left.png]",
+    title: "Show a timed image overlay at this point in the script.",
+  },
+  {
+    label: "Clear overlay",
+    marker: "[overlay_off: default]",
+    title: "Clear one timed overlay, or leave blank to clear all overlays.",
+  },
+  {
     label: "Highlight",
     marker: "[highlight_on: .runtime-notes-toggle, rgba(59, 130, 246, 0.6)]",
     title: "Insert a timed highlight at the cursor.",
@@ -425,13 +440,20 @@ type InteractiveRuntimePayload = SessionPayload & {
 };
 
 type RuntimeUiState = {
+  avatarPath?: string;
   interactive?: Record<string, unknown>;
   notesVisible: boolean;
+  overlays?: Record<string, RuntimeOverlay>;
 };
 
 type RuntimeHighlight = {
   color: string;
   selector: string;
+};
+
+type RuntimeOverlay = {
+  id: string;
+  imagePath: string;
 };
 
 type RuntimeUiTrigger = {
@@ -646,7 +668,9 @@ function getCurrentPath() {
 }
 
 function publicAsset(path: string) {
-  return `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+  const trimmed = path.trim();
+  if (/^(https?:|data:|blob:)/i.test(trimmed)) return trimmed;
+  return `${import.meta.env.BASE_URL}${trimmed.replace(/^\/+/, "")}`;
 }
 
 function localMessageId(prefix: string) {
@@ -1625,6 +1649,18 @@ function runtimeActionText(action: Record<string, unknown>) {
   if (type === "highlight_on" || type === "highlight_off") {
     return compactRuntimeValue(action.selector, "selector");
   }
+  if (type === "show_image") {
+    return compactRuntimeValue(action.imagePath, "image");
+  }
+  if (type === "overlay") {
+    return `${compactRuntimeValue(action.overlayId, "default")} -> ${compactRuntimeValue(
+      action.imagePath,
+      "image",
+    )}`;
+  }
+  if (type === "overlay_off") {
+    return compactRuntimeValue(action.overlayId, "all overlays");
+  }
   if (type === "interactive") {
     return `mount ${compactRuntimeValue(
       action.interactiveId,
@@ -1740,6 +1776,23 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function runtimeOverlaysFromRecord(value: unknown): Record<string, RuntimeOverlay> {
+  const next: Record<string, RuntimeOverlay> = {};
+  const source = recordFromUnknown(value);
+  for (const [fallbackId, rawOverlay] of Object.entries(source)) {
+    const overlay = recordFromUnknown(rawOverlay);
+    const id =
+      typeof overlay.id === "string" && overlay.id.trim()
+        ? overlay.id.trim()
+        : fallbackId.trim();
+    const imagePath =
+      typeof overlay.imagePath === "string" ? overlay.imagePath.trim() : "";
+    if (!id || !imagePath) continue;
+    next[id] = { id, imagePath };
+  }
+  return next;
+}
+
 function runtimeInteractiveFromRecord(value: unknown): RuntimeInteractive | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
@@ -1853,9 +1906,15 @@ function scriptCueImageUrls(cues: ScriptCue[]) {
   const urls = new Set<string>();
   cues.forEach((cue) => {
     const action = cue.action;
-    if (action.type !== "gslide") return;
-    const imageUrl = typeof action.imageUrl === "string" ? action.imageUrl : "";
-    if (imageUrl) urls.add(imageUrl);
+    if (action.type === "gslide") {
+      const imageUrl = typeof action.imageUrl === "string" ? action.imageUrl : "";
+      if (imageUrl) urls.add(imageUrl);
+    }
+    if (action.type === "show_image" || action.type === "overlay") {
+      const imagePath =
+        typeof action.imagePath === "string" ? action.imagePath : "";
+      if (imagePath) urls.add(publicAsset(imagePath));
+    }
   });
   return [...urls];
 }
@@ -8553,8 +8612,12 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   );
   const [notesVisible, setNotesVisible] = useState(false);
   const [runtimeChatEnabled, setRuntimeChatEnabled] = useState(true);
+  const [runtimeAvatarPath, setRuntimeAvatarPath] = useState("");
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
+  >({});
+  const [runtimeOverlays, setRuntimeOverlays] = useState<
+    Record<string, RuntimeOverlay>
   >({});
   const [runtimeButtons, setRuntimeButtons] = useState<RuntimeButton[]>([]);
   const [runtimeTriggers, setRuntimeTriggers] = useState<RuntimeUiTrigger[]>([]);
@@ -8586,8 +8649,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     overrides: Partial<RuntimeUiState> = {},
   ): RuntimeUiState {
     return {
+      avatarPath: runtimeAvatarPath,
       interactive: runtimeInteractiveState,
       notesVisible,
+      overlays: runtimeOverlays,
       ...overrides,
     };
   }
@@ -8798,6 +8863,40 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (action.type === "chat_availability") {
         setRuntimeChatEnabled(action.enabled !== false);
       }
+
+      if (action.type === "show_image") {
+        const imagePath =
+          typeof action.imagePath === "string" ? action.imagePath.trim() : "";
+        if (imagePath) {
+          setRuntimeAvatarPath(imagePath);
+        }
+      }
+
+      if (action.type === "overlay") {
+        const imagePath =
+          typeof action.imagePath === "string" ? action.imagePath.trim() : "";
+        const overlayId =
+          typeof action.overlayId === "string" && action.overlayId.trim()
+            ? action.overlayId.trim()
+            : "default";
+        if (imagePath) {
+          setRuntimeOverlays((current) => ({
+            ...current,
+            [overlayId]: { id: overlayId, imagePath },
+          }));
+        }
+      }
+
+      if (action.type === "overlay_off") {
+        const overlayId =
+          typeof action.overlayId === "string" ? action.overlayId.trim() : "";
+        setRuntimeOverlays((current) => {
+          if (!overlayId) return {};
+          const next = { ...current };
+          delete next[overlayId];
+          return next;
+        });
+      }
     }
 
     setRuntimeButtons((current) => {
@@ -8891,6 +8990,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const slideErrorValue = uiRuntime.slideError;
     const triggersValue = uiRuntime.triggers;
     const chatEnabledValue = uiRuntime.chatEnabled;
+    const avatarPathValue = uiRuntime.avatarPath;
+    const overlaysValue = uiRuntime.overlays;
     const nextHighlights: Record<string, RuntimeHighlight> = {};
     const nextButtons: RuntimeButton[] = [];
 
@@ -8950,10 +9051,14 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     }
 
     setRuntimeButtons(nextButtons);
+    setRuntimeAvatarPath(
+      typeof avatarPathValue === "string" ? avatarPathValue.trim() : "",
+    );
     setRuntimeChatEnabled(
       typeof chatEnabledValue === "boolean" ? chatEnabledValue : true,
     );
     setRuntimeHighlights(nextHighlights);
+    setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
 
     const nextInteractive = runtimeInteractiveFromRecord(interactiveValue);
@@ -10685,7 +10790,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             <PanelWindow ariaLabel="Panel six" density="lower">
               <ChatPanelContent
                 assistantName={tutorForm.assistantName}
-                avatarPath={tutorForm.avatarPath}
+                avatarPath={runtimeAvatarPath || tutorForm.avatarPath}
                 error={chatError}
                 isChatEnabled={runtimeChatEnabled}
                 isSending={isSendingMessage}
@@ -10699,6 +10804,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                 onSendMessage={sendChatMessage}
                 realtimeStatus={realtimeStatus}
                 runtimeButtons={runtimeButtons}
+                runtimeOverlays={Object.values(runtimeOverlays)}
                 session={session}
                 status={chatStatus}
                 turnAnchorMessageId={turnAnchorMessageId}
@@ -10728,6 +10834,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         >
           <RuntimeInspectorPanel
             actionLog={runtimeActionLog}
+            avatarPath={runtimeAvatarPath}
             buttons={runtimeButtons}
             chatEnabled={runtimeChatEnabled}
             currentEvent={currentRuntimeEvent}
@@ -10737,6 +10844,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             interactive={runtimeInteractive}
             interactiveState={runtimeInteractiveState}
             messages={messages}
+            overlays={Object.values(runtimeOverlays)}
             runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}
             session={session}
@@ -10752,6 +10860,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
 function RuntimeInspectorPanel({
   actionLog,
+  avatarPath,
   buttons,
   chatEnabled,
   currentEvent,
@@ -10761,6 +10870,7 @@ function RuntimeInspectorPanel({
   interactive,
   interactiveState,
   messages,
+  overlays,
   runtimeDebug,
   runtimeContext,
   session,
@@ -10769,6 +10879,7 @@ function RuntimeInspectorPanel({
   triggers,
 }: {
   actionLog: RuntimeActionLogEntry[];
+  avatarPath: string;
   buttons: RuntimeButton[];
   chatEnabled: boolean;
   currentEvent: ExperienceEvent | null;
@@ -10778,6 +10889,7 @@ function RuntimeInspectorPanel({
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
   messages: ChatMessage[];
+  overlays: RuntimeOverlay[];
   runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
   session: TutoringSession | null;
@@ -10996,6 +11108,22 @@ function RuntimeInspectorPanel({
           ) : (
             <p className="runtime-inspector-empty">---</p>
           )}
+        </section>
+
+        <section className="runtime-inspector-section">
+          <h2>Visuals</h2>
+          <div className="runtime-inspector-list">
+            <div className="runtime-inspector-row">
+              <span>Agent image</span>
+              <code>{avatarPath || "---"}</code>
+            </div>
+            {overlays.map((overlay) => (
+              <div className="runtime-inspector-row" key={overlay.id}>
+                <span>Overlay {overlay.id}</span>
+                <code>{overlay.imagePath}</code>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="runtime-inspector-section">
@@ -11332,6 +11460,59 @@ function ScriptActionEditor({
               </option>
             ))}
           </select>
+        </div>
+      );
+    }
+
+    if (marker.type === "show_image") {
+      return (
+        <div className="script-marker-controls image-marker-controls">
+          <span className="event-detail-label">IMAGE</span>
+          <input
+            aria-label="Timed agent image path"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="test-images/dLU-right.png"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "overlay") {
+      return (
+        <div className="script-marker-controls overlay-marker-controls">
+          <span className="event-detail-label">ID</span>
+          <input
+            aria-label="Timed overlay id"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="default"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
+          <span className="event-detail-label">IMAGE</span>
+          <input
+            aria-label="Timed overlay image path"
+            onChange={(event) => updateMarkerArg(marker, 1, event.target.value)}
+            placeholder="test-images/dLU-left.png"
+            type="text"
+            value={marker.argList[1] ?? ""}
+          />
+        </div>
+      );
+    }
+
+    if (marker.type === "overlay_off") {
+      return (
+        <div className="script-marker-controls">
+          <span className="event-detail-label">ID</span>
+          <input
+            aria-label="Timed clear-overlay id"
+            onChange={(event) => updateMarkerArg(marker, 0, event.target.value)}
+            placeholder="blank clears all"
+            type="text"
+            value={marker.argList[0] ?? ""}
+          />
         </div>
       );
     }
@@ -12845,6 +13026,7 @@ type ChatPanelContentProps = {
   onSendMessage: (content: string) => Promise<void>;
   realtimeStatus: RealtimeStatus;
   runtimeButtons: RuntimeButton[];
+  runtimeOverlays: RuntimeOverlay[];
   session: TutoringSession | null;
   status: "loading" | "ready" | "error";
   turnAnchorMessageId: string | null;
@@ -12863,6 +13045,7 @@ function ChatPanelContent({
   onSendMessage,
   realtimeStatus,
   runtimeButtons,
+  runtimeOverlays,
   session,
   status,
   turnAnchorMessageId,
@@ -13025,6 +13208,15 @@ function ChatPanelContent({
         className="chat-dlu-figure"
         src={publicAsset(assistantAvatarPath)}
       />
+      {runtimeOverlays.map((overlay) => (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="chat-visual-overlay"
+          key={overlay.id}
+          src={publicAsset(overlay.imagePath)}
+        />
+      ))}
     </div>
   );
 }

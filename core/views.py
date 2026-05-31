@@ -371,6 +371,48 @@ def resolve_script_marker_action(marker, config, runtime_context):
     if marker_type == "interactive_clear":
         return {"type": "interactive_clear"}
 
+    if marker_type == "show_image":
+        image_path = render_context_template(
+            args[0] if args else "",
+            runtime_context,
+        ).strip()
+        if not image_path:
+            return None
+        return {
+            "imagePath": image_path,
+            "type": "show_image",
+        }
+
+    if marker_type == "overlay":
+        if not args:
+            return None
+        overlay_id = "default"
+        image_arg = args[0]
+        if len(args) > 1:
+            overlay_id = (
+                render_context_template(args[0], runtime_context).strip()
+                or "default"
+            )
+            image_arg = args[1]
+        image_path = render_context_template(image_arg, runtime_context).strip()
+        if not image_path:
+            return None
+        return {
+            "imagePath": image_path,
+            "overlayId": overlay_id,
+            "type": "overlay",
+        }
+
+    if marker_type == "overlay_off":
+        overlay_id = render_context_template(
+            args[0] if args else "",
+            runtime_context,
+        ).strip()
+        return {
+            "overlayId": overlay_id,
+            "type": "overlay_off",
+        }
+
     if marker_type == "highlight":
         selector = str(args[0] if args else "").strip()
         if not selector:
@@ -2779,6 +2821,9 @@ def apply_runtime_actions_to_state(
     chat_enabled = ui_runtime.get("chatEnabled")
     if not isinstance(chat_enabled, bool):
         chat_enabled = True
+    avatar_path = str(ui_runtime.get("avatarPath", "") or "")
+    overlays_value = ui_runtime.get("overlays")
+    overlays = dict(overlays_value) if isinstance(overlays_value, dict) else {}
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -2866,6 +2911,30 @@ def apply_runtime_actions_to_state(
             chat_enabled = bool(action.get("enabled", True))
             continue
 
+        if action_type == "show_image":
+            image_path = str(action.get("imagePath", "") or "").strip()
+            if image_path:
+                avatar_path = image_path
+            continue
+
+        if action_type == "overlay":
+            image_path = str(action.get("imagePath", "") or "").strip()
+            overlay_id = str(action.get("overlayId", "") or "").strip() or "default"
+            if image_path:
+                overlays[overlay_id] = {
+                    "id": overlay_id,
+                    "imagePath": image_path,
+                }
+            continue
+
+        if action_type == "overlay_off":
+            overlay_id = str(action.get("overlayId", "") or "").strip()
+            if overlay_id:
+                overlays.pop(overlay_id, None)
+            else:
+                overlays = {}
+            continue
+
         if action_type == "button_choice":
             step_id = str(action.get("stepId", ""))
             buttons = [button for button in buttons if button.get("stepId") != step_id]
@@ -2909,9 +2978,11 @@ def apply_runtime_actions_to_state(
 
     ui_runtime["buttons"] = buttons
     ui_runtime["chatEnabled"] = chat_enabled
+    ui_runtime["avatarPath"] = avatar_path
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
+    ui_runtime["overlays"] = overlays
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
     ui_runtime["triggers"] = triggers
@@ -2947,7 +3018,13 @@ def initial_script_cue_actions_from_messages(messages):
 def hydrate_initial_script_runtime_state(session):
     state = dict(session.runtime_state or {})
     ui_runtime = dict(state.get("uiRuntime") or {})
-    if ui_runtime.get("interactive") or ui_runtime.get("slide") or ui_runtime.get("slideError"):
+    if (
+        ui_runtime.get("interactive")
+        or ui_runtime.get("slide")
+        or ui_runtime.get("slideError")
+        or ui_runtime.get("avatarPath")
+        or ui_runtime.get("overlays")
+    ):
         return
 
     messages = list(session.messages.order_by("sequence"))

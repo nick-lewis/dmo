@@ -1752,6 +1752,10 @@ button {
   grid-template-columns: auto minmax(140px, 1fr) auto minmax(150px, 0.88fr);
 }
 
+.script-marker-controls.overlay-marker-controls {
+  grid-template-columns: auto minmax(76px, 0.42fr) auto minmax(150px, 1fr);
+}
+
 .script-marker-controls input,
 .script-marker-controls select {
   width: 100%;
@@ -3546,6 +3550,17 @@ button {
   object-fit: contain;
   pointer-events: none;
   transform: translate(-75.3%, 12.6%);
+}
+
+.chat-visual-overlay {
+  position: absolute;
+  right: max(12px, calc(var(--chat-side-space) - 20px));
+  top: 16px;
+  display: block;
+  width: clamp(92px, 18vw, 190px);
+  max-height: calc(100% - 32px);
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .chat-message-list {

@@ -235,6 +235,81 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(interactive["mode"], "graph")
         self.assertEqual(interactive["triggersEvent"], "second-destination")
 
+    def test_script_image_and_overlay_markers_emit_runtime_cues(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        actions, messages, next_event_slug = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "id": "script-with-visual-markers",
+                    "actionType": EventActionStep.ActionType.SCRIPT,
+                    "config": {
+                        "text": (
+                            "Hello [show_image: test-images/dLU-left.png] "
+                            "there [overlay: guide, test-images/dLU-right.png] "
+                            "friend [overlay_off: guide]."
+                        ),
+                    },
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(next_event_slug, "")
+        self.assertEqual(actions[0]["type"], "chat_message")
+        self.assertEqual(messages[0].content, "Hello there friend .")
+        cue_actions = [
+            cue["action"] for cue in messages[0].metadata["scriptCues"]
+        ]
+        self.assertEqual(
+            [action["type"] for action in cue_actions],
+            ["show_image", "overlay", "overlay_off"],
+        )
+        self.assertEqual(cue_actions[0]["imagePath"], "test-images/dLU-left.png")
+        self.assertEqual(cue_actions[1]["overlayId"], "guide")
+        self.assertEqual(cue_actions[1]["imagePath"], "test-images/dLU-right.png")
+        self.assertEqual(cue_actions[2]["overlayId"], "guide")
+
+    def test_visual_runtime_actions_update_ui_state(self):
+        state = apply_runtime_actions_to_state(
+            {},
+            [
+                {
+                    "imagePath": "test-images/dLU-left.png",
+                    "type": "show_image",
+                },
+                {
+                    "imagePath": "test-images/dLU-right.png",
+                    "overlayId": "guide",
+                    "type": "overlay",
+                },
+            ],
+        )
+
+        ui_runtime = state["uiRuntime"]
+        self.assertEqual(ui_runtime["avatarPath"], "test-images/dLU-left.png")
+        self.assertEqual(
+            ui_runtime["overlays"]["guide"],
+            {"id": "guide", "imagePath": "test-images/dLU-right.png"},
+        )
+
+        state = apply_runtime_actions_to_state(
+            state,
+            [{"overlayId": "guide", "type": "overlay_off"}],
+        )
+        self.assertEqual(state["uiRuntime"]["overlays"], {})
+
     def test_editor_rejects_unregistered_main_panel_app_action(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,
