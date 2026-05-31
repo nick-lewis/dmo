@@ -3203,6 +3203,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
+  const [deletingEventId, setDeletingEventId] = useState("");
   const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
     useState(false);
   const [conversationAddMenuToolId, setConversationAddMenuToolId] = useState("");
@@ -5156,6 +5157,57 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function deleteEditorEvent() {
+    const { selectedEvent } = getSelectedEventParts();
+    if (!experience || !selectedEvent || editorEvents.length <= 1) return;
+
+    const didConfirm = window.confirm(
+      `Delete event "${selectedEvent.title || selectedEvent.slug}"?`,
+    );
+    if (!didConfirm) return;
+
+    const didSave = await flushEventAutosave();
+    if (!didSave) return;
+
+    setError("");
+    setDeletingEventId(selectedEvent.id);
+
+    try {
+      const payload = await apiFetch<{ events: ExperienceEvent[] }>(
+        `/api/experiences/${experience.id}/events/${selectedEvent.id}/`,
+        {
+          method: "DELETE",
+        },
+      );
+      const nextEvents = sortedExperienceEvents(payload.events);
+      const nextSelectedEvent =
+        nextEvents.find((event) => event.isStart) ?? nextEvents[0] ?? null;
+
+      setExperience({
+        ...experience,
+        events: nextEvents,
+      });
+      lastPersistedEvent.current = nextSelectedEvent;
+      setSelectedEventId(nextSelectedEvent?.id ?? "");
+      setEventDraft(eventDraftFromEvent(nextSelectedEvent));
+      clearEventUndoHistory();
+      resetExpandedItems();
+      setDraggingStepId("");
+      setIsEventAddMenuOpen(false);
+      setIsConversationAddMenuOpen(false);
+      setConversationAddMenuToolId("");
+      setConversationAddMenuCheckId("");
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete event.",
+      );
+    } finally {
+      setDeletingEventId("");
+    }
+  }
+
   async function addEventStep(actionType: EventActionStep["actionType"]) {
     const { selectedEvent } = getSelectedEventParts();
     if (!experience || !selectedEvent) return;
@@ -6440,6 +6492,24 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         type="button"
                       >
                         <RedoIcon />
+                      </button>
+                      <button
+                        aria-label="Delete selected event"
+                        className="event-icon-button danger"
+                        disabled={
+                          !selectedEvent ||
+                          editorEvents.length <= 1 ||
+                          deletingEventId === selectedEvent.id
+                        }
+                        onClick={() => void deleteEditorEvent()}
+                        title={
+                          editorEvents.length <= 1
+                            ? "An experience needs at least one event"
+                            : "Delete selected event"
+                        }
+                        type="button"
+                      >
+                        <TrashIcon />
                       </button>
                     </div>
                   </div>

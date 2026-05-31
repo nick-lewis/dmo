@@ -269,6 +269,67 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(cue_action["detail"], "Main-panel app is not registered.")
 
 
+class EventEditorApiTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="event-editor-api-test",
+            email="event-editor-api-test@example.com",
+            password="test-password",
+        )
+        self.experience = Experience.objects.create(
+            user=self.user,
+            title="Event editor test",
+            slug="event-editor-test",
+        )
+        self.client.force_login(self.user)
+
+    def test_delete_event_reassigns_start_event(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        next_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Next",
+            slug="next",
+            sort_order=1,
+        )
+
+        response = self.client.delete(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ExperienceEvent.objects.filter(id=start.id).exists())
+        next_event.refresh_from_db()
+        self.assertTrue(next_event.is_start)
+        self.assertEqual(response.json()["events"][0]["slug"], "next")
+
+    def test_delete_last_event_is_rejected(self):
+        only_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Only",
+            slug="only",
+            is_start=True,
+            sort_order=0,
+        )
+
+        response = self.client.delete(
+            f"/api/experiences/{self.experience.id}/events/{only_event.id}/",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(ExperienceEvent.objects.filter(id=only_event.id).exists())
+        self.assertEqual(
+            response.json()["detail"],
+            "An experience needs at least one event.",
+        )
+
+
 class RuntimeContextActionTests(TestCase):
     def setUp(self):
         User = get_user_model()
