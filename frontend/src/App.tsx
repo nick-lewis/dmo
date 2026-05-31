@@ -52,6 +52,7 @@ const experienceAutosaveDelayMs = 700;
 const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
 const scriptTextStreamMaxMs = 16000;
+const scriptImmediateCueProgress = 0.001;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -7734,7 +7735,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     await waitForAudioMetadata(audio);
 
     const durationMs = scriptStreamDurationMs(message.content, audio.duration);
-    const cues = scriptCuesFromMessage(message, cueValue);
+    const cues = scriptCuesFromMessage(message, cueValue).filter(
+      (cue) => cue.progress > scriptImmediateCueProgress,
+    );
     await Promise.all([
       streamScriptMessageText(message, durationMs),
       playPreparedScriptAudio(audio, cues),
@@ -7805,6 +7808,13 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     if (!scriptMessages.length) return;
 
     const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
+    const immediateActions = scriptMessages.flatMap((message) =>
+      scriptCuesFromMessage(message)
+        .filter((cue) => cue.progress <= scriptImmediateCueProgress)
+        .map((cue) => cue.action),
+    );
+    applyRuntimeActions(immediateActions);
+
     setMessages((current) =>
       current.map((message) =>
         scriptMessageIds.has(message.id)
