@@ -2634,6 +2634,18 @@ def apply_runtime_actions_to_context(runtime_context, actions):
     return next_context
 
 
+def emitted_transition_slug(actions):
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        if action.get("type") != "goto_event":
+            continue
+        triggers_event = str(action.get("triggersEvent", "") or "").strip()
+        if triggers_event:
+            return triggers_event
+    return ""
+
+
 def apply_runtime_actions_to_state(
     state,
     actions,
@@ -4859,12 +4871,56 @@ def update_session_interactive(request, session_id):
             session.runtime_context,
             actions,
         )
-        state = apply_runtime_actions_to_state(state, actions)
         session.runtime_context = runtime_context
+
+        ran_events = []
+        ran_messages = []
+        transition_slug = emitted_transition_slug(actions)
+        if transition_slug and not session.experience:
+            actions.append(
+                {
+                    "type": "transition_missing",
+                    "triggersEvent": transition_slug,
+                }
+            )
+        elif transition_slug:
+            transition_event = session.experience.events.filter(
+                slug=transition_slug,
+            ).first()
+            if transition_event:
+                (
+                    transition_actions,
+                    ran_messages,
+                    ran_events,
+                    state,
+                ) = run_event_chain(
+                    session,
+                    transition_event,
+                    state=state,
+                )
+                actions.extend(transition_actions)
+            else:
+                actions.append(
+                    {
+                        "type": "transition_missing",
+                        "triggersEvent": transition_slug,
+                    }
+                )
+
+        state = apply_runtime_actions_to_state(state, actions)
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 
-    return JsonResponse({**session_payload(session), "actions": actions})
+    return JsonResponse(
+        {
+            **session_payload(session),
+            "actions": actions,
+            "ranEvents": [
+                serialize_experience_event(ran_event) for ran_event in ran_events
+            ],
+            "ranMessages": [serialize_message(message) for message in ran_messages],
+        }
+    )
 
 
 def parse_tool_arguments(value):
