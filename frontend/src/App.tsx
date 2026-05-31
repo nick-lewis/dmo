@@ -12166,6 +12166,16 @@ function scriptAudioItemNeedsGeneration(item: ScriptAudioItem) {
   return item.canGenerate && !scriptAudioItemIsReady(item);
 }
 
+function scriptAudioArtifactTags(item: ScriptAudioItem) {
+  return [
+    item.ttsModel ? `tts ${item.ttsModel}` : "",
+    item.timingModel ? `timing ${item.timingModel}` : "",
+    item.realtimeModel ? `chat ${item.realtimeModel}` : "",
+    item.characterCount ? `${item.characterCount} chars` : "",
+    item.cacheKey ? `cache ${item.cacheKey.slice(0, 10)}` : "",
+  ].filter(Boolean);
+}
+
 function ScriptAudioPanel({
   error,
   isBusy,
@@ -12268,6 +12278,7 @@ function ScriptAudioPanel({
             const isReady = scriptAudioItemIsReady(item);
             const needsGeneration = scriptAudioItemNeedsGeneration(item);
             const preview = item.preview || "---";
+            const artifactTags = scriptAudioArtifactTags(item);
             return (
               <div
                 className={[
@@ -12348,6 +12359,13 @@ function ScriptAudioPanel({
                 >
                   <RefreshIcon />
                 </button>
+                {artifactTags.length ? (
+                  <div className="script-audio-artifacts">
+                    {artifactTags.map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })}
