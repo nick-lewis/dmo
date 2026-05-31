@@ -1,6 +1,7 @@
 import json
 import tempfile
 import wave
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -14,8 +15,11 @@ from .audio_cache import (
 )
 from .models import (
     EventActionStep,
+    EventClassifier,
+    EventClassifierGroup,
     Experience,
     ExperienceEvent,
+    SessionMessage,
     TutorSettings,
     TutoringSession,
 )
@@ -236,3 +240,125 @@ class ScriptAudioCachePayloadTests(TestCase):
 
         self.assertEqual(payload["scriptWords"][1]["word"], "second")
         self.assertEqual(payload["scriptCues"][0]["time"], 0.5)
+
+
+class ConversationRuntimeTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="conversation-runtime-test",
+            email="conversation-runtime-test@example.com",
+            password="test-password",
+        )
+        self.experience = Experience.objects.create(
+            user=self.user,
+            title="Conversation runtime test",
+            slug="conversation-runtime-test",
+        )
+        TutorSettings.objects.create(experience=self.experience)
+        self.chat_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Fruit chat",
+            slug="fruit-chat",
+            is_start=True,
+            sort_order=0,
+        )
+
+    def test_classifier_handler_updates_context_without_leaving_event(self):
+        group = EventClassifierGroup.objects.create(
+            event=self.chat_event,
+            title="Fruit classifiers",
+            result_context_key="_classifier_results",
+            handler_actions=[
+                {
+                    "id": "reset-newly-mentioned",
+                    "actionType": "set_context",
+                    "label": "Reset newly mentioned",
+                    "config": {"key": "newly_mentioned", "value": []},
+                    "condition": {},
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+                {
+                    "id": "append-banana",
+                    "actionType": "append_context_list",
+                    "label": "Append banana",
+                    "config": {"key": "fruits_mentioned", "value": "banana"},
+                    "condition": {
+                        "type": "context_equals",
+                        "key": "_classifier_results.banana.mentioned",
+                        "value": True,
+                    },
+                    "enabled": True,
+                    "sortOrder": 1,
+                },
+                {
+                    "id": "append-new-banana",
+                    "actionType": "append_context_list",
+                    "label": "Append new banana",
+                    "config": {"key": "newly_mentioned", "value": "banana"},
+                    "condition": {
+                        "type": "context_equals",
+                        "key": "_classifier_results.banana.mentioned",
+                        "value": True,
+                    },
+                    "enabled": True,
+                    "sortOrder": 2,
+                },
+            ],
+        )
+        EventClassifier.objects.create(
+            group=group,
+            name="banana",
+            prompt="Detect banana in the latest message.",
+            schema={
+                "type": "object",
+                "properties": {"mentioned": {"type": "boolean"}},
+                "required": ["mentioned"],
+                "additionalProperties": False,
+            },
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_context={"fruits_mentioned": []},
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        SessionMessage.objects.create(
+            session=session,
+            role=SessionMessage.Role.USER,
+            content="I like bananas.",
+            sequence=1,
+        )
+        self.client.force_login(self.user)
+
+        with patch(
+            "core.views.evaluate_event_classifier",
+            return_value=({"mentioned": True}, ""),
+        ):
+            response = self.client.post(
+                f"/api/sessions/{session.id}/conversation-checks/run/",
+                data=json.dumps({"uiState": {"notesVisible": False}}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["handled"])
+        self.assertEqual(payload["ranEvents"], [])
+
+        session.refresh_from_db()
+        self.assertEqual(session.runtime_state["currentEventSlug"], "fruit-chat")
+        self.assertEqual(session.runtime_context["fruits_mentioned"], ["banana"])
+        self.assertEqual(session.runtime_context["newly_mentioned"], ["banana"])
+        self.assertEqual(
+            session.runtime_context["_classifier_results"],
+            {"banana": {"mentioned": True}},
+        )
+        self.assertTrue(
+            any(
+                action.get("type") == "append_context_list"
+                and action.get("key") == "fruits_mentioned"
+                for action in payload["actions"]
+            )
+        )

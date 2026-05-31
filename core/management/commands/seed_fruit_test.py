@@ -44,6 +44,7 @@ Do NOT count orange the color unless clearly referring to the fruit.''',
 CHAT_SYSTEM_TEMPLATE = '''{{#if fruits_mentioned}}You are a friendly assistant tracking fruit mentions.
 
 Fruits mentioned so far: {{fruits_mentioned}}
+Newly detected in the latest user turn: {{newly_mentioned}}
 
 When responding:
 1. Acknowledge any NEW fruits the classifiers detected (the system will tell you)
