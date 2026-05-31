@@ -3448,6 +3448,15 @@ def classifier_has_positive_result(payload):
     return False
 
 
+def event_classifier_model(classifier, default_model):
+    return (
+        classifier.model.strip()
+        or str(default_model or "").strip()
+        or settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+        or DEFAULT_CLASSIFICATION_MODEL
+    )
+
+
 def classifier_chat_payload(model, messages, max_completion_tokens, response_format):
     payload = {
         "model": model,
@@ -3473,12 +3482,7 @@ def evaluate_event_classifier(
         return None, "OPENAI_API_KEY is not configured."
 
     schema = classifier_schema(classifier)
-    model = (
-        classifier.model.strip()
-        or str(default_model or "").strip()
-        or settings.DLU_CLASSIFICATION_DEFAULT_MODEL
-        or DEFAULT_CLASSIFICATION_MODEL
-    )
+    model = event_classifier_model(classifier, default_model)
     prompt = "\n\n".join(
         [
             "Run one independent classifier for the current tutoring chat.",
@@ -3551,11 +3555,26 @@ def evaluate_event_classifier(
 
 
 def evaluate_classifier_group(session, current_event, group, runtime_context):
+    tutor_settings = (
+        ensure_tutor_settings(session.experience)
+        if session.experience_id
+        else None
+    )
+    default_model = (
+        tutor_settings.classification_model
+        if tutor_settings
+        else settings.DLU_CLASSIFICATION_DEFAULT_MODEL
+    )
+    classifiers = list(
+        group.classifiers.filter(enabled=True).order_by("sort_order", "created_at")
+    )
     group_action = {
+        "classifierCount": len(classifiers),
         "classifierGroupId": str(group.id),
         "classifierGroupTitle": group.title,
         "eventId": str(current_event.id),
         "resultContextKey": group.result_context_key,
+        "runMode": "parallel",
         "type": "classifier_group_result",
     }
     if not condition_matches(group.condition, runtime_context):
@@ -3572,9 +3591,6 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
             "skipped": True,
         }, ""
 
-    classifiers = list(
-        group.classifiers.filter(enabled=True).order_by("sort_order", "created_at")
-    )
     results = {}
     actions = []
     classifiers_to_run = []
@@ -3583,6 +3599,7 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
             "classifierGroupId": str(group.id),
             "classifierGroupTitle": group.title,
             "classifierId": str(classifier.id),
+            "classifierModel": event_classifier_model(classifier, default_model),
             "classifierName": classifier.name,
             "eventId": str(current_event.id),
             "resultContextKey": group.result_context_key,
@@ -3600,16 +3617,6 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
 
     if classifiers_to_run:
         transcript = conversation_check_transcript(session)
-        tutor_settings = (
-            ensure_tutor_settings(session.experience)
-            if session.experience_id
-            else None
-        )
-        default_model = (
-            tutor_settings.classification_model
-            if tutor_settings
-            else settings.DLU_CLASSIFICATION_DEFAULT_MODEL
-        )
         max_workers = min(6, len(classifiers_to_run))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -3639,6 +3646,7 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
                 "classifierGroupId": str(group.id),
                 "classifierGroupTitle": group.title,
                 "classifierId": str(classifier.id),
+                "classifierModel": event_classifier_model(classifier, default_model),
                 "classifierName": classifier.name,
                 "eventId": str(current_event.id),
                 "result": result_payload,
@@ -3647,7 +3655,13 @@ def evaluate_classifier_group(session, current_event, group, runtime_context):
             }
         )
 
-    actions.append({**group_action, "results": results})
+    actions.append(
+        {
+            **group_action,
+            "ranClassifierCount": len(classifiers_to_run),
+            "results": results,
+        }
+    )
     return {
         "actions": actions,
         "group": group,

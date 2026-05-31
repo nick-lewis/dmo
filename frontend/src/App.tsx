@@ -1598,10 +1598,13 @@ function runtimeActionText(action: Record<string, unknown>) {
     )}`;
   }
   if (type === "classifier_group_result") {
+    const runMode = compactRuntimeValue(action.runMode, "");
+    const count = compactRuntimeValue(action.ranClassifierCount, "");
+    const suffix = runMode && count ? ` (${runMode} ${count})` : "";
     return `${compactRuntimeValue(action.classifierGroupTitle, "classifiers")}: ${compactRuntimeValue(
       action.results,
       "results",
-    )}`;
+    )}${suffix}`;
   }
   if (type === "classifier_skipped" || type === "classifier_group_skipped") {
     return `${compactRuntimeValue(

@@ -1,6 +1,7 @@
 import json
 import tempfile
 import wave
+from threading import Event, Lock
 from unittest.mock import patch
 
 from django.conf import settings
@@ -31,6 +32,7 @@ from .views import (
     cached_script_audio_payload,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
+    evaluate_classifier_group,
     run_action_sequence,
     serialize_experience,
 )
@@ -760,6 +762,90 @@ class ConversationRuntimeTests(TestCase):
                 for action in payload["actions"]
             )
         )
+
+    def test_classifier_group_runs_classifiers_in_parallel(self):
+        group = EventClassifierGroup.objects.create(
+            event=self.chat_event,
+            title="Fruit classifiers",
+            result_context_key="_classifier_results",
+        )
+        for index, fruit in enumerate(("banana", "apple", "orange")):
+            EventClassifier.objects.create(
+                group=group,
+                name=fruit,
+                prompt=f"Detect {fruit} in the latest message.",
+                schema={
+                    "type": "object",
+                    "properties": {"mentioned": {"type": "boolean"}},
+                    "required": ["mentioned"],
+                    "additionalProperties": False,
+                },
+                sort_order=index,
+            )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+            runtime_state={"currentEventSlug": "fruit-chat"},
+        )
+        SessionMessage.objects.create(
+            session=session,
+            role=SessionMessage.Role.USER,
+            content="Banana, apple, and orange all showed up.",
+            sequence=1,
+        )
+        started = []
+        started_lock = Lock()
+        all_started = Event()
+
+        def fake_classifier(
+            user,
+            current_event,
+            classifier_group,
+            classifier,
+            default_model,
+            runtime_context,
+            transcript,
+        ):
+            with started_lock:
+                started.append(classifier.name)
+                if len(started) == 3:
+                    all_started.set()
+            self.assertTrue(
+                all_started.wait(1),
+                "Classifier calls did not overlap before returning.",
+            )
+            return {"mentioned": True, "fruit": classifier.name}, ""
+
+        with patch("core.views.evaluate_event_classifier", side_effect=fake_classifier):
+            payload, error = evaluate_classifier_group(
+                session,
+                self.chat_event,
+                group,
+                {},
+            )
+
+        self.assertEqual(error, "")
+        self.assertCountEqual(started, ["banana", "apple", "orange"])
+        self.assertEqual(payload["results"]["banana"]["fruit"], "banana")
+        classifier_actions = [
+            action
+            for action in payload["actions"]
+            if action["type"] == "classifier_result"
+        ]
+        self.assertEqual(
+            [action["classifierName"] for action in classifier_actions],
+            ["banana", "apple", "orange"],
+        )
+        self.assertTrue(
+            all(
+                action["classifierModel"] == "gpt-5.4-mini"
+                for action in classifier_actions
+            )
+        )
+        group_action = payload["actions"][-1]
+        self.assertEqual(group_action["runMode"], "parallel")
+        self.assertEqual(group_action["classifierCount"], 3)
+        self.assertEqual(group_action["ranClassifierCount"], 3)
 
     def test_realtime_instructions_include_event_prompt_context_and_tools(self):
         self.chat_event.chat_instructions = (
