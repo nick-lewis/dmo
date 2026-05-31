@@ -1463,7 +1463,7 @@ def script_is_static_for_audio(text):
 
 
 def script_audio_item_from_text(experience, tutor_settings, source, raw_text, index):
-    script, _ = parse_script_markers(raw_text)
+    script, markers = parse_script_markers(raw_text)
     script = script.strip()
     if not script:
         return None
@@ -1484,6 +1484,23 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     cached = audio_path.exists()
     words_cached = words_path.exists()
     can_generate = script_is_static_for_audio(raw_text)
+    timing_preview = []
+    timing_word_count = 0
+    timed_marker_count = 0
+    if words_cached:
+        try:
+            words = normalize_transcription_words(
+                json.loads(words_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError):
+            words = []
+        timing_word_count = len(words)
+        timing_preview = words[:12]
+        timed_marker_count = sum(
+            1
+            for marker in script_cues_with_word_times(markers, words)
+            if isinstance(marker.get("time"), (int, float))
+        )
     return {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
         "cacheKey": cache_key,
@@ -1498,10 +1515,14 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "id": hashlib.sha1(
             f"{experience.id}:{index}:{source}:{script}".encode("utf-8")
         ).hexdigest()[:16],
+        "markerCount": len(markers),
         "preview": script[:240],
         "realtimeModel": tutor_settings.realtime_model,
         "script": script,
         "source": source,
+        "timedMarkerCount": timed_marker_count,
+        "timingPreview": timing_preview,
+        "timingWordCount": timing_word_count,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         "voice": tutor_settings.voice,

@@ -781,7 +781,7 @@ button {
   display: grid;
   grid-template-columns:
     minmax(122px, 0.42fr) minmax(0, 1fr) minmax(92px, 0.28fr)
-    minmax(54px, auto) minmax(70px, auto) 28px 28px;
+    minmax(54px, auto) minmax(70px, auto) minmax(52px, auto) 28px 28px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -793,6 +793,10 @@ button {
 
 .script-audio-row.is-playing {
   background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-bg-strong));
+}
+
+.script-audio-row.is-expanded {
+  align-items: start;
 }
 
 .script-audio-row.is-dynamic {
@@ -843,6 +847,13 @@ button {
   background: color-mix(in srgb, var(--accent-4) 10%, transparent);
 }
 
+.script-audio-detail-toggle {
+  min-width: 52px;
+  min-height: 24px;
+  padding: 2px 5px;
+  font-size: 0.62rem;
+}
+
 .script-audio-artifacts {
   grid-column: 1 / -1;
   display: flex;
@@ -861,6 +872,60 @@ button {
   font-weight: 740;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.script-audio-details {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 13%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg) 52%, transparent);
+}
+
+.script-audio-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.script-audio-detail-grid span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  color: var(--muted-ink);
+  font-size: 0.63rem;
+  font-weight: 720;
+}
+
+.script-audio-detail-grid strong {
+  color: color-mix(in srgb, var(--page-ink) 74%, transparent);
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.script-audio-script-text {
+  margin: 0;
+  color: color-mix(in srgb, var(--page-ink) 78%, transparent);
+  font-size: 0.68rem;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.script-audio-timing-preview,
+.script-audio-no-timing {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  font-size: 0.61rem;
+  font-weight: 720;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .script-audio-empty {

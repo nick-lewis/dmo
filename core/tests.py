@@ -34,6 +34,7 @@ from .views import (
     build_realtime_instructions,
     cached_script_audio_payload,
     classification_model_choices,
+    collect_experience_script_audio_items,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
     evaluate_classifier_group,
@@ -990,6 +991,62 @@ class ScriptAudioCachePayloadTests(TestCase):
 
         self.assertEqual(payload["scriptWords"][1]["word"], "second")
         self.assertEqual(payload["scriptCues"][0]["time"], 0.5)
+
+    def test_script_audio_inventory_exposes_marker_and_timing_preview(self):
+        raw_script = "First [gslide: 2] second."
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                tutor = self.experience.tutor_settings
+                spoken_script = "First second."
+                cache_key = compute_script_audio_cache_key(
+                    assistant_name=tutor.assistant_name,
+                    realtime_model=tutor.realtime_model,
+                    script=spoken_script,
+                    tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+                    voice=tutor.voice,
+                    voice_instructions=tutor.voice_instructions,
+                )
+                audio_path = script_audio_audio_path(cache_key)
+                words_path = script_audio_words_path(
+                    cache_key,
+                    settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+                )
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+                with wave.open(str(audio_path), "wb") as audio_file:
+                    audio_file.setnchannels(1)
+                    audio_file.setsampwidth(2)
+                    audio_file.setframerate(24000)
+                    audio_file.writeframes(b"\x00\x00" * 2400)
+                words_path.write_text(
+                    json.dumps(
+                        [
+                            {"word": "First", "start": 0.1, "end": 0.4},
+                            {"word": "second", "start": 0.5, "end": 0.8},
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": raw_script},
+                    label="Timed script",
+                )
+
+                items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["markerCount"], 1)
+        self.assertEqual(items[0]["timedMarkerCount"], 1)
+        self.assertEqual(items[0]["timingWordCount"], 2)
+        self.assertEqual(items[0]["timingPreview"][1]["word"], "second")
 
 
 class ConversationRuntimeTests(TestCase):

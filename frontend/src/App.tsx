@@ -548,10 +548,14 @@ type ScriptAudioItem = {
   durationSeconds: number | null;
   generationReason?: string;
   id: string;
+  markerCount?: number;
   preview: string;
   realtimeModel?: RealtimeModelId;
   script?: string;
   source: string;
+  timedMarkerCount?: number;
+  timingPreview?: ScriptWord[];
+  timingWordCount?: number;
   timingModel?: string;
   ttsModel?: string;
   voice?: RealtimeVoiceId;
@@ -12317,9 +12321,23 @@ function scriptAudioArtifactTags(item: ScriptAudioItem) {
     item.ttsModel ? `tts ${item.ttsModel}` : "",
     item.timingModel ? `timing ${item.timingModel}` : "",
     item.realtimeModel ? `chat ${item.realtimeModel}` : "",
+    item.markerCount ? `${item.markerCount} timed actions` : "",
+    item.timedMarkerCount ? `${item.timedMarkerCount} aligned` : "",
     item.characterCount ? `${item.characterCount} chars` : "",
     item.cacheKey ? `cache ${item.cacheKey.slice(0, 10)}` : "",
   ].filter(Boolean);
+}
+
+function scriptAudioTimingPreviewText(item: ScriptAudioItem) {
+  const words = item.timingPreview ?? [];
+  if (!words.length) return "";
+
+  return words
+    .map((word) => {
+      const start = Number.isFinite(word.start) ? word.start.toFixed(2) : "0.00";
+      return `${word.word} ${start}s`;
+    })
+    .join(" / ");
 }
 
 function ScriptAudioPanel({
@@ -12348,6 +12366,7 @@ function ScriptAudioPanel({
   status: "idle" | "loading" | "generating";
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedItemId, setExpandedItemId] = useState("");
   const readyCount = items.filter(scriptAudioItemIsReady).length;
   const audioCount = items.filter((item) => item.cached).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
@@ -12425,11 +12444,14 @@ function ScriptAudioPanel({
             const needsGeneration = scriptAudioItemNeedsGeneration(item);
             const preview = item.preview || "---";
             const artifactTags = scriptAudioArtifactTags(item);
+            const isDetailExpanded = expandedItemId === item.id;
+            const timingPreviewText = scriptAudioTimingPreviewText(item);
             return (
               <div
                 className={[
                   "script-audio-row",
                   isPlaying ? "is-playing" : "",
+                  isDetailExpanded ? "is-expanded" : "",
                   item.canGenerate ? "" : "is-dynamic",
                 ]
                   .filter(Boolean)
@@ -12464,6 +12486,19 @@ function ScriptAudioPanel({
                 >
                   {item.wordsCached ? "timing" : "no timing"}
                 </span>
+                <button
+                  aria-expanded={isDetailExpanded}
+                  className="event-text-button script-audio-detail-toggle"
+                  onClick={() =>
+                    setExpandedItemId((current) =>
+                      current === item.id ? "" : item.id,
+                    )
+                  }
+                  title="Show script text, cached artifact metadata, and timing preview."
+                  type="button"
+                >
+                  Details
+                </button>
                 <button
                   aria-label={
                     isPlaying ? "Stop script audio preview" : "Play script audio preview"
@@ -12510,6 +12545,40 @@ function ScriptAudioPanel({
                     {artifactTags.map((tag) => (
                       <span key={tag}>{tag}</span>
                     ))}
+                  </div>
+                ) : null}
+                {isDetailExpanded ? (
+                  <div className="script-audio-details">
+                    <div className="script-audio-detail-grid">
+                      <span>
+                        <strong>Markers</strong>
+                        {item.markerCount || 0}
+                      </span>
+                      <span>
+                        <strong>Aligned</strong>
+                        {item.timedMarkerCount || 0}/{item.markerCount || 0}
+                      </span>
+                      <span>
+                        <strong>Words</strong>
+                        {item.timingWordCount || item.wordCount || 0}
+                      </span>
+                      <span>
+                        <strong>Subtitle source</strong>
+                        authored script
+                      </span>
+                    </div>
+                    <p className="script-audio-script-text">
+                      {item.script || preview}
+                    </p>
+                    {timingPreviewText ? (
+                      <code className="script-audio-timing-preview">
+                        {timingPreviewText}
+                      </code>
+                    ) : (
+                      <p className="script-audio-no-timing">
+                        Word timing appears here after audio timing is generated.
+                      </p>
+                    )}
                   </div>
                 ) : null}
               </div>
