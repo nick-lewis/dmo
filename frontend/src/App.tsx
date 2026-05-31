@@ -8673,6 +8673,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [notesVisible, setNotesVisible] = useState(false);
   const [runtimeNotes, setRuntimeNotes] = useState<RuntimeNote[]>([]);
   const [runtimeChatEnabled, setRuntimeChatEnabled] = useState(true);
+  const [runtimeSoundCount, setRuntimeSoundCount] = useState(0);
   const [runtimeAvatarPath, setRuntimeAvatarPath] = useState("");
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
@@ -8725,6 +8726,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       audio.src = "";
     });
     runtimeSoundEffectsRef.current.clear();
+    setRuntimeSoundCount(0);
   }
 
   function playRuntimeSoundEffect(action: Record<string, unknown>) {
@@ -8742,11 +8744,13 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     audio.preload = "auto";
     audio.volume = Number.isFinite(rawVolume) ? clamp(rawVolume, 0, 1) : 1;
     runtimeSoundEffectsRef.current.add(audio);
+    setRuntimeSoundCount(runtimeSoundEffectsRef.current.size);
 
     const cleanup = () => {
       audio.removeEventListener("ended", cleanup);
       audio.removeEventListener("error", cleanup);
       runtimeSoundEffectsRef.current.delete(audio);
+      setRuntimeSoundCount(runtimeSoundEffectsRef.current.size);
     };
     audio.addEventListener("ended", cleanup, { once: true });
     audio.addEventListener("error", cleanup, { once: true });
@@ -10969,12 +10973,18 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             highlights={runtimeHighlights}
             interactive={runtimeInteractive}
             interactiveState={runtimeInteractiveState}
+            isSendingMessage={isSendingMessage}
+            isScriptAudioPlaying={isScriptAudioPlaying}
             messages={messages}
             notes={runtimeNotes}
             overlays={Object.values(runtimeOverlays)}
+            realtimeStatus={realtimeStatus}
             runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}
+            runtimeSoundCount={runtimeSoundCount}
             session={session}
+            selectedModel={selectedModel}
+            selectedVoice={selectedVoice}
             slide={resolvedSlide}
             slideError={slideError}
             triggers={runtimeTriggers}
@@ -10996,12 +11006,18 @@ function RuntimeInspectorPanel({
   highlights,
   interactive,
   interactiveState,
+  isSendingMessage,
+  isScriptAudioPlaying,
   messages,
   notes,
   overlays,
+  realtimeStatus,
   runtimeDebug,
   runtimeContext,
+  runtimeSoundCount,
   session,
+  selectedModel,
+  selectedVoice,
   slide,
   slideError,
   triggers,
@@ -11016,12 +11032,18 @@ function RuntimeInspectorPanel({
   highlights: Record<string, RuntimeHighlight>;
   interactive: RuntimeInteractive | null;
   interactiveState: Record<string, unknown>;
+  isSendingMessage: boolean;
+  isScriptAudioPlaying: boolean;
   messages: ChatMessage[];
   notes: RuntimeNote[];
   overlays: RuntimeOverlay[];
+  realtimeStatus: RealtimeStatus;
   runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
+  runtimeSoundCount: number;
   session: TutoringSession | null;
+  selectedModel: RealtimeModelId;
+  selectedVoice: RealtimeVoiceId;
   slide: ResolvedSlide | null;
   slideError: string;
   triggers: RuntimeUiTrigger[];
@@ -11111,6 +11133,40 @@ function RuntimeInspectorPanel({
             <strong>{runtimeTraceTime(runtimeDebugUpdatedAt)}</strong>
           </div>
         </div>
+
+        <section className="runtime-inspector-section">
+          <h2>Client state</h2>
+          <div className="runtime-inspector-list">
+            <div className="runtime-inspector-row">
+              <span>Chat lock</span>
+              <code>
+                {isSendingMessage || isScriptAudioPlaying || realtimeStatus === "streaming"
+                  ? "locked"
+                  : "ready"}
+              </code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Voice</span>
+              <code>{selectedVoice}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Chat model</span>
+              <code>{selectedModel}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Realtime</span>
+              <code>{realtimeStatusLabels[realtimeStatus]}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Script audio</span>
+              <code>{isScriptAudioPlaying ? "playing" : "idle"}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Sound effects</span>
+              <code>{runtimeSoundCount}</code>
+            </div>
+          </div>
+        </section>
 
         <section className="runtime-inspector-section">
           <h2>Current event</h2>
