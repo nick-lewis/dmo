@@ -10757,7 +10757,10 @@ function RuntimeInspectorPanel({
                   key={`${link.kind}-${link.slug}-${index}`}
                 >
                   <span>{link.kind}</span>
-                  <code>{eventTitleForTrigger(events, link.slug) || link.slug}</code>
+                  <code>
+                    {eventTitleForTrigger(events, link.slug) || link.slug}
+                    {link.condition ? ` if ${link.condition}` : ""}
+                  </code>
                 </div>
               ))}
             </div>
