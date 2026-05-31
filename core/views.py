@@ -58,9 +58,12 @@ from .slides import (
 DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
 OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
 REALTIME_MODELS = {
-    "gpt-realtime-2",
-    "gpt-realtime-1.5",
+    "gpt-realtime",
     "gpt-realtime-mini",
+}
+LEGACY_REALTIME_MODEL_ALIASES = {
+    "gpt-realtime-1.5": "gpt-realtime",
+    "gpt-realtime-2": "gpt-realtime",
 }
 CLASSIFICATION_MODELS = {
     "gpt-5.5",
@@ -765,8 +768,14 @@ def ensure_tutor_settings(experience):
     if not tutor_settings.classification_model:
         tutor_settings.classification_model = settings.DLU_CLASSIFICATION_DEFAULT_MODEL
         tutor_settings.save(update_fields=["classification_model", "updated_at"])
-    if tutor_settings.realtime_model not in REALTIME_MODELS:
-        tutor_settings.realtime_model = settings.DLU_REALTIME_DEFAULT_MODEL
+    normalized_realtime_model = normalize_realtime_model_choice(
+        tutor_settings.realtime_model,
+        settings.DLU_REALTIME_DEFAULT_MODEL,
+    )
+    if normalized_realtime_model is None:
+        normalized_realtime_model = settings.DLU_REALTIME_DEFAULT_MODEL
+    if tutor_settings.realtime_model != normalized_realtime_model:
+        tutor_settings.realtime_model = normalized_realtime_model
         tutor_settings.save(update_fields=["realtime_model", "updated_at"])
     return tutor_settings
 
@@ -1603,6 +1612,14 @@ def hash_safety_identifier(user):
 def normalize_realtime_choice(value, allowed_values, default_value):
     choice = str(value or default_value).strip()
     if choice not in allowed_values:
+        return None
+    return choice
+
+
+def normalize_realtime_model_choice(value, default_value):
+    choice = str(value or default_value).strip()
+    choice = LEGACY_REALTIME_MODEL_ALIASES.get(choice, choice)
+    if choice not in REALTIME_MODELS:
         return None
     return choice
 
@@ -3778,9 +3795,8 @@ def update_experience(request, experience_id):
             tutor_settings.avatar_path = avatar_path
 
         if "realtimeModel" in tutor_data:
-            model = normalize_realtime_choice(
+            model = normalize_realtime_model_choice(
                 tutor_data.get("realtimeModel"),
-                REALTIME_MODELS,
                 settings.DLU_REALTIME_DEFAULT_MODEL,
             )
             if model is None:
@@ -5607,9 +5623,8 @@ def create_message_audio(request, session_id, message_id):
     default_model = str(
         data.get("model") or tutor_settings.realtime_model
     ).strip()
-    realtime_model = normalize_realtime_choice(
+    realtime_model = normalize_realtime_model_choice(
         default_model,
-        REALTIME_MODELS,
         tutor_settings.realtime_model,
     )
     if realtime_model is None:
@@ -5732,9 +5747,8 @@ def create_voice_sample(request, experience_id):
         return JsonResponse({"detail": "Voice instructions are too long."}, status=400)
 
     default_model = sample_tutor.get("realtimeModel") or tutor_settings.realtime_model
-    realtime_model = normalize_realtime_choice(
+    realtime_model = normalize_realtime_model_choice(
         data.get("model"),
-        REALTIME_MODELS,
         default_model,
     )
     if realtime_model is None:
@@ -5847,9 +5861,8 @@ def create_realtime_client_secret(request):
         else settings.DLU_REALTIME_DEFAULT_VOICE
     )
 
-    model = normalize_realtime_choice(
+    model = normalize_realtime_model_choice(
         data.get("model"),
-        REALTIME_MODELS,
         default_model,
     )
     if model is None:

@@ -352,6 +352,31 @@ class RuntimeContextActionTests(TestCase):
         self.assertEqual(append_actions[-1]["list"], ["first", "second"])
 
 
+class RealtimeModelChoiceTests(TestCase):
+    def test_legacy_realtime_model_alias_normalizes_on_serialize(self):
+        User = get_user_model()
+        user = User.objects.create_user(
+            username="realtime-model-choice-test",
+            email="realtime-model-choice-test@example.com",
+            password="test-password",
+        )
+        experience = Experience.objects.create(
+            user=user,
+            title="Realtime model choice test",
+            slug="realtime-model-choice-test",
+        )
+        TutorSettings.objects.create(
+            experience=experience,
+            realtime_model="gpt-realtime-2",
+        )
+
+        payload = serialize_experience(experience)
+
+        experience.tutor_settings.refresh_from_db()
+        self.assertEqual(payload["tutor"]["realtimeModel"], "gpt-realtime")
+        self.assertEqual(experience.tutor_settings.realtime_model, "gpt-realtime")
+
+
 class ScriptAudioCachePayloadTests(TestCase):
     def setUp(self):
         User = get_user_model()
@@ -572,7 +597,7 @@ class ExperienceContentMaturityTests(TestCase):
             assistant_name="dee-lou",
             avatar_path="test-images/dLU-right.png",
             classification_model="gpt-5.5-pro",
-            realtime_model="gpt-realtime-2",
+            realtime_model="gpt-realtime",
             script_action_offset_ms=-125,
             system_prompt="Guide the learner.",
             voice="marin",
@@ -721,7 +746,7 @@ class ExperienceContentMaturityTests(TestCase):
 
     def assert_rich_experience_shape(self, experience):
         tutor = experience.tutor_settings
-        self.assertEqual(tutor.realtime_model, "gpt-realtime-2")
+        self.assertEqual(tutor.realtime_model, "gpt-realtime")
         self.assertEqual(tutor.classification_model, "gpt-5.5-pro")
         self.assertEqual(tutor.script_action_offset_ms, -125)
         self.assertEqual(tutor.voice, "marin")
