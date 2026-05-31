@@ -1903,6 +1903,17 @@ button {
   background-size: 5px 5px;
 }
 
+.event-config-warning {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--accent-6) 72%, var(--page-ink));
+  font-size: 0.66rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .event-script-textarea {
   min-height: 68px;
   padding: 7px 8px;

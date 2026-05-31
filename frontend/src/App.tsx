@@ -13198,6 +13198,16 @@ function MainPanelAppFields({
           </option>
         ))}
       </select>
+      {!hasCurrentApp ? (
+        <span className="event-config-warning">
+          Unregistered app: {appId || "missing app id"}
+        </span>
+      ) : null}
+      {hasCurrentApp && !hasCurrentView ? (
+        <span className="event-config-warning">
+          Unknown view for {appDefinition.label}: {currentView || "missing view"}
+        </span>
+      ) : null}
       {configFields.map((field) => {
         const fallback = field.defaultValue ?? "";
         const rawValue = appConfig[field.id];
