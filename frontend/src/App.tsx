@@ -12753,6 +12753,16 @@ function ScriptAudioPanel({
           <strong>{statusLabel}</strong>
         </div>
         <div className="script-audio-actions">
+          {playingId ? (
+            <button
+              className="header-action secondary"
+              onClick={onStop}
+              title="Stop the current cached audio preview. Escape also stops playback."
+              type="button"
+            >
+              Stop preview
+            </button>
+          ) : null}
           <button
             className="header-action"
             disabled={isBusy || !missingCount}
@@ -12773,7 +12783,7 @@ function ScriptAudioPanel({
             title="Regenerate every static script's audio and word timing from the current tutor settings."
             type="button"
           >
-            Regenerate
+            Regenerate all
           </button>
           <button
             aria-expanded={isExpanded}
@@ -12905,13 +12915,6 @@ function ScriptAudioPanel({
                 >
                   <RefreshIcon />
                 </button>
-                {artifactTags.length ? (
-                  <div className="script-audio-artifacts">
-                    {artifactTags.map((tag) => (
-                      <span key={tag}>{tag}</span>
-                    ))}
-                  </div>
-                ) : null}
                 {isDetailExpanded ? (
                   <div className="script-audio-details">
                     <div className="script-audio-detail-grid">
@@ -12932,6 +12935,13 @@ function ScriptAudioPanel({
                         authored script
                       </span>
                     </div>
+                    {artifactTags.length ? (
+                      <div className="script-audio-artifacts">
+                        {artifactTags.map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
                     <p className="script-audio-script-text">
                       {item.script || preview}
                     </p>
