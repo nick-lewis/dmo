@@ -97,6 +97,152 @@ DEFAULT_CLASSIFIER_RESULT_SCHEMA = {
     "required": ["mentioned", "context"],
     "additionalProperties": False,
 }
+SCRIPT_MARKER_PATTERN = re.compile(
+    (
+        r"\[(show_image|slide|gslide|highlight|highlight_on|highlight_off|"
+        r"overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)"
+        r"(?::\s*([^\]]+))?\]"
+    ),
+    re.IGNORECASE,
+)
+
+
+def normalize_script_speech(text):
+    return " ".join(str(text or "").split())
+
+
+def parse_script_marker_args(args_text):
+    if not args_text:
+        return []
+
+    args = []
+    current = []
+    paren_depth = 0
+    for char in str(args_text):
+        if char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth > 0:
+            paren_depth -= 1
+
+        if char == "," and paren_depth == 0:
+            arg = "".join(current).strip()
+            if arg:
+                args.append(arg)
+            current = []
+        else:
+            current.append(char)
+
+    arg = "".join(current).strip()
+    if arg:
+        args.append(arg)
+    return args
+
+
+def parse_script_markers(script_text):
+    parts = []
+    markers = []
+    last_end = 0
+
+    for match in SCRIPT_MARKER_PATTERN.finditer(script_text or ""):
+        parts.append(script_text[last_end : match.start()])
+        markers.append(
+            {
+                "args": parse_script_marker_args(match.group(2)),
+                "charIndex": len(normalize_script_speech("".join(parts))),
+                "markerType": match.group(1).lower(),
+            }
+        )
+        last_end = match.end()
+
+    parts.append((script_text or "")[last_end:])
+    spoken_text = normalize_script_speech("".join(parts))
+    total_chars = max(len(spoken_text), 1)
+    for marker in markers:
+        marker["progress"] = min(1, max(0, marker["charIndex"] / total_chars))
+    return spoken_text, markers
+
+
+def resolve_script_marker_action(marker, config, runtime_context):
+    marker_type = marker.get("markerType")
+    args = marker.get("args") or []
+
+    if marker_type == "gslide":
+        deck_url = render_context_template(
+            config.get("deckUrl", ""),
+            runtime_context,
+        ).strip()
+        slide_ref = (
+            render_context_template(args[0] if args else "1", runtime_context).strip()
+            or "1"
+        )
+        if not deck_url:
+            return {
+                "detail": "Script slide marker needs a deck URL.",
+                "slideRef": slide_ref,
+                "type": "slide_error",
+            }
+
+        try:
+            resolved = resolve_slide_image(deck_url, slide_ref)
+        except (SlideResolutionError, SlideFetchError) as error:
+            return {
+                "deckUrl": deck_url,
+                "detail": str(error),
+                "slideRef": slide_ref,
+                "type": "slide_error",
+            }
+
+        return {
+            "cached": resolved.cache_hit,
+            "deckUrl": deck_url,
+            "imageUrl": f"/api/slides/images/{resolved.filename}/",
+            "pageId": resolved.page_id,
+            "presentationId": resolved.presentation_id,
+            "slideRef": slide_ref,
+            "type": "gslide",
+        }
+
+    if marker_type == "highlight":
+        selector = str(args[0] if args else "").strip()
+        if not selector:
+            return None
+        return {
+            "color": str(
+                args[1] if len(args) > 1 else "rgba(59, 130, 246, 0.6)"
+            ).strip(),
+            "duration": str(args[2] if len(args) > 2 else "1200").strip(),
+            "selector": selector,
+            "type": "highlight_on",
+        }
+
+    if marker_type == "highlight_on":
+        selector = str(args[0] if args else "").strip()
+        if not selector:
+            return None
+        return {
+            "color": str(
+                args[1] if len(args) > 1 else "rgba(59, 130, 246, 0.6)"
+            ).strip(),
+            "selector": selector,
+            "type": "highlight_on",
+        }
+
+    if marker_type == "highlight_off":
+        selector = str(args[0] if args else "").strip()
+        if not selector:
+            return None
+        return {
+            "selector": selector,
+            "type": "highlight_off",
+        }
+
+    if marker_type == "pause":
+        return {
+            "durationMs": str(args[0] if args else "0"),
+            "type": "pause",
+        }
+
+    return None
 
 
 def serialize_user(user):
@@ -1157,7 +1303,10 @@ def validate_action_config(action_type, value):
         text = str(value.get("text", ""))
         if len(text) > 12000:
             return None, "Script text is too long."
-        return {"text": text}, ""
+        deck_url = str(value.get("deckUrl", "")).strip()
+        if len(deck_url) > 2048:
+            return None, "Deck URL is too long."
+        return {"deckUrl": deck_url, "text": text}, ""
 
     if action_type == EventActionStep.ActionType.SET_CONTEXT:
         key = str(value.get("key", "")).strip()
@@ -1585,11 +1734,32 @@ def run_action_sequence(
             continue
 
         if action_type == EventActionStep.ActionType.SCRIPT:
-            text = render_context_template(
+            raw_text = render_context_template(
                 config.get("text", ""),
                 runtime_context,
             ).strip()
+            text, markers = parse_script_markers(raw_text)
+            script_cues = []
+            for marker in markers:
+                action = resolve_script_marker_action(marker, config, runtime_context)
+                if not action:
+                    continue
+                action.update(
+                    {
+                        "eventId": str(event.id),
+                        "source": source,
+                        "stepId": step_id,
+                        **metadata,
+                    }
+                )
+                script_cues.append(
+                    {
+                        "action": action,
+                        "progress": marker.get("progress", 0),
+                    }
+                )
             if not text:
+                actions.extend(cue["action"] for cue in script_cues)
                 continue
 
             message = create_message_for_runtime(
@@ -1600,6 +1770,7 @@ def run_action_sequence(
                     "actionType": action_type,
                     "eventId": str(event.id),
                     "source": source,
+                    "scriptCues": script_cues,
                     "stepId": step_id,
                     **metadata,
                 },
@@ -3941,6 +4112,7 @@ def create_message_audio(request, session_id, message_id):
             "cached": recording.cached,
             "messageId": str(message.id),
             "realtimeModel": realtime_model,
+            "scriptCues": metadata.get("scriptCues", []),
             "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
             "voice": voice,
         }

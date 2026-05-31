@@ -71,6 +71,8 @@ const eventActionOptions = [
 ] as const;
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
+const scriptMarkerPattern =
+  /\[(show_image|slide|gslide|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
 const scriptAudioSources = new Set([
   "event-action",
   "conversation-tool-action",
@@ -397,8 +399,14 @@ type MessageAudioPayload = {
   cached: boolean;
   messageId: string;
   realtimeModel: RealtimeModelId;
+  scriptCues?: ScriptCue[];
   ttsModel: string;
   voice: RealtimeVoiceId;
+};
+
+type ScriptCue = {
+  action: Record<string, unknown>;
+  progress: number;
 };
 
 type StoredPanelLayout = {
@@ -552,6 +560,10 @@ function scriptStreamIndexAt(text: string, progress: number) {
   }
 
   return rawIndex;
+}
+
+function spokenScriptText(text: string) {
+  return text.replace(scriptMarkerPattern, " ").replace(/\s+/g, " ").trim();
 }
 
 function getStartEvent(experience: Experience | null) {
@@ -846,6 +858,9 @@ function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
 }
 
 function defaultStepConfig(actionType: EventActionStep["actionType"]) {
+  if (actionType === "script") {
+    return { deckUrl: "", text: "" };
+  }
   if (actionType === "set_context") {
     return { key: "entry_ready", value: "yes" };
   }
@@ -1225,6 +1240,36 @@ function runtimeSlideFromRecord(value: unknown): (ResolvedSlide & { deckUrl: str
   };
 }
 
+function scriptCuesFromValue(value: unknown): ScriptCue[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+
+      const cue = item as Record<string, unknown>;
+      const action = cue.action;
+      if (!action || typeof action !== "object" || Array.isArray(action)) return null;
+
+      const rawProgress = Number(cue.progress);
+      return {
+        action: action as Record<string, unknown>,
+        progress: Number.isFinite(rawProgress) ? clamp(rawProgress, 0, 1) : 0,
+      };
+    })
+    .filter((cue): cue is ScriptCue => Boolean(cue))
+    .sort((left, right) => left.progress - right.progress);
+}
+
+function scriptCuesFromMessage(
+  message: ChatMessage,
+  fallbackValue?: unknown,
+): ScriptCue[] {
+  const metadataCues = scriptCuesFromValue(message.metadata?.scriptCues);
+  if (metadataCues.length) return metadataCues;
+  return scriptCuesFromValue(fallbackValue);
+}
+
 function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   if (step.actionType === "set_context") {
     const key = stringConfigValue(step.config, "key", "key");
@@ -1265,7 +1310,7 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
 
   return compactPreview(
-    stringConfigValue(step.config, "text"),
+    spokenScriptText(stringConfigValue(step.config, "text")),
     "Write what the agent says",
   );
 }
@@ -4303,15 +4348,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         </div>
 
         {step.actionType === "script" ? (
-          <textarea
-            aria-label="Speech text"
-            className="event-script-textarea"
-            onChange={(event) => updateConfig("text", event.target.value)}
-            onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-            placeholder="What the agent says..."
-            ref={resizeTextareaToContent}
-            value={stringConfigValue(step.config, "text")}
-          />
+          <>
+            <textarea
+              aria-label="Speech text"
+              className="event-script-textarea"
+              onChange={(event) => updateConfig("text", event.target.value)}
+              onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+              placeholder="What the agent says... [gslide: 1]"
+              ref={resizeTextareaToContent}
+              value={stringConfigValue(step.config, "text")}
+            />
+            <div className="event-context-line single-value script-deck-line">
+              <span className="event-detail-label">DECK</span>
+              <input
+                aria-label="Script Google Slides deck URL"
+                onChange={(event) => updateConfig("deckUrl", event.target.value)}
+                placeholder="Google Slides URL"
+                type="text"
+                value={stringConfigValue(step.config, "deckUrl")}
+              />
+            </div>
+          </>
         ) : null}
 
         {step.actionType === "set_context" ? (
@@ -4936,23 +4993,44 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           </div>
 
                           {step.actionType === "script" ? (
-                            <textarea
-                              aria-label="Speech text"
-                              className="event-script-textarea"
-                              onChange={(event) =>
-                                updateEventStepConfig(
-                                  step.id,
-                                  "text",
-                                  event.target.value,
-                                )
-                              }
-                              onInput={(event) =>
-                                resizeTextareaToContent(event.currentTarget)
-                              }
-                              placeholder="What the agent says..."
-                              ref={resizeTextareaToContent}
-                              value={stringConfigValue(step.config, "text")}
-                            />
+                            <>
+                              <textarea
+                                aria-label="Speech text"
+                                className="event-script-textarea"
+                                onChange={(event) =>
+                                  updateEventStepConfig(
+                                    step.id,
+                                    "text",
+                                    event.target.value,
+                                  )
+                                }
+                                onInput={(event) =>
+                                  resizeTextareaToContent(event.currentTarget)
+                                }
+                                placeholder="What the agent says... [gslide: 1]"
+                                ref={resizeTextareaToContent}
+                                value={stringConfigValue(step.config, "text")}
+                              />
+                              <div className="event-context-line single-value script-deck-line">
+                                <span className="event-detail-label">DECK</span>
+                                <input
+                                  aria-label="Script Google Slides deck URL"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "deckUrl",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Google Slides URL"
+                                  type="text"
+                                  value={stringConfigValue(
+                                    step.config,
+                                    "deckUrl",
+                                  )}
+                                />
+                              </div>
+                            </>
                           ) : null}
 
                           {step.actionType === "set_context" ? (
@@ -7549,14 +7627,44 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     });
   }
 
-  function playPreparedScriptAudio(audio: HTMLAudioElement) {
+  function playPreparedScriptAudio(
+    audio: HTMLAudioElement,
+    cues: ScriptCue[] = [],
+  ) {
     return new Promise<void>((resolve, reject) => {
       scriptAudioRef.current = audio;
       let isDone = false;
+      let cueIndex = 0;
+      let timingFrame = 0;
+      const audioDuration =
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : 0;
+      const cueList = [...cues].sort((left, right) => left.progress - right.progress);
+
+      const runDueCues = (currentTime: number, runAll = false) => {
+        while (cueIndex < cueList.length) {
+          const cue = cueList[cueIndex];
+          const cueTime = audioDuration * cue.progress;
+          if (!runAll && currentTime + 0.05 < cueTime) break;
+
+          cueIndex += 1;
+          applyRuntimeActions([cue.action]);
+        }
+      };
+
+      const tickCues = () => {
+        if (isDone) return;
+        runDueCues(audio.currentTime);
+        timingFrame = window.requestAnimationFrame(tickCues);
+      };
 
       const cleanup = () => {
+        window.cancelAnimationFrame(timingFrame);
         audio.removeEventListener("ended", handleEnded);
         audio.removeEventListener("error", handleError);
+        audio.removeEventListener("play", handlePlay);
+        audio.removeEventListener("timeupdate", handleTimeUpdate);
         if (scriptAudioSkipRef.current === handleSkip) {
           scriptAudioSkipRef.current = null;
         }
@@ -7567,6 +7675,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       const handleEnded = () => {
         if (isDone) return;
         isDone = true;
+        runDueCues(audioDuration, true);
         cleanup();
         resolve();
       };
@@ -7580,12 +7689,23 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (isDone) return;
         isDone = true;
         audio.pause();
+        runDueCues(audioDuration, true);
         cleanup();
         resolve();
+      };
+      const handlePlay = () => {
+        window.cancelAnimationFrame(timingFrame);
+        runDueCues(audio.currentTime);
+        timingFrame = window.requestAnimationFrame(tickCues);
+      };
+      const handleTimeUpdate = () => {
+        runDueCues(audio.currentTime);
       };
 
       audio.addEventListener("ended", handleEnded);
       audio.addEventListener("error", handleError);
+      audio.addEventListener("play", handlePlay);
+      audio.addEventListener("timeupdate", handleTimeUpdate);
       scriptAudioSkipRef.current = handleSkip;
       void audio.play().catch((error: unknown) => {
         isDone = true;
@@ -7595,16 +7715,21 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     });
   }
 
-  async function playScriptMessage(message: ChatMessage, audioUrl: string) {
+  async function playScriptMessage(
+    message: ChatMessage,
+    audioUrl: string,
+    cueValue?: unknown,
+  ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
 
     await waitForAudioMetadata(audio);
 
     const durationMs = scriptStreamDurationMs(message.content, audio.duration);
+    const cues = scriptCuesFromMessage(message, cueValue);
     await Promise.all([
       streamScriptMessageText(message, durationMs),
-      playPreparedScriptAudio(audio),
+      playPreparedScriptAudio(audio, cues),
     ]);
   }
 
@@ -7649,7 +7774,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             }),
           },
         );
-        await playScriptMessage(message, payload.audioUrl);
+        await playScriptMessage(message, payload.audioUrl, payload.scriptCues);
       } catch (error) {
         scriptTextSkipRef.current?.();
         revealScriptMessageText(message);
