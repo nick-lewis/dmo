@@ -8,6 +8,7 @@ from .models import (
     EventConversationCheck,
     Experience,
     ExperienceEvent,
+    ExperienceSnapshot,
     SessionMessage,
     TutoringSession,
     TutorSettings,
@@ -127,6 +128,14 @@ class ExperienceAdmin(admin.ModelAdmin):
     search_fields = ("title", "description", "slug", "user__email", "user__username")
     readonly_fields = ("id", "created_at", "updated_at")
     inlines = [TutorSettingsInline]
+
+
+@admin.register(ExperienceSnapshot)
+class ExperienceSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("title", "experience", "user", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("title", "note", "experience__title", "user__email", "user__username")
+    readonly_fields = ("id", "created_at")
 
 
 @admin.register(TutorSettings)

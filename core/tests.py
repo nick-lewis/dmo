@@ -24,6 +24,7 @@ from .models import (
     EventConversationCheck,
     Experience,
     ExperienceEvent,
+    ExperienceSnapshot,
     SessionMessage,
     TutorSettings,
     TutoringSession,
@@ -36,6 +37,7 @@ from .views import (
     collect_experience_script_audio_items,
     create_experience_from_export_payload,
     duplicate_experience_for_user,
+    experience_export_payload,
     evaluate_classifier_group,
     EXPERIENCE_EXPORT_FORMAT,
     EXPERIENCE_EXPORT_VERSION,
@@ -2138,6 +2140,110 @@ class ExperienceContentMaturityTests(TestCase):
             ".dlu-experience.json",
             response.headers["Content-Disposition"],
         )
+
+    def test_snapshot_endpoint_creates_and_lists_versioned_payloads(self):
+        source = self.create_rich_experience()
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/experiences/{source.id}/snapshots/",
+            data=json.dumps({"title": "Before graph edits", "note": "Stable checkpoint."}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        snapshot_payload = response.json()["snapshot"]
+        self.assertEqual(snapshot_payload["title"], "Before graph edits")
+        self.assertEqual(snapshot_payload["note"], "Stable checkpoint.")
+        self.assertEqual(snapshot_payload["eventCount"], 2)
+        self.assertEqual(snapshot_payload["format"], EXPERIENCE_EXPORT_FORMAT)
+        self.assertEqual(snapshot_payload["version"], EXPERIENCE_EXPORT_VERSION)
+
+        snapshot = ExperienceSnapshot.objects.get(id=snapshot_payload["id"])
+        self.assertEqual(snapshot.experience, source)
+        self.assertEqual(snapshot.user, self.user)
+        self.assertEqual(snapshot.payload["experience"]["title"], "Rich experience")
+        self.assertEqual(snapshot.payload["experience"]["events"][0]["slug"], "start")
+
+        list_response = self.client.get(f"/api/experiences/{source.id}/snapshots/")
+
+        self.assertEqual(list_response.status_code, 200)
+        snapshots = list_response.json()["snapshots"]
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]["id"], snapshot_payload["id"])
+
+    def test_snapshot_export_returns_stored_payload(self):
+        source = self.create_rich_experience()
+        snapshot = ExperienceSnapshot.objects.create(
+            experience=source,
+            user=self.user,
+            title="Export me",
+            payload=experience_export_payload(source),
+        )
+        source.title = "Edited after snapshot"
+        source.save(update_fields=["title", "updated_at"])
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            f"/api/experiences/{source.id}/snapshots/{snapshot.id}/export/"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["format"], EXPERIENCE_EXPORT_FORMAT)
+        self.assertEqual(payload["experience"]["title"], "Rich experience")
+
+    def test_snapshot_restore_creates_safe_copy_for_same_user(self):
+        source = self.create_rich_experience()
+        snapshot = ExperienceSnapshot.objects.create(
+            experience=source,
+            user=self.user,
+            title="Restore point",
+            payload=experience_export_payload(source),
+        )
+        source.description = "Changed after snapshot."
+        source.save(update_fields=["description", "updated_at"])
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/experiences/{source.id}/snapshots/{snapshot.id}/restore/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        restored = Experience.objects.get(id=response.json()["experience"]["id"])
+        self.assertNotEqual(restored.id, source.id)
+        self.assertEqual(restored.user, self.user)
+        self.assertEqual(restored.title, "Rich experience restored")
+        self.assertEqual(restored.description, "A complete authoring shape.")
+        self.assert_rich_experience_shape(restored)
+        source.refresh_from_db()
+        self.assertEqual(source.description, "Changed after snapshot.")
+
+    def test_other_user_cannot_access_experience_snapshots(self):
+        source = self.create_rich_experience()
+        snapshot = ExperienceSnapshot.objects.create(
+            experience=source,
+            user=self.user,
+            title="Private snapshot",
+            payload=experience_export_payload(source),
+        )
+        self.client.force_login(self.other_user)
+
+        list_response = self.client.get(f"/api/experiences/{source.id}/snapshots/")
+        export_response = self.client.get(
+            f"/api/experiences/{source.id}/snapshots/{snapshot.id}/export/"
+        )
+        restore_response = self.client.post(
+            f"/api/experiences/{source.id}/snapshots/{snapshot.id}/restore/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(list_response.status_code, 404)
+        self.assertEqual(export_response.status_code, 404)
+        self.assertEqual(restore_response.status_code, 404)
 
     def test_import_normalizes_legacy_realtime_model_alias(self):
         source = self.create_rich_experience()

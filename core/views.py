@@ -43,6 +43,7 @@ from .models import (
     EventConversationCheck,
     Experience,
     ExperienceEvent,
+    ExperienceSnapshot,
     SessionMessage,
     TutoringSession,
     TutorSettings,
@@ -810,6 +811,37 @@ def serialize_experience(experience):
         ],
         "createdAt": experience.created_at.isoformat(),
         "updatedAt": experience.updated_at.isoformat(),
+    }
+
+
+def experience_export_payload(experience):
+    return {
+        "exportedAt": timezone.now().isoformat(),
+        "format": EXPERIENCE_EXPORT_FORMAT,
+        "version": EXPERIENCE_EXPORT_VERSION,
+        "experience": serialize_experience(experience),
+    }
+
+
+def serialize_experience_snapshot(snapshot):
+    payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
+    experience_payload = payload.get("experience")
+    events = []
+    if isinstance(experience_payload, dict) and isinstance(
+        experience_payload.get("events"),
+        list,
+    ):
+        events = experience_payload["events"]
+
+    return {
+        "id": str(snapshot.id),
+        "experienceId": str(snapshot.experience_id),
+        "title": snapshot.title,
+        "note": snapshot.note,
+        "createdAt": snapshot.created_at.isoformat(),
+        "eventCount": len(events),
+        "format": payload.get("format", ""),
+        "version": payload.get("version"),
     }
 
 
@@ -4914,16 +4946,117 @@ def export_experience(request, experience_id):
     if not experience:
         return JsonResponse({"detail": "Experience not found."}, status=404)
 
-    payload = {
-        "exportedAt": timezone.now().isoformat(),
-        "format": EXPERIENCE_EXPORT_FORMAT,
-        "version": EXPERIENCE_EXPORT_VERSION,
-        "experience": serialize_experience(experience),
-    }
+    payload = experience_export_payload(experience)
     filename = f"{slugify(experience.title) or 'experience'}.dlu-experience.json"
     response = JsonResponse(payload, json_dumps_params={"indent": 2})
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+def default_snapshot_title(experience):
+    timestamp = timezone.localtime().strftime("%b %d, %Y %I:%M %p")
+    return f"{experience.title} snapshot {timestamp}"[:160]
+
+
+@require_http_methods(["GET", "POST"])
+def experience_snapshots(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    if request.method == "GET":
+        snapshots = experience.snapshots.filter(user=request.user)
+        return JsonResponse(
+            {
+                "snapshots": [
+                    serialize_experience_snapshot(snapshot)
+                    for snapshot in snapshots
+                ]
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    title = import_string(data.get("title"), "", max_length=160)
+    if not title:
+        title = default_snapshot_title(experience)
+    note = import_string(
+        data.get("note"),
+        "",
+        max_length=4000,
+        strip=False,
+    )
+    snapshot = ExperienceSnapshot.objects.create(
+        experience=experience,
+        user=request.user,
+        title=title,
+        note=note,
+        payload=experience_export_payload(experience),
+    )
+    return JsonResponse(
+        {"snapshot": serialize_experience_snapshot(snapshot)},
+        status=201,
+    )
+
+
+@require_GET
+def export_experience_snapshot(request, experience_id, snapshot_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    snapshot = ExperienceSnapshot.objects.filter(
+        id=snapshot_id,
+        experience_id=experience_id,
+        user=request.user,
+    ).first()
+    if not snapshot:
+        return JsonResponse({"detail": "Snapshot not found."}, status=404)
+
+    payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
+    filename = f"{slugify(snapshot.title) or 'experience-snapshot'}.dlu-experience.json"
+    response = JsonResponse(payload, json_dumps_params={"indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@require_POST
+def restore_experience_snapshot(request, experience_id, snapshot_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    snapshot = ExperienceSnapshot.objects.filter(
+        id=snapshot_id,
+        experience_id=experience_id,
+        user=request.user,
+    ).first()
+    if not snapshot:
+        return JsonResponse({"detail": "Snapshot not found."}, status=404)
+
+    restored, error = create_experience_from_export_payload(
+        request.user,
+        snapshot.payload,
+    )
+    if error:
+        return JsonResponse({"detail": error}, status=400)
+
+    restored.title = f"{restored.title} restored"[:160]
+    restored.slug = unique_experience_slug(request.user, restored.title)
+    restored.save(update_fields=["title", "slug", "updated_at"])
+    return JsonResponse(
+        {
+            "experience": serialize_experience(restored),
+            "snapshot": serialize_experience_snapshot(snapshot),
+        },
+        status=201,
+    )
 
 
 @require_POST

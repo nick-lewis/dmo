@@ -362,6 +362,21 @@ type Experience = {
   updatedAt: string;
 };
 
+type ExperienceSnapshot = {
+  id: string;
+  experienceId: string;
+  title: string;
+  note: string;
+  createdAt: string;
+  eventCount: number;
+  format: string;
+  version: number | null;
+};
+
+type ExperienceSnapshotsPayload = {
+  snapshots: ExperienceSnapshot[];
+};
+
 type ExperiencesPayload = {
   currentExperienceId: string;
   experiences: Experience[];
@@ -3514,6 +3529,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     "idle" | "loading" | "generating"
   >("idle");
   const [scriptAudioError, setScriptAudioError] = useState("");
+  const [experienceSnapshots, setExperienceSnapshots] = useState<
+    ExperienceSnapshot[]
+  >([]);
+  const [snapshotError, setSnapshotError] = useState("");
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
+  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
+  const [exportingSnapshotId, setExportingSnapshotId] = useState("");
+  const [restoringSnapshotId, setRestoringSnapshotId] = useState("");
   const [experienceValidationStatus, setExperienceValidationStatus] = useState<
     "idle" | "loading" | "error"
   >("idle");
@@ -3862,6 +3885,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setExperienceValidation(null);
     setExperienceValidationError("");
     setExperienceValidationStatus("idle");
+    setExperienceSnapshots([]);
+    setSnapshotError("");
     clearEventUndoHistory();
   }
 
@@ -3924,6 +3949,35 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function loadExperienceSnapshots(
+    targetExperienceId = experience?.id ?? "",
+    showLoading = true,
+  ) {
+    if (!targetExperienceId) return;
+
+    if (showLoading) {
+      setIsLoadingSnapshots(true);
+    }
+    setSnapshotError("");
+
+    try {
+      const payload = await apiFetch<ExperienceSnapshotsPayload>(
+        `/api/experiences/${targetExperienceId}/snapshots/`,
+      );
+      setExperienceSnapshots(payload.snapshots);
+    } catch (loadError) {
+      setSnapshotError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load snapshots.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingSnapshots(false);
+      }
+    }
+  }
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -3948,6 +4002,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         applyExperience(nextExperience);
         writeSelectedExperienceId(nextExperience.id);
         void loadScriptAudioItems(nextExperience.id);
+        void loadExperienceSnapshots(nextExperience.id);
         setStatus("ready");
       } catch (loadError) {
         if (isCancelled) return;
@@ -6754,6 +6809,124 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     });
   }
 
+  async function createExperienceSnapshot() {
+    if (!experience) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    setIsCreatingSnapshot(true);
+    setSnapshotError("");
+    try {
+      const payload = await apiFetch<{ snapshot: ExperienceSnapshot }>(
+        `/api/experiences/${experience.id}/snapshots/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setExperienceSnapshots((current) => [
+        payload.snapshot,
+        ...current.filter((snapshot) => snapshot.id !== payload.snapshot.id),
+      ]);
+    } catch (snapshotCreateError) {
+      setSnapshotError(
+        snapshotCreateError instanceof Error
+          ? snapshotCreateError.message
+          : "Could not create snapshot.",
+      );
+    } finally {
+      setIsCreatingSnapshot(false);
+    }
+  }
+
+  async function exportExperienceSnapshot(snapshot: ExperienceSnapshot) {
+    if (!experience) return;
+
+    setExportingSnapshotId(snapshot.id);
+    setSnapshotError("");
+    try {
+      const response = await fetch(
+        `/api/experiences/${experience.id}/snapshots/${snapshot.id}/export/`,
+        {
+          credentials: "same-origin",
+          headers: {
+            "X-Current-Path": getCurrentPath(),
+          },
+        },
+      );
+      if (response.status === 401) {
+        window.location.assign("/accounts/login/");
+        throw new Error("Authentication required.");
+      }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | Record<string, unknown>
+          | null;
+        throw new Error(
+          typeof payload?.detail === "string"
+            ? payload.detail
+            : "Could not export snapshot.",
+        );
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${experience.slug || "experience"}-${snapshot.id.slice(
+        0,
+        8,
+      )}.dlu-experience.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (snapshotExportError) {
+      setSnapshotError(
+        snapshotExportError instanceof Error
+          ? snapshotExportError.message
+          : "Could not export snapshot.",
+      );
+    } finally {
+      setExportingSnapshotId("");
+    }
+  }
+
+  async function restoreExperienceSnapshot(snapshot: ExperienceSnapshot) {
+    if (!experience) return;
+
+    const didConfirm = window.confirm(
+      `Restore "${snapshot.title}" as a new editable copy?`,
+    );
+    if (!didConfirm) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    setRestoringSnapshotId(snapshot.id);
+    setSnapshotError("");
+    try {
+      const payload = await apiFetch<{ experience: Experience; snapshot: ExperienceSnapshot }>(
+        `/api/experiences/${experience.id}/snapshots/${snapshot.id}/restore/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      writeSelectedExperienceId(payload.experience.id);
+      window.location.assign(experienceEditPath(payload.experience.id));
+    } catch (snapshotRestoreError) {
+      setSnapshotError(
+        snapshotRestoreError instanceof Error
+          ? snapshotRestoreError.message
+          : "Could not restore snapshot.",
+      );
+    } finally {
+      setRestoringSnapshotId("");
+    }
+  }
+
   async function runExperience() {
     if (!experience) return;
 
@@ -7343,6 +7516,21 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onStop={stopScriptAudioPreview}
                 playingId={playingScriptAudioId}
                 status={scriptAudioStatus}
+              />
+            </section>
+
+            <section className="editor-section snapshot-section">
+              <ExperienceSnapshotsPanel
+                error={snapshotError}
+                exportingId={exportingSnapshotId}
+                isCreating={isCreatingSnapshot}
+                isLoading={isLoadingSnapshots}
+                onCreate={() => void createExperienceSnapshot()}
+                onExport={(snapshot) => void exportExperienceSnapshot(snapshot)}
+                onRefresh={() => void loadExperienceSnapshots(experience.id)}
+                onRestore={(snapshot) => void restoreExperienceSnapshot(snapshot)}
+                restoringId={restoringSnapshotId}
+                snapshots={experienceSnapshots}
               />
             </section>
 
@@ -13633,6 +13821,140 @@ function ScriptAudioPanel({
             );
           })}
           {!items.length ? <div className="script-audio-empty">---</div> : null}
+        </div>
+      ) : null}
+      {error ? <p className="control-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function snapshotCreatedAtText(value: string) {
+  if (!value) return "---";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  });
+}
+
+function ExperienceSnapshotsPanel({
+  error,
+  exportingId,
+  isCreating,
+  isLoading,
+  onCreate,
+  onExport,
+  onRefresh,
+  onRestore,
+  restoringId,
+  snapshots,
+}: {
+  error: string;
+  exportingId: string;
+  isCreating: boolean;
+  isLoading: boolean;
+  onCreate: () => void;
+  onExport: (snapshot: ExperienceSnapshot) => void;
+  onRefresh: () => void;
+  onRestore: (snapshot: ExperienceSnapshot) => void;
+  restoringId: string;
+  snapshots: ExperienceSnapshot[];
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const latestSnapshot = snapshots[0] ?? null;
+  const statusLabel = isLoading
+    ? "Loading"
+    : snapshots.length
+      ? `${snapshots.length} saved`
+      : "None yet";
+
+  return (
+    <div className="snapshot-panel">
+      <div className="snapshot-header">
+        <div>
+          <span>Snapshots</span>
+          <strong>{statusLabel}</strong>
+          {latestSnapshot ? (
+            <em>{snapshotCreatedAtText(latestSnapshot.createdAt)}</em>
+          ) : null}
+        </div>
+        <div className="snapshot-actions">
+          <button
+            className="header-action secondary"
+            disabled={isLoading}
+            onClick={onRefresh}
+            title="Reload saved snapshots for this experience."
+            type="button"
+          >
+            Refresh
+          </button>
+          <button
+            className="header-action"
+            disabled={isCreating}
+            onClick={onCreate}
+            title="Save a versioned copy of the current experience authoring state."
+            type="button"
+          >
+            {isCreating ? "Creating..." : "Create snapshot"}
+          </button>
+          <button
+            aria-expanded={isExpanded}
+            className="header-action secondary"
+            disabled={!snapshots.length}
+            onClick={() => setIsExpanded((current) => !current)}
+            type="button"
+          >
+            {isExpanded ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      {latestSnapshot && !isExpanded ? (
+        <div className="snapshot-summary">
+          <span>{latestSnapshot.title}</span>
+          <span>{latestSnapshot.eventCount} events</span>
+          <span>v{latestSnapshot.version ?? "?"}</span>
+        </div>
+      ) : null}
+
+      {isExpanded ? (
+        <div className="snapshot-list">
+          {snapshots.map((snapshot) => (
+            <div className="snapshot-row" key={snapshot.id}>
+              <div className="snapshot-copy">
+                <strong>{snapshot.title}</strong>
+                <span>
+                  {snapshotCreatedAtText(snapshot.createdAt)} ·{" "}
+                  {snapshot.eventCount} events · v{snapshot.version ?? "?"}
+                </span>
+                {snapshot.note ? <p>{snapshot.note}</p> : null}
+              </div>
+              <div className="snapshot-row-actions">
+                <button
+                  className="event-text-button"
+                  disabled={exportingId === snapshot.id}
+                  onClick={() => onExport(snapshot)}
+                  title="Download this stored snapshot payload."
+                  type="button"
+                >
+                  {exportingId === snapshot.id ? "Exporting..." : "Export"}
+                </button>
+                <button
+                  className="event-text-button"
+                  disabled={restoringId === snapshot.id}
+                  onClick={() => onRestore(snapshot)}
+                  title="Restore this snapshot as a new editable experience copy."
+                  type="button"
+                >
+                  {restoringId === snapshot.id ? "Restoring..." : "Restore as copy"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {!snapshots.length ? <div className="snapshot-empty">---</div> : null}
         </div>
       ) : null}
       {error ? <p className="control-error">{error}</p> : null}

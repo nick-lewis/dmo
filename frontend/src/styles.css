@@ -935,6 +935,143 @@ button {
   font-weight: 760;
 }
 
+.snapshot-section {
+  padding-block: 10px;
+}
+
+.snapshot-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.snapshot-header > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-header span {
+  color: var(--muted-ink);
+  font-size: 0.68rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.snapshot-header strong {
+  color: var(--page-ink);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.snapshot-header em {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--muted-ink) 70%, transparent);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-actions,
+.snapshot-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.snapshot-actions .header-action {
+  min-width: 70px;
+  min-height: 28px;
+  padding-block: 4px;
+}
+
+.snapshot-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.snapshot-summary span {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--page-ink) 70%, var(--muted-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 42%, transparent);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-height: 150px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 42%, transparent);
+}
+
+.snapshot-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.snapshot-copy strong,
+.snapshot-copy span,
+.snapshot-copy p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-copy strong {
+  color: var(--page-ink);
+  font-size: 0.72rem;
+  font-weight: 790;
+}
+
+.snapshot-copy span,
+.snapshot-copy p {
+  margin: 0;
+  color: color-mix(in srgb, var(--muted-ink) 74%, transparent);
+  font-size: 0.64rem;
+  font-weight: 720;
+}
+
+.snapshot-empty {
+  min-height: 30px;
+  color: var(--muted-ink);
+  font-size: 0.74rem;
+  font-weight: 760;
+}
+
 .event-editor-section {
   gap: 9px;
 }
