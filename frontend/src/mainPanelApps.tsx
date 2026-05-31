@@ -13,7 +13,10 @@ export type RuntimeInteractive = {
 
 export type MainPanelAppHost = {
   context: Record<string, unknown>;
-  emitActions: (actions: Array<Record<string, unknown>>) => void;
+  emitActions: (
+    actions: Array<Record<string, unknown>>,
+    state?: Record<string, unknown>,
+  ) => void;
   runEvent: (eventSlug: string, state?: Record<string, unknown>) => void;
   saveContext: (values: Record<string, unknown>) => Promise<void>;
   setState: (state: Record<string, unknown>) => void;
@@ -199,9 +202,20 @@ function DeliveryDataInteractive({
                   completedAt: new Date().toISOString(),
                   estimate: estimate.trim(),
                 };
-                host.submit(nextState, {
-                  [estimateContextKey]: estimate.trim(),
-                });
+                host.emitActions(
+                  [
+                    {
+                      key: estimateContextKey,
+                      type: "set_context",
+                      value: estimate.trim(),
+                    },
+                    {
+                      triggersEvent: interactive.triggersEvent,
+                      type: "goto_event",
+                    },
+                  ],
+                  nextState,
+                );
               }}
               type="button"
             >

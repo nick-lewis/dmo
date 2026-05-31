@@ -8454,12 +8454,15 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     );
   }
 
-  function emitRuntimeInteractiveActions(actions: Array<Record<string, unknown>>) {
+  function emitRuntimeInteractiveActions(
+    actions: Array<Record<string, unknown>>,
+    state = runtimeInteractiveState,
+  ) {
     if (!runtimeInteractive || !actions.length) return;
     clearInteractiveSaveTimer();
     void persistRuntimeInteractiveState(
       runtimeInteractive.interactiveId,
-      runtimeInteractiveState,
+      state,
       {},
       actions,
     );
@@ -12211,7 +12214,10 @@ function InteractiveWorkspace({
   state,
 }: {
   context: Record<string, unknown>;
-  emitActions: (actions: Array<Record<string, unknown>>) => void;
+  emitActions: (
+    actions: Array<Record<string, unknown>>,
+    state?: Record<string, unknown>,
+  ) => void;
   interactive: RuntimeInteractive;
   onComplete: (
     state?: Record<string, unknown>,
