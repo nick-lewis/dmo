@@ -1,5 +1,6 @@
 import hashlib
 import json
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +62,44 @@ def script_audio_audio_path(cache_key):
 
 def script_audio_metadata_path(cache_key):
     return script_audio_cache_dir() / f"{cache_key}.json"
+
+
+def wav_data_size(audio_path):
+    try:
+        file_size = audio_path.stat().st_size
+        with audio_path.open("rb") as audio_file:
+            if audio_file.read(4) != b"RIFF":
+                return None
+            audio_file.seek(12)
+            while audio_file.tell() + 8 <= file_size:
+                chunk_id = audio_file.read(4)
+                chunk_size = int.from_bytes(audio_file.read(4), "little")
+                chunk_start = audio_file.tell()
+                if chunk_id == b"data":
+                    return max(0, min(chunk_size, file_size - chunk_start))
+                audio_file.seek(chunk_size + (chunk_size % 2), 1)
+    except OSError:
+        return None
+    return None
+
+
+def audio_duration_seconds(audio_path):
+    try:
+        with wave.open(str(audio_path), "rb") as audio_file:
+            frame_rate = audio_file.getframerate()
+            frame_bytes = audio_file.getnchannels() * audio_file.getsampwidth()
+            if frame_rate <= 0:
+                return None
+            if frame_bytes <= 0:
+                return None
+
+            data_size = wav_data_size(audio_path)
+            if data_size is not None:
+                return data_size / (frame_rate * frame_bytes)
+
+            return audio_file.getnframes() / frame_rate
+    except (OSError, EOFError, wave.Error):
+        return None
 
 
 def build_intro_script_prompt(assistant_name, voice_personality):

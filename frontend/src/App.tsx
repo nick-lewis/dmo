@@ -398,6 +398,7 @@ type VoiceSamplePayload = {
 type MessageAudioPayload = {
   audioUrl: string;
   cached: boolean;
+  durationSeconds?: number | null;
   messageId: string;
   realtimeModel: RealtimeModelId;
   scriptCues?: ScriptCue[];
@@ -1269,6 +1270,38 @@ function scriptCuesFromMessage(
   const metadataCues = scriptCuesFromValue(message.metadata?.scriptCues);
   if (metadataCues.length) return metadataCues;
   return scriptCuesFromValue(fallbackValue);
+}
+
+function cachedScriptAudioFromMessage(
+  message: ChatMessage,
+): MessageAudioPayload | null {
+  const rawAudio = message.metadata?.scriptAudio;
+  if (!rawAudio || typeof rawAudio !== "object" || Array.isArray(rawAudio)) {
+    return null;
+  }
+
+  const audio = rawAudio as Record<string, unknown>;
+  const audioUrl = typeof audio.audioUrl === "string" ? audio.audioUrl : "";
+  const realtimeModel =
+    typeof audio.realtimeModel === "string" ? audio.realtimeModel : "";
+  const voice = typeof audio.voice === "string" ? audio.voice : "";
+  if (!audioUrl || !realtimeModel || !voice) return null;
+
+  return {
+    audioUrl,
+    cached: Boolean(audio.cached),
+    durationSeconds:
+      typeof audio.durationSeconds === "number" &&
+      Number.isFinite(audio.durationSeconds)
+        ? audio.durationSeconds
+        : null,
+    messageId:
+      typeof audio.messageId === "string" ? audio.messageId : message.id,
+    realtimeModel: realtimeModel as RealtimeModelId,
+    scriptCues: scriptCuesFromMessage(message),
+    ttsModel: typeof audio.ttsModel === "string" ? audio.ttsModel : "",
+    voice: voice as RealtimeVoiceId,
+  };
 }
 
 function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
@@ -7639,19 +7672,22 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   function playPreparedScriptAudio(
     audio: HTMLAudioElement,
     cues: ScriptCue[] = [],
+    fallbackDurationSeconds = 0,
   ) {
     return new Promise<void>((resolve, reject) => {
       scriptAudioRef.current = audio;
       let isDone = false;
       let cueIndex = 0;
       let timingFrame = 0;
-      const audioDuration =
-        Number.isFinite(audio.duration) && audio.duration > 0
-          ? audio.duration
-          : 0;
       const cueList = [...cues].sort((left, right) => left.progress - right.progress);
 
+      const currentAudioDuration = () =>
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : fallbackDurationSeconds;
+
       const runDueCues = (currentTime: number, runAll = false) => {
+        const audioDuration = currentAudioDuration();
         while (cueIndex < cueList.length) {
           const cue = cueList[cueIndex];
           const cueTime = audioDuration * cue.progress;
@@ -7684,7 +7720,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       const handleEnded = () => {
         if (isDone) return;
         isDone = true;
-        runDueCues(audioDuration, true);
+        runDueCues(currentAudioDuration(), true);
         cleanup();
         resolve();
       };
@@ -7698,7 +7734,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (isDone) return;
         isDone = true;
         audio.pause();
-        runDueCues(audioDuration, true);
+        runDueCues(currentAudioDuration(), true);
         cleanup();
         resolve();
       };
@@ -7728,19 +7764,24 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     message: ChatMessage,
     audioUrl: string,
     cueValue?: unknown,
+    durationSeconds?: number | null,
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
+    const durationMs = scriptStreamDurationMs(
+      message.content,
+      durationSeconds ?? undefined,
+    );
+    const fallbackDurationSeconds = durationMs / 1000;
 
-    await waitForAudioMetadata(audio);
+    void waitForAudioMetadata(audio);
 
-    const durationMs = scriptStreamDurationMs(message.content, audio.duration);
     const cues = scriptCuesFromMessage(message, cueValue).filter(
       (cue) => cue.progress > scriptImmediateCueProgress,
     );
     await Promise.all([
       streamScriptMessageText(message, durationMs),
-      playPreparedScriptAudio(audio, cues),
+      playPreparedScriptAudio(audio, cues, fallbackDurationSeconds),
     ]);
   }
 
@@ -7775,17 +7816,29 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       playedScriptMessageIdsRef.current.add(message.id);
 
       try {
-        const payload = await apiFetch<MessageAudioPayload>(
-          `/api/sessions/${activeSession.id}/messages/${message.id}/audio/`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              model: selectedModel,
-              voice: selectedVoice,
-            }),
-          },
+        let payload = cachedScriptAudioFromMessage(message);
+        if (
+          !payload ||
+          payload.realtimeModel !== selectedModel ||
+          payload.voice !== selectedVoice
+        ) {
+          payload = await apiFetch<MessageAudioPayload>(
+            `/api/sessions/${activeSession.id}/messages/${message.id}/audio/`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                model: selectedModel,
+                voice: selectedVoice,
+              }),
+            },
+          );
+        }
+        await playScriptMessage(
+          message,
+          payload.audioUrl,
+          payload.scriptCues,
+          payload.durationSeconds,
         );
-        await playScriptMessage(message, payload.audioUrl, payload.scriptCues);
       } catch (error) {
         scriptTextSkipRef.current?.();
         revealScriptMessageText(message);

@@ -21,10 +21,13 @@ import requests
 from .audio_cache import (
     AudioGenerationError,
     OPENAI_CHAT_COMPLETIONS_URL,
+    audio_duration_seconds,
+    compute_script_audio_cache_key,
     get_or_create_script_audio,
     get_or_create_voice_sample,
     openai_error_message,
     script_audio_audio_path,
+    script_audio_metadata_path,
     voice_sample_audio_path,
 )
 from .models import (
@@ -243,6 +246,35 @@ def resolve_script_marker_action(marker, config, runtime_context):
         }
 
     return None
+
+
+def cached_script_audio_payload(session, script):
+    if not session.experience:
+        return {}
+
+    tutor_settings = ensure_tutor_settings(session.experience)
+    cache_key = compute_script_audio_cache_key(
+        assistant_name=tutor_settings.assistant_name,
+        realtime_model=tutor_settings.realtime_model,
+        script=script,
+        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+        voice=tutor_settings.voice,
+        voice_instructions=tutor_settings.voice_instructions,
+    )
+    audio_path = script_audio_audio_path(cache_key)
+    metadata_path = script_audio_metadata_path(cache_key)
+    if not audio_path.exists() or not metadata_path.exists():
+        return {}
+
+    return {
+        "audioUrl": f"/api/script-audio/{cache_key}.wav/",
+        "cached": True,
+        "durationSeconds": audio_duration_seconds(audio_path),
+        "messageId": "",
+        "realtimeModel": tutor_settings.realtime_model,
+        "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+        "voice": tutor_settings.voice,
+    }
 
 
 def serialize_user(user):
@@ -1770,11 +1802,17 @@ def run_action_sequence(
                     "actionType": action_type,
                     "eventId": str(event.id),
                     "source": source,
+                    "scriptAudio": cached_script_audio_payload(session, text),
                     "scriptCues": script_cues,
                     "stepId": step_id,
                     **metadata,
                 },
             )
+            script_audio = dict(message.metadata.get("scriptAudio") or {})
+            if script_audio:
+                script_audio["messageId"] = str(message.id)
+                message.metadata["scriptAudio"] = script_audio
+                message.save(update_fields=["metadata"])
             messages.append(message)
             actions.append(
                 {
@@ -4110,6 +4148,7 @@ def create_message_audio(request, session_id, message_id):
         {
             "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
             "cached": recording.cached,
+            "durationSeconds": audio_duration_seconds(recording.audio_path),
             "messageId": str(message.id),
             "realtimeModel": realtime_model,
             "scriptCues": metadata.get("scriptCues", []),
