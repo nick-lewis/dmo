@@ -346,6 +346,7 @@ export class DluRealtimeConnection {
   private activeResponse: ActiveResponse | null = null;
   private audioElement: HTMLAudioElement | null = null;
   private channel: RTCDataChannel | null = null;
+  private isOutputAudioBufferActive = false;
   private peerConnection: RTCPeerConnection | null = null;
   private recentEventSummaries: string[] = [];
 
@@ -440,6 +441,7 @@ export class DluRealtimeConnection {
     this.peerConnection?.close();
     this.audioElement?.remove();
     this.channel = null;
+    this.isOutputAudioBufferActive = false;
     this.peerConnection = null;
     this.audioElement = null;
     this.setStatus(nextStatus);
@@ -577,7 +579,25 @@ export class DluRealtimeConnection {
       const message = event.error?.message || "Realtime API error.";
       this.callbacks.onError?.(message);
       this.rejectActiveResponse(message);
+      this.isOutputAudioBufferActive = false;
       this.setStatus("error");
+      return;
+    }
+
+    if (eventType === "output_audio_buffer.started") {
+      this.isOutputAudioBufferActive = true;
+      this.setStatus("streaming");
+      return;
+    }
+
+    if (
+      eventType === "output_audio_buffer.stopped" ||
+      eventType === "output_audio_buffer.cleared"
+    ) {
+      this.isOutputAudioBufferActive = false;
+      if (!this.activeResponse) {
+        this.setStatus("connected");
+      }
       return;
     }
 
@@ -705,7 +725,9 @@ export class DluRealtimeConnection {
       text: finalText || activeResponse.text,
       toolCall: toolCall ?? activeResponse.toolCall,
     });
-    this.setStatus("connected");
+    if (!this.isOutputAudioBufferActive) {
+      this.setStatus("connected");
+    }
   }
 
   private rejectActiveResponse(message: string) {
@@ -716,6 +738,9 @@ export class DluRealtimeConnection {
     window.clearTimeout(activeResponse.timeoutId);
     this.activeResponse = null;
     activeResponse.reject(new Error(message));
+    if (!this.isOutputAudioBufferActive) {
+      this.setStatus("connected");
+    }
   }
 
   private setStatus(status: RealtimeStatus) {
