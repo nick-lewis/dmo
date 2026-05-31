@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,7 @@ SLIDE_CACHE_FOLDER = "gslide_temp"
 SLIDE_EXPORT_WIDTH = 1920
 SLIDE_REQUEST_TIMEOUT = 20
 MAX_SLIDE_NUMBER = 500
+SLIDE_REVISION_CHECK_TTL_SECONDS = 2
 
 
 class SlideResolutionError(ValueError):
@@ -103,29 +105,65 @@ def slide_index_path(deck):
     )
 
 
-def read_cached_page_ids(deck):
+def read_cached_deck_index(deck):
     path = slide_index_path(deck)
     if not path.exists():
-        return []
+        return {"fetchedAt": 0, "pageIds": [], "revision": ""}
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
+        return {"fetchedAt": 0, "pageIds": [], "revision": ""}
 
     page_ids = payload.get("pageIds") if isinstance(payload, dict) else None
     if not isinstance(page_ids, list):
-        return []
+        page_ids = []
 
-    return [
+    return {
+        "fetchedAt": payload.get("fetchedAt", 0) if isinstance(payload, dict) else 0,
+        "pageIds": [
+            str(page_id)
+            for page_id in page_ids
+            if isinstance(page_id, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", page_id)
+        ],
+        "revision": str(payload.get("revision", "") or "")
+        if isinstance(payload, dict)
+        else "",
+    }
+
+
+def read_cached_page_ids(deck):
+    return read_cached_deck_index(deck).get("pageIds", [])
+
+
+def cached_deck_index_is_recent(deck):
+    fetched_at = read_cached_deck_index(deck).get("fetchedAt", 0)
+    try:
+        fetched_at = float(fetched_at)
+    except (TypeError, ValueError):
+        return False
+    return time.time() - fetched_at < SLIDE_REVISION_CHECK_TTL_SECONDS
+
+
+def extract_deck_revision(html):
+    patterns = [
+        r"\brevision:\s*([0-9.]+)",
+        r'"revision"\s*:\s*"?([0-9.]+)"?',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def write_cached_deck_index(deck, page_ids, revision=""):
+    page_ids = [
         str(page_id)
         for page_id in page_ids
         if isinstance(page_id, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", page_id)
     ]
-
-
-def write_cached_page_ids(deck, page_ids):
-    if not page_ids:
+    if not page_ids and not revision:
         return
 
     path = slide_index_path(deck)
@@ -133,9 +171,11 @@ def write_cached_page_ids(deck, page_ids):
         path.write_text(
             json.dumps(
                 {
+                    "fetchedAt": time.time(),
                     "isPublished": deck.is_published,
                     "pageIds": page_ids,
                     "presentationId": deck.presentation_id,
+                    "revision": revision,
                 },
                 indent=2,
             ),
@@ -143,6 +183,10 @@ def write_cached_page_ids(deck, page_ids):
         )
     except OSError:
         pass
+
+
+def write_cached_page_ids(deck, page_ids):
+    write_cached_deck_index(deck, page_ids)
 
 
 def get_slide_image_path(filename):
@@ -179,19 +223,7 @@ def deck_path(deck):
     return f"/presentation/d/e/{deck.presentation_id}" if deck.is_published else f"/presentation/d/{deck.presentation_id}"
 
 
-def discover_page_ids(deck):
-    embed_url = f"https://docs.google.com{deck_path(deck)}/embed"
-
-    try:
-        response = requests.get(
-            embed_url,
-            headers=google_headers(),
-            timeout=SLIDE_REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-    except requests.RequestException:
-        return []
-
+def extract_page_ids_from_html(html):
     patterns = [
         r'\["(i\d+)",\s*\d+\s*,\s*"',
         # Modern Google Slides embed pages expose slide records in a docData
@@ -208,7 +240,7 @@ def discover_page_ids(deck):
     for pattern in patterns:
         page_ids = []
         seen = set()
-        for match in re.finditer(pattern, response.text):
+        for match in re.finditer(pattern, html):
             page_id = match.group(1).removeprefix("id.")
             if page_id in seen:
                 continue
@@ -216,10 +248,55 @@ def discover_page_ids(deck):
             page_ids.append(page_id)
 
         if page_ids:
-            write_cached_page_ids(deck, page_ids)
             return page_ids
 
     return []
+
+
+def refresh_deck_index(deck):
+    embed_url = f"https://docs.google.com{deck_path(deck)}/embed"
+
+    try:
+        response = requests.get(
+            embed_url,
+            headers=google_headers(),
+            timeout=SLIDE_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return {"fetchedAt": 0, "pageIds": [], "revision": ""}
+
+    page_ids = extract_page_ids_from_html(response.text)
+    revision = extract_deck_revision(response.text)
+    write_cached_deck_index(deck, page_ids, revision)
+    return {"fetchedAt": time.time(), "pageIds": page_ids, "revision": revision}
+
+
+def discover_page_ids(deck):
+    return refresh_deck_index(deck).get("pageIds", [])
+
+
+def deck_index_changed(deck):
+    previous = read_cached_deck_index(deck)
+    if cached_deck_index_is_recent(deck):
+        return False
+
+    latest = refresh_deck_index(deck)
+    latest_page_ids = latest.get("pageIds", [])
+    latest_revision = latest.get("revision", "")
+    if not latest_page_ids and not latest_revision:
+        return False
+
+    previous_page_ids = previous.get("pageIds", [])
+    previous_revision = previous.get("revision", "")
+    if not previous_page_ids and not previous_revision:
+        return True
+    if latest_revision and previous_revision and latest_revision != previous_revision:
+        return True
+    if latest_page_ids and previous_page_ids and latest_page_ids != previous_page_ids:
+        return True
+
+    return False
 
 
 def candidate_page_ids(deck, slide_ref):
@@ -288,15 +365,23 @@ def fetch_slide_image(deck, page_id, width=SLIDE_EXPORT_WIDTH):
     raise SlideFetchError(last_error)
 
 
-def resolve_slide_image(deck_url, slide_ref="1", force_refresh=False):
+def resolve_slide_image(
+    deck_url,
+    slide_ref="1",
+    force_refresh=False,
+    refresh_if_stale=True,
+):
     deck = extract_presentation_reference(deck_url)
     last_error = None
+    should_refresh = force_refresh
+    if refresh_if_stale and not should_refresh:
+        should_refresh = deck_index_changed(deck)
 
     for page_id in candidate_page_ids(deck, slide_ref):
         filename = slide_filename(deck.presentation_id, page_id)
         path = slide_cache_dir() / filename
 
-        if path.exists() and not force_refresh:
+        if path.exists() and not should_refresh:
             return ResolvedSlideImage(
                 presentation_id=deck.presentation_id,
                 page_id=page_id,

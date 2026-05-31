@@ -21,6 +21,9 @@ from .slides import (
     SlideResolutionError,
     candidate_page_ids,
     discover_page_ids,
+    resolve_slide_image,
+    slide_cache_dir,
+    slide_filename,
 )
 from .models import (
     EventActionStep,
@@ -118,6 +121,62 @@ class GoogleSlidesResolutionTests(TestCase):
                 "DMO discovered 1 slide",
             ):
                 candidate_page_ids(deck, "2")
+
+    def test_resolve_slide_image_refreshes_cached_file_when_revision_changes(self):
+        deck_url = "abcdefghijklmnopqrstuvwxyz123456"
+        page_id = "g3e5cbb864f5_0_8"
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                path = slide_cache_dir() / slide_filename(deck_url, page_id)
+                path.write_bytes(b"old")
+
+                with (
+                    patch(
+                        "core.slides.read_cached_deck_index",
+                        return_value={
+                            "fetchedAt": 0,
+                            "pageIds": [page_id],
+                            "revision": "1",
+                        },
+                    ),
+                    patch("core.slides.cached_deck_index_is_recent", return_value=False),
+                    patch(
+                        "core.slides.refresh_deck_index",
+                        return_value={
+                            "fetchedAt": 999,
+                            "pageIds": [page_id],
+                            "revision": "2",
+                        },
+                    ),
+                    patch("core.slides.fetch_slide_image", return_value=b"new") as fetch,
+                ):
+                    resolved = resolve_slide_image(deck_url, page_id)
+
+                self.assertFalse(resolved.cache_hit)
+                self.assertEqual(path.read_bytes(), b"new")
+                fetch.assert_called_once()
+
+    def test_resolve_slide_image_uses_recent_cache_without_revision_check(self):
+        deck_url = "abcdefghijklmnopqrstuvwxyz123456"
+        page_id = "g3e5cbb864f5_0_8"
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                path = slide_cache_dir() / slide_filename(deck_url, page_id)
+                path.write_bytes(b"cached")
+
+                with (
+                    patch("core.slides.cached_deck_index_is_recent", return_value=True),
+                    patch("core.slides.refresh_deck_index") as refresh,
+                    patch("core.slides.fetch_slide_image") as fetch,
+                ):
+                    resolved = resolve_slide_image(deck_url, page_id)
+
+                self.assertTrue(resolved.cache_hit)
+                self.assertEqual(path.read_bytes(), b"cached")
+                refresh.assert_not_called()
+                fetch.assert_not_called()
 
 
 class InteractiveRuntimeActionTests(TestCase):
