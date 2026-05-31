@@ -15,15 +15,22 @@ from .audio_cache import (
 )
 from .models import (
     EventActionStep,
+    EventChatTool,
     EventClassifier,
     EventClassifierGroup,
+    EventConversationCheck,
     Experience,
     ExperienceEvent,
     SessionMessage,
     TutorSettings,
     TutoringSession,
 )
-from .views import cached_script_audio_payload
+from .views import (
+    cached_script_audio_payload,
+    create_experience_from_export_payload,
+    duplicate_experience_for_user,
+    serialize_experience,
+)
 
 
 class InteractiveRuntimeActionTests(TestCase):
@@ -362,3 +369,232 @@ class ConversationRuntimeTests(TestCase):
                 for action in payload["actions"]
             )
         )
+
+
+class ExperienceContentMaturityTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="content-maturity-test",
+            email="content-maturity-test@example.com",
+            password="test-password",
+        )
+        self.other_user = User.objects.create_user(
+            username="content-maturity-import-test",
+            email="content-maturity-import-test@example.com",
+            password="test-password",
+        )
+
+    def create_rich_experience(self):
+        experience = Experience.objects.create(
+            user=self.user,
+            title="Rich experience",
+            slug="rich-experience",
+            description="A complete authoring shape.",
+        )
+        TutorSettings.objects.create(
+            experience=experience,
+            assistant_name="dee-lou",
+            avatar_path="test-images/dLU-right.png",
+            classification_model="gpt-5.5-pro",
+            realtime_model="gpt-realtime-2",
+            script_action_offset_ms=-125,
+            system_prompt="Guide the learner.",
+            voice="marin",
+            voice_instructions="Warm and concise.",
+        )
+        start = ExperienceEvent.objects.create(
+            experience=experience,
+            title="Start",
+            slug="start",
+            description="Entry event.",
+            chat_instructions="Use context {{ learner_goal }}.",
+            is_start=True,
+            sort_order=0,
+        )
+        done = ExperienceEvent.objects.create(
+            experience=experience,
+            title="Done",
+            slug="done",
+            description="Completion event.",
+            sort_order=1,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Intro script",
+            config={
+                "text": (
+                    "Look here. [interactive: timing_challenge, timer, done] "
+                    "Then submit your mark."
+                )
+            },
+            condition={"type": "context_missing", "key": "intro_seen"},
+            enabled=True,
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.INTERACTIVE,
+            label="Timing app",
+            config={
+                "config": {"markedContextKey": "marked_ms", "targetMs": 3200},
+                "interactiveId": "timing_challenge",
+                "mode": "timer",
+                "triggersEvent": "done",
+            },
+            enabled=True,
+            sort_order=1,
+        )
+        EventActionStep.objects.create(
+            event=done,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Done script",
+            config={"text": "Marked: {{ marked_ms }}."},
+            enabled=True,
+            sort_order=0,
+        )
+        EventChatTool.objects.create(
+            event=start,
+            name="student_done",
+            description="Learner says they are done.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "estimate": {"type": "number", "description": "Their estimate."}
+                },
+                "required": ["estimate"],
+            },
+            handler_actions=[
+                {
+                    "id": "save-estimate",
+                    "actionType": "set_context",
+                    "config": {"key": "estimate", "value": "{{ estimate }}"},
+                    "condition": {},
+                    "enabled": True,
+                    "label": "Save estimate",
+                    "sortOrder": 0,
+                }
+            ],
+            triggers_event="done",
+            save_argument="estimate",
+            save_context_key="estimate",
+            enabled=True,
+            sort_order=0,
+        )
+        EventConversationCheck.objects.create(
+            event=start,
+            title="Needs help",
+            instructions="Detect whether the learner asks for help.",
+            result_context_key="needs_help",
+            handler_actions=[
+                {
+                    "id": "note-help",
+                    "actionType": "append_context_list",
+                    "config": {"key": "flags", "value": "needs_help"},
+                    "condition": {},
+                    "enabled": True,
+                    "label": "Flag help",
+                    "sortOrder": 0,
+                }
+            ],
+            triggers_event="done",
+            enabled=True,
+            sort_order=0,
+        )
+        group = EventClassifierGroup.objects.create(
+            event=start,
+            title="Fruit classifiers",
+            instructions="Run fruit classifiers.",
+            result_context_key="_classifier_results",
+            handler_actions=[
+                {
+                    "id": "append-banana",
+                    "actionType": "append_context_list",
+                    "config": {"key": "fruits", "value": "banana"},
+                    "condition": {
+                        "type": "context_equals",
+                        "key": "_classifier_results.banana.mentioned",
+                        "value": True,
+                    },
+                    "enabled": True,
+                    "label": "Append banana",
+                    "sortOrder": 0,
+                }
+            ],
+            triggers_event="done",
+            condition={"type": "context_missing", "key": "fruit_done"},
+            enabled=True,
+            sort_order=0,
+        )
+        EventClassifier.objects.create(
+            group=group,
+            name="banana",
+            prompt="Detect banana.",
+            schema={
+                "type": "object",
+                "properties": {"mentioned": {"type": "boolean"}},
+                "required": ["mentioned"],
+                "additionalProperties": False,
+            },
+            model="gpt-5.4-mini",
+            condition={"type": "context_not_contains", "key": "fruits", "value": "banana"},
+            enabled=True,
+            sort_order=0,
+        )
+        return experience
+
+    def assert_rich_experience_shape(self, experience):
+        tutor = experience.tutor_settings
+        self.assertEqual(tutor.realtime_model, "gpt-realtime-2")
+        self.assertEqual(tutor.classification_model, "gpt-5.5-pro")
+        self.assertEqual(tutor.script_action_offset_ms, -125)
+        self.assertEqual(tutor.voice, "marin")
+
+        start = experience.events.get(slug="start")
+        self.assertEqual(start.chat_instructions, "Use context {{ learner_goal }}.")
+        steps = list(start.steps.order_by("sort_order"))
+        self.assertEqual(steps[0].config["text"].count("[interactive:"), 1)
+        self.assertEqual(steps[0].condition["type"], "context_missing")
+        self.assertEqual(steps[1].config["interactiveId"], "timing_challenge")
+        self.assertEqual(steps[1].config["config"]["targetMs"], 3200)
+
+        tool = start.chat_tools.get(name="student_done")
+        self.assertEqual(tool.triggers_event, "done")
+        self.assertEqual(tool.save_argument, "estimate")
+        self.assertEqual(tool.handler_actions[0]["actionType"], "set_context")
+
+        check = start.conversation_checks.get(title="Needs help")
+        self.assertEqual(check.result_context_key, "needs_help")
+        self.assertEqual(check.handler_actions[0]["actionType"], "append_context_list")
+
+        group = start.classifier_groups.get(title="Fruit classifiers")
+        self.assertEqual(group.condition["type"], "context_missing")
+        self.assertEqual(group.handler_actions[0]["config"]["key"], "fruits")
+        classifier = group.classifiers.get(name="banana")
+        self.assertEqual(classifier.model, "gpt-5.4-mini")
+        self.assertEqual(classifier.condition["type"], "context_not_contains")
+
+    def test_duplicate_preserves_rich_experience_shape(self):
+        source = self.create_rich_experience()
+
+        duplicate = duplicate_experience_for_user(source, self.user)
+
+        self.assertNotEqual(duplicate.id, source.id)
+        self.assertEqual(duplicate.title, "Rich experience copy")
+        self.assert_rich_experience_shape(duplicate)
+
+    def test_export_import_preserves_rich_experience_shape(self):
+        source = self.create_rich_experience()
+        payload = {
+            "format": "dlu.experience",
+            "version": 1,
+            "experience": serialize_experience(source),
+        }
+
+        imported, error = create_experience_from_export_payload(self.other_user, payload)
+
+        self.assertEqual(error, "")
+        self.assertIsNotNone(imported)
+        self.assertEqual(imported.title, "Rich experience")
+        self.assert_rich_experience_shape(imported)
