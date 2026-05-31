@@ -1409,13 +1409,15 @@ function actionSequenceOutgoingLinks(
         "triggersEvent",
       ).trim();
       markers.forEach((marker) => {
-        if (marker.type !== "interactive") return;
+        if (marker.type !== "interactive" && marker.type !== "interactive_update") {
+          return;
+        }
         const markerDestination = (marker.argList[2] ?? "").trim();
         const triggersEvent = markerDestination || fallbackDestination;
         if (!triggersEvent) return;
         links.push({
           condition,
-          kind: "App submit",
+          kind: marker.type === "interactive" ? "App submit" : "App update submit",
           slug: triggersEvent,
           source: `${sourcePrefix}: ${step.label || "Say"} / ${
             marker.detail || marker.marker
@@ -1428,7 +1430,8 @@ function actionSequenceOutgoingLinks(
       step.actionType !== "set_ui_trigger" &&
       step.actionType !== "goto_event" &&
       step.actionType !== "button_choice" &&
-      step.actionType !== "interactive"
+      step.actionType !== "interactive" &&
+      step.actionType !== "interactive_update"
     ) {
       continue;
     }
@@ -1957,9 +1960,15 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
     const mode = stringConfigValue(step.config, "mode", "mode");
     const viewLabel =
       appDefinition?.views.find((view) => view.id === mode)?.label ?? mode;
-    return `Update ${appDefinition?.label || interactiveId || "app"}${
-      viewLabel ? ` to ${viewLabel}` : ""
-    }`;
+    const triggersEvent = stringConfigValue(step.config, "triggersEvent");
+    const targetEvent = eventTitleForTrigger(events, triggersEvent);
+    return [
+      `Update ${appDefinition?.label || interactiveId || "app"}`,
+      viewLabel ? `to ${viewLabel}` : "",
+      triggersEvent ? `on submit: ${targetEvent || triggersEvent}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");
@@ -6122,6 +6131,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 view={stringConfigValue(step.config, "mode")}
               />
             </div>
+            <div className="event-context-line single-value">
+              <span className="event-detail-label">ON SUBMIT</span>
+              <select
+                aria-label="Updated main-panel app completion event"
+                onChange={(event) =>
+                  updateConfig("triggersEvent", event.target.value)
+                }
+                value={triggerEventSlug}
+              >
+                <option value="">Keep current target</option>
+                {triggerEventSlug && !hasTriggerEventOption ? (
+                  <option value={triggerEventSlug}>{triggerEventSlug}</option>
+                ) : null}
+                {editorEvents.map((event) => (
+                  <option key={event.id} value={event.slug}>
+                    {event.title || event.slug}
+                    {event.isStart ? " (start)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
           </>
         ) : null}
 
@@ -6961,6 +6991,35 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                   }
                                   view={stringConfigValue(step.config, "mode")}
                                 />
+                              </div>
+                              <div className="event-context-line single-value">
+                                <span className="event-detail-label">
+                                  ON SUBMIT
+                                </span>
+                                <select
+                                  aria-label="Updated main-panel app completion event"
+                                  onChange={(event) =>
+                                    updateEventStepConfig(
+                                      step.id,
+                                      "triggersEvent",
+                                      event.target.value,
+                                    )
+                                  }
+                                  value={triggerEventSlug}
+                                >
+                                  <option value="">Keep current target</option>
+                                  {triggerEventSlug && !hasTriggerEventOption ? (
+                                    <option value={triggerEventSlug}>
+                                      {triggerEventSlug}
+                                    </option>
+                                  ) : null}
+                                  {editorEvents.map((event) => (
+                                    <option key={event.id} value={event.slug}>
+                                      {event.title || event.slug}
+                                      {event.isStart ? " (start)" : ""}
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
                             </>
                           ) : null}
@@ -8723,6 +8782,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
             mode: update.mode || base.mode,
             prompt: update.prompt || base.prompt,
             title: update.title || base.title,
+            triggersEvent: update.triggersEvent || base.triggersEvent,
           };
         });
         if (Object.prototype.hasOwnProperty.call(action, "state")) {

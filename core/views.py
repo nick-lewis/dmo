@@ -2846,7 +2846,7 @@ def apply_runtime_actions_to_state(
                     **normalized_interactive_config(action.get("config")),
                 },
             }
-            for key in ("interactiveId", "mode", "prompt", "title"):
+            for key in ("interactiveId", "mode", "prompt", "title", "triggersEvent"):
                 if action.get(key):
                     interactive[key] = str(action.get(key, ""))
             if isinstance(action_state, dict):

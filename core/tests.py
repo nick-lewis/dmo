@@ -26,6 +26,7 @@ from .models import (
     TutoringSession,
 )
 from .views import (
+    apply_runtime_actions_to_state,
     build_realtime_instructions,
     cached_script_audio_payload,
     create_experience_from_export_payload,
@@ -207,6 +208,32 @@ class InteractiveRuntimeActionTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "Main-panel app is not registered.")
+
+    def test_interactive_update_can_change_submit_destination(self):
+        state = apply_runtime_actions_to_state(
+            {},
+            [
+                {
+                    "config": {},
+                    "interactiveId": "delivery_data",
+                    "mode": "table",
+                    "title": "Delivery data",
+                    "triggersEvent": "first-destination",
+                    "type": "interactive",
+                },
+                {
+                    "config": {},
+                    "interactiveId": "delivery_data",
+                    "mode": "graph",
+                    "triggersEvent": "second-destination",
+                    "type": "interactive_update",
+                },
+            ],
+        )
+
+        interactive = state["uiRuntime"]["interactive"]
+        self.assertEqual(interactive["mode"], "graph")
+        self.assertEqual(interactive["triggersEvent"], "second-destination")
 
     def test_editor_rejects_unregistered_main_panel_app_action(self):
         event = ExperienceEvent.objects.create(
