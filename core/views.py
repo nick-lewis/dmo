@@ -69,6 +69,7 @@ from .slides import (
 
 
 DEFAULT_APP_PATH = "/surfaces/tutoring/panels"
+DEFAULT_CHOICE_ICON_BACKGROUND = "#f8ded8"
 OPENAI_REALTIME_CLIENT_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
 MODEL_OPTIONS_PATH = settings.BASE_DIR / "frontend" / "src" / "modelOptions.json"
 
@@ -854,6 +855,9 @@ def serialize_tutor_settings(tutor_settings):
     return {
         "assistantName": tutor_settings.assistant_name,
         "avatarPath": tutor_settings.avatar_path,
+        "choiceIconBackground": normalize_choice_icon_background(
+            tutor_settings.choice_icon_background
+        ),
         "classificationModel": tutor_settings.classification_model,
         "realtimeModel": tutor_settings.realtime_model,
         "systemPrompt": tutor_settings.system_prompt,
@@ -1066,7 +1070,13 @@ def validate_conversation_choices(value):
     return normalize_conversation_choices(normalized), ""
 
 
+def event_choice_icon_background(event):
+    tutor_settings = ensure_tutor_settings(event.experience)
+    return normalize_choice_icon_background(tutor_settings.choice_icon_background)
+
+
 def conversation_choice_actions(event):
+    icon_background = event_choice_icon_background(event)
     actions = []
     for choice in normalize_conversation_choices(event.conversation_choices):
         label = str(choice.get("label", "") or "").strip()
@@ -1077,6 +1087,7 @@ def conversation_choice_actions(event):
             {
                 "type": "button_choice",
                 "eventId": str(event.id),
+                "iconBackground": icon_background,
                 "iconPath": str(choice.get("iconPath", "") or "").strip(),
                 "label": label,
                 "source": "conversation-choice",
@@ -1566,6 +1577,7 @@ def ensure_tutor_settings(experience):
         defaults={
             "assistant_name": "dee-lou",
             "avatar_path": "test-images/dLU-right.png",
+            "choice_icon_background": DEFAULT_CHOICE_ICON_BACKGROUND,
             "classification_model": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
             "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
             "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
@@ -1576,6 +1588,12 @@ def ensure_tutor_settings(experience):
     if not tutor_settings.classification_model:
         tutor_settings.classification_model = settings.DLU_CLASSIFICATION_DEFAULT_MODEL
         tutor_settings.save(update_fields=["classification_model", "updated_at"])
+    normalized_choice_icon_background = normalize_choice_icon_background(
+        tutor_settings.choice_icon_background
+    )
+    if tutor_settings.choice_icon_background != normalized_choice_icon_background:
+        tutor_settings.choice_icon_background = normalized_choice_icon_background
+        tutor_settings.save(update_fields=["choice_icon_background", "updated_at"])
     normalized_realtime_model = normalize_realtime_model_choice(
         tutor_settings.realtime_model,
         settings.DLU_REALTIME_DEFAULT_MODEL,
@@ -1617,6 +1635,7 @@ def duplicate_experience_for_user(source, user):
         duplicate_tutor = ensure_tutor_settings(duplicate)
         duplicate_tutor.assistant_name = source_tutor.assistant_name
         duplicate_tutor.avatar_path = source_tutor.avatar_path
+        duplicate_tutor.choice_icon_background = source_tutor.choice_icon_background
         duplicate_tutor.realtime_model = source_tutor.realtime_model
         duplicate_tutor.classification_model = source_tutor.classification_model
         duplicate_tutor.voice = source_tutor.voice
@@ -1721,6 +1740,13 @@ def import_string(value, fallback="", max_length=4000, strip=True):
     if not text:
         text = fallback
     return text[:max_length]
+
+
+def normalize_choice_icon_background(value, fallback=DEFAULT_CHOICE_ICON_BACKGROUND):
+    text = import_string(value, fallback, max_length=40)
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+        return text.lower()
+    return fallback
 
 
 def import_bool(value, fallback=True):
@@ -1962,6 +1988,9 @@ def create_experience_from_export_payload(user, payload):
                 tutor_data.get("avatarPath"),
                 "test-images/dLU-right.png",
                 max_length=220,
+            )
+            tutor_settings.choice_icon_background = normalize_choice_icon_background(
+                tutor_data.get("choiceIconBackground")
             )
             imported_classification_model = import_string(
                 tutor_data.get("classificationModel"),
@@ -2956,9 +2985,13 @@ def normalize_emitted_runtime_action(action):
         label = runtime_action_string(action.get("label"), max_length=120)
         triggers_event, error = validate_event_slug(action.get("triggersEvent"))
         icon_path = runtime_action_string(action.get("iconPath"), max_length=220)
+        icon_background = normalize_choice_icon_background(
+            action.get("iconBackground")
+        )
         if not label or error:
             return None, rejected_emitted_runtime_action(action, "invalid_button")
         return {
+            "iconBackground": icon_background,
             "iconPath": icon_path,
             "label": label,
             "source": "interactive",
@@ -3714,7 +3747,13 @@ def validate_action_config(action_type, value):
         )
         if event_error:
             return None, event_error
-        return {"label": label, "triggersEvent": triggers_event}, ""
+        config = {"label": label, "triggersEvent": triggers_event}
+        raw_icon_background = value.get("iconBackground")
+        if raw_icon_background:
+            config["iconBackground"] = normalize_choice_icon_background(
+                raw_icon_background
+            )
+        return config, ""
 
     return None, "Action type is not supported."
 
@@ -4623,6 +4662,9 @@ def apply_runtime_actions_to_state(
             buttons.append(
                 {
                     "eventId": str(action.get("eventId", "")),
+                    "iconBackground": normalize_choice_icon_background(
+                        action.get("iconBackground")
+                    ),
                     "iconPath": str(action.get("iconPath", "")),
                     "label": str(action.get("label", "")),
                     "source": str(action.get("source", "")),
@@ -5061,6 +5103,10 @@ def run_action_sequence(
                 {
                     "type": "button_choice",
                     "eventId": str(event.id),
+                    "iconBackground": normalize_choice_icon_background(
+                        config.get("iconBackground"),
+                        event_choice_icon_background(event),
+                    ),
                     "iconPath": str(config.get("iconPath", "")).strip(),
                     "label": label,
                     "stepId": step_id,
@@ -5692,6 +5738,15 @@ def update_experience(request, experience_id):
             if len(avatar_path) > 220:
                 return JsonResponse({"detail": "Avatar path is too long."}, status=400)
             tutor_settings.avatar_path = avatar_path
+
+        if "choiceIconBackground" in tutor_data:
+            raw_background = str(tutor_data.get("choiceIconBackground", "") or "").strip()
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", raw_background):
+                return JsonResponse(
+                    {"detail": "Choice icon background must be a hex color."},
+                    status=400,
+                )
+            tutor_settings.choice_icon_background = raw_background.lower()
 
         if "realtimeModel" in tutor_data:
             model = normalize_realtime_model_choice(

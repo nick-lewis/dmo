@@ -110,6 +110,7 @@ const scriptSlideTextareaMinHeightPx = 82;
 const scriptSlideTextareaMaxHeightPx = 360;
 const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
 const defaultChoiceIconPath = "test-images/wrench.png";
+const defaultChoiceIconBackground = "#f8ded8";
 const tutorVoiceTextareaMinHeightPx = 30;
 const tutorVoiceTextareaMaxHeightPx = 180;
 const sampleSlideDeckUrl =
@@ -316,6 +317,7 @@ type SessionPayload = {
 type TutorSettings = {
   assistantName: string;
   avatarPath: string;
+  choiceIconBackground: string;
   classificationModel: ClassificationModelId;
   realtimeModel: RealtimeModelId;
   systemPrompt: string;
@@ -664,6 +666,7 @@ type RuntimeUiTrigger = {
 
 type RuntimeButton = {
   eventId: string;
+  iconBackground?: string;
   iconPath?: string;
   label: string;
   source?: string;
@@ -1307,6 +1310,21 @@ function stringConfigValue(
 ) {
   const value = config[key];
   return typeof value === "string" ? value : fallback;
+}
+
+function choiceIconBackgroundValue(value?: string) {
+  return value?.trim() || defaultChoiceIconBackground;
+}
+
+function choiceIconBackgroundInputValue(value?: string) {
+  const color = choiceIconBackgroundValue(value);
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : defaultChoiceIconBackground;
+}
+
+function choiceIconBackgroundStyle(value?: string): CSSProperties {
+  return {
+    "--choice-icon-bg": choiceIconBackgroundValue(value),
+  } as CSSProperties;
 }
 
 function numberConfigValue(
@@ -3664,6 +3682,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [tutorForm, setTutorForm] = useState<TutorSettings>({
     assistantName: "dee-lou",
     avatarPath: "test-images/dLU-right.png",
+    choiceIconBackground: defaultChoiceIconBackground,
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
     systemPrompt: "",
@@ -4643,6 +4662,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     return (
       draft.assistantName !== experience.tutor.assistantName ||
       draft.avatarPath !== experience.tutor.avatarPath ||
+      choiceIconBackgroundValue(draft.choiceIconBackground) !==
+        choiceIconBackgroundValue(experience.tutor.choiceIconBackground) ||
       draft.classificationModel !== experience.tutor.classificationModel ||
       draft.realtimeModel !== experience.tutor.realtimeModel ||
       draft.systemPrompt !== experience.tutor.systemPrompt ||
@@ -4683,6 +4704,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         if (
           current.assistantName !== draft.assistantName ||
           current.avatarPath !== draft.avatarPath ||
+          choiceIconBackgroundValue(current.choiceIconBackground) !==
+            choiceIconBackgroundValue(draft.choiceIconBackground) ||
           current.classificationModel !== draft.classificationModel ||
           current.realtimeModel !== draft.realtimeModel ||
           current.systemPrompt !== draft.systemPrompt ||
@@ -8228,6 +8251,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onAvatarPathChange={(avatarPath) =>
                   updateTutorDraft("avatarPath", avatarPath)
                 }
+                onChoiceIconBackgroundChange={(choiceIconBackground) =>
+                  updateTutorDraft("choiceIconBackground", choiceIconBackground)
+                }
                 onClassificationModelChange={(classificationModel) =>
                   updateTutorDraft("classificationModel", classificationModel)
                 }
@@ -10972,6 +10998,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               className={`conversation-choice-icon-preview${
                                 choice.iconPath ? "" : " is-empty"
                               }`}
+                              style={choiceIconBackgroundStyle(
+                                tutorForm.choiceIconBackground,
+                              )}
                             >
                               {choice.iconPath ? (
                                 <img
@@ -11108,6 +11137,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [tutorForm, setTutorForm] = useState<TutorSettings>({
     assistantName: "dee-lou",
     avatarPath: "test-images/dLU-right.png",
+    choiceIconBackground: defaultChoiceIconBackground,
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
     systemPrompt: "",
@@ -11652,6 +11682,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         next = next.filter((button) => button.stepId !== stepId);
         next.push({
           eventId: typeof action.eventId === "string" ? action.eventId : "",
+          iconBackground:
+            typeof action.iconBackground === "string"
+              ? action.iconBackground
+              : choiceIconBackgroundValue(tutorForm.choiceIconBackground),
           iconPath: typeof action.iconPath === "string" ? action.iconPath : "",
           label,
           source: typeof action.source === "string" ? action.source : "",
@@ -11777,6 +11811,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         }
         nextButtons.push({
           eventId: typeof button.eventId === "string" ? button.eventId : "",
+          iconBackground:
+            typeof button.iconBackground === "string"
+              ? button.iconBackground
+              : choiceIconBackgroundValue(tutorForm.choiceIconBackground),
           iconPath: typeof button.iconPath === "string" ? button.iconPath : "",
           label,
           source,
@@ -12921,6 +12959,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       )
       .map((choice) => ({
         eventId: event.id,
+        iconBackground: choiceIconBackgroundValue(tutorForm.choiceIconBackground),
         iconPath: choice.iconPath?.trim() ?? "",
         label: choice.label.trim(),
         source: "conversation-choice",
@@ -13566,6 +13605,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                         ...current,
                         avatarPath,
                       })),
+                    onChoiceIconBackgroundChange: (choiceIconBackground) =>
+                      setTutorForm((current) => ({
+                        ...current,
+                        choiceIconBackground,
+                      })),
                     onClassificationModelChange: (classificationModel) =>
                       setTutorForm((current) => ({
                         ...current,
@@ -13660,6 +13704,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                 assistantName={tutorForm.assistantName}
                 avatarPath={runtimeAvatarPath || tutorForm.avatarPath}
                 avatarVisible={runtimeAvatarVisible}
+                choiceIconBackground={tutorForm.choiceIconBackground}
                 error={chatError}
                 isChatEnabled={runtimeChatEnabled}
                 isSending={isSendingMessage}
@@ -16915,6 +16960,7 @@ type TutorControlsProps = {
   error: string;
   isSaving: boolean;
   onAvatarPathChange: (avatarPath: string) => void;
+  onChoiceIconBackgroundChange: (color: string) => void;
   onClassificationModelChange: (model: ClassificationModelId) => void;
   onModelChange: (model: RealtimeModelId) => void;
   onNameChange: (assistantName: string) => void;
@@ -18755,6 +18801,7 @@ function TutorControls({
   error,
   isSaving,
   onAvatarPathChange,
+  onChoiceIconBackgroundChange,
   onClassificationModelChange,
   onModelChange,
   onNameChange,
@@ -18886,6 +18933,28 @@ function TutorControls({
             </button>
           ) : null}
         </div>
+
+        <label className="control-field tutor-choice-icon-field">
+          <span>Choice icon</span>
+          <span className="tutor-choice-icon-control">
+            <span
+              aria-hidden="true"
+              className="tutor-choice-icon-preview"
+              style={choiceIconBackgroundStyle(tutor.choiceIconBackground)}
+            >
+              <img alt="" src={publicAsset(defaultChoiceIconPath)} />
+            </span>
+            <input
+              aria-label="Choice icon background color"
+              onChange={(event) =>
+                onChoiceIconBackgroundChange(event.target.value)
+              }
+              title="Choice icon background color"
+              type="color"
+              value={choiceIconBackgroundInputValue(tutor.choiceIconBackground)}
+            />
+          </span>
+        </label>
 
         <label className="control-field">
           <span>Name</span>
@@ -19499,6 +19568,7 @@ type ChatPanelContentProps = {
   assistantName: string;
   avatarPath: string;
   avatarVisible: boolean;
+  choiceIconBackground: string;
   error: string;
   isChatEnabled: boolean;
   isSending: boolean;
@@ -19519,6 +19589,7 @@ function ChatPanelContent({
   assistantName,
   avatarPath,
   avatarVisible,
+  choiceIconBackground,
   error,
   isChatEnabled,
   isSending,
@@ -19683,7 +19754,13 @@ function ChatPanelContent({
                 type="button"
               >
                 {button.iconPath ? (
-                  <span className="runtime-choice-icon-slot" aria-hidden="true">
+                  <span
+                    className="runtime-choice-icon-slot"
+                    aria-hidden="true"
+                    style={choiceIconBackgroundStyle(
+                      button.iconBackground || choiceIconBackground,
+                    )}
+                  >
                     <img alt="" src={publicAsset(button.iconPath)} />
                   </span>
                 ) : null}

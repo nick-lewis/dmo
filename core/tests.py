@@ -1257,7 +1257,39 @@ class EventEditorApiTests(TestCase):
             "primer",
         )
 
+    def test_experience_patch_persists_choice_icon_background(self):
+        response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/",
+            data=json.dumps(
+                {
+                    "tutor": {
+                        "assistantName": "dee-lou",
+                        "avatarPath": "test-images/dLU-right.png",
+                        "choiceIconBackground": "#fde2dc",
+                        "classificationModel": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+                        "realtimeModel": settings.DLU_REALTIME_DEFAULT_MODEL,
+                        "systemPrompt": "",
+                        "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
+                        "voiceInstructions": "",
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.experience.tutor_settings.refresh_from_db()
+        self.assertEqual(self.experience.tutor_settings.choice_icon_background, "#fde2dc")
+        self.assertEqual(
+            response.json()["experience"]["tutor"]["choiceIconBackground"],
+            "#fde2dc",
+        )
+
     def test_start_event_persists_conversation_choices_without_immediate_action(self):
+        TutorSettings.objects.create(
+            experience=self.experience,
+            choice_icon_background="#fde2dc",
+        )
         start = ExperienceEvent.objects.create(
             experience=self.experience,
             title="Start",
@@ -1307,6 +1339,7 @@ class EventEditorApiTests(TestCase):
         buttons = payload["session"]["runtimeState"]["uiRuntime"]["buttons"]
         self.assertEqual(buttons[0]["source"], "conversation-choice")
         self.assertEqual(buttons[0]["label"], "Continue")
+        self.assertEqual(buttons[0]["iconBackground"], "#fde2dc")
         self.assertEqual(buttons[0]["iconPath"], "test-images/dLU-right.png")
 
     def test_restore_event_from_serialized_payload_preserves_nested_shape(self):

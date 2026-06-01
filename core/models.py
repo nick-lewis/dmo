@@ -72,6 +72,7 @@ class TutorSettings(models.Model):
     )
     assistant_name = models.CharField(max_length=100, default="dee-lou")
     avatar_path = models.CharField(max_length=220, default="test-images/dLU-right.png")
+    choice_icon_background = models.CharField(max_length=40, default="#f8ded8")
     realtime_model = models.CharField(max_length=100, default="gpt-realtime-mini")
     classification_model = models.CharField(
         max_length=100,
