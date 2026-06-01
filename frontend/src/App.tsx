@@ -3427,16 +3427,16 @@ function ExperienceHome() {
       <section className="experience-home">
         <div className="experience-home-title">
           <h1>Experiences</h1>
-          <div className="experience-home-actions">
-            <button
-              className="header-action"
-              disabled={isCreating}
-              onClick={createExperience}
-              type="button"
-            >
-              {isCreating ? "Creating..." : "New"}
-            </button>
-          </div>
+          <button
+            aria-label={isCreating ? "Creating experience" : "New experience"}
+            className="experience-create-button"
+            disabled={isCreating}
+            onClick={createExperience}
+            title={isCreating ? "Creating experience" : "New experience"}
+            type="button"
+          >
+            <PlusIcon />
+          </button>
         </div>
 
         {status === "loading" ? (
