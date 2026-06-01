@@ -3198,15 +3198,15 @@ button {
 }
 
 .conversation-choice-icon-line {
-  grid-template-columns: auto 24px 28px minmax(90px, auto);
+  grid-template-columns: auto 24px 32px minmax(90px, auto);
   justify-content: start;
 }
 
 .conversation-choice-icon-preview {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
   border-radius: 7px;
@@ -3218,9 +3218,12 @@ button {
 }
 
 .conversation-choice-icon-preview img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  display: block;
+  width: auto;
+  height: 28px;
+  max-width: 28px;
+  max-height: 28px;
+  object-fit: contain;
 }
 
 .conversation-choice-icon-copy {
@@ -5480,23 +5483,27 @@ button {
 }
 
 .runtime-choice-button.has-icon {
-  grid-template-columns: 24px minmax(0, 1fr);
-  padding-left: 8px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-height: 38px;
+  padding: 4px 15px 4px 7px;
 }
 
 .runtime-choice-icon-slot {
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   overflow: hidden;
   border-radius: 999px;
 }
 
 .runtime-choice-icon-slot img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  display: block;
+  width: auto;
+  height: 30px;
+  max-width: 30px;
+  max-height: 30px;
+  object-fit: contain;
 }
 
 .runtime-choice-label {
