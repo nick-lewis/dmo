@@ -15133,7 +15133,22 @@ function ScriptActionEditor({
 
         <div className="script-timeline-marker-list">
           {timelineMarkers.map(({ index, marker, timeMs }) => (
-            <div className="script-timeline-marker-row" key={`${marker.id}-${index}`}>
+            <div
+              className="script-timeline-marker-row"
+              key={`${marker.id}-${index}`}
+              onClick={() =>
+                replaceMarkerTimelineTime(index, Math.round(visibleTimelineTime * 1000))
+              }
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                replaceMarkerTimelineTime(index, Math.round(visibleTimelineTime * 1000));
+              }}
+              role="button"
+              tabIndex={0}
+              title={`Place ${marker.label} at the current playhead time.`}
+            >
               <span className="script-marker-chip-icon">
                 {scriptMarkerIcon(marker.type)}
               </span>
@@ -15142,23 +15157,16 @@ function ScriptActionEditor({
               <input
                 aria-label={`${marker.label} timing in milliseconds`}
                 min="0"
+                onClick={(event) => event.stopPropagation()}
                 onChange={(event) =>
                   replaceMarkerTimelineTime(index, Number(event.target.value) || 0)
                 }
+                onKeyDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
                 step="10"
                 type="number"
                 value={timeMs}
               />
-              <button
-                className="script-timeline-here-button"
-                onClick={() =>
-                  replaceMarkerTimelineTime(index, Math.round(visibleTimelineTime * 1000))
-                }
-                title={`Place ${marker.label} at the current playhead time.`}
-                type="button"
-              >
-                Here
-              </button>
             </div>
           ))}
           {!timelineMarkers.length ? (

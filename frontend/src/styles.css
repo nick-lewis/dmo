@@ -3437,7 +3437,7 @@ button {
 
 .script-timeline-marker-row {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) minmax(78px, 96px) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(78px, 96px);
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -3445,6 +3445,14 @@ button {
   border: 1px solid color-mix(in srgb, var(--accent-2) 11%, var(--panel-soft-border));
   border-radius: 7px;
   background: color-mix(in srgb, var(--panel-bg-strong) 66%, transparent);
+  cursor: pointer;
+}
+
+.script-timeline-marker-row:hover,
+.script-timeline-marker-row:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--panel-bg-strong));
+  outline: none;
 }
 
 .script-timeline-marker-row strong,
@@ -3478,23 +3486,7 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 80%, transparent);
   font-size: 0.64rem;
   font-weight: 760;
-}
-
-.script-timeline-here-button {
-  min-height: 24px;
-  padding: 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
-  border-radius: 999px;
-  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
-  background: color-mix(in srgb, var(--panel-bg-strong) 78%, transparent);
-  font-size: 0.62rem;
-  font-weight: 850;
-  cursor: pointer;
-}
-
-.script-timeline-here-button:hover {
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-soft-border));
-  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-bg-strong));
+  cursor: text;
 }
 
 .script-timeline-empty {
