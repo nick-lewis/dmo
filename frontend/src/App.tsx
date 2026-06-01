@@ -14110,8 +14110,14 @@ function ScriptActionEditor({
   const [timelineDraggingIndex, setTimelineDraggingIndex] = useState<number | null>(
     null,
   );
+  const [timelineDraggingTimeSeconds, setTimelineDraggingTimeSeconds] =
+    useState<number | null>(null);
   const [timelineIsPlaying, setTimelineIsPlaying] = useState(false);
+  const [timelineScrubTime, setTimelineScrubTime] = useState<number | null>(null);
   const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const timelineDraggingRef = useRef(false);
+  const timelineScrubTimeRef = useRef(0);
+  const timelineScrubbingRef = useRef(false);
   const markers = parseScriptMarkerInstances(text);
   const spokenTimelineText = spokenTextFromMarkedScript(text);
   const timelineAudioItem =
@@ -14203,7 +14209,10 @@ function ScriptActionEditor({
     const audio = timelineAudioRef.current;
     if (!audio) return undefined;
 
-    const syncTime = () => setTimelineCurrentTime(audio.currentTime || 0);
+    const syncTime = () => {
+      if (timelineScrubbingRef.current || timelineDraggingRef.current) return;
+      setTimelineCurrentTime(audio.currentTime || 0);
+    };
     const syncPlayState = () => setTimelineIsPlaying(!audio.paused);
     const handleEnded = () => setTimelineIsPlaying(false);
 
@@ -14231,6 +14240,11 @@ function ScriptActionEditor({
     setTimelineCurrentTime(0);
     setTimelineIsPlaying(false);
     setTimelineDraggingIndex(null);
+    setTimelineDraggingTimeSeconds(null);
+    setTimelineScrubTime(null);
+    timelineDraggingRef.current = false;
+    timelineScrubTimeRef.current = 0;
+    timelineScrubbingRef.current = false;
   }, [timelineAudioUrl]);
 
   useEffect(() => {
@@ -14698,6 +14712,19 @@ function ScriptActionEditor({
     return timelineDurationSeconds * clamp(marker.wordIndex / Math.max(1, countScriptWords(spokenTimelineText)), 0, 1);
   }
 
+  function markerTimelineDisplayTimeSeconds(
+    marker: ScriptMarkerInstance,
+    markerIndex: number,
+  ) {
+    if (
+      timelineDraggingIndex === markerIndex &&
+      typeof timelineDraggingTimeSeconds === "number"
+    ) {
+      return timelineDraggingTimeSeconds;
+    }
+    return markerTimelineTimeSeconds(marker);
+  }
+
   function timelineTimeFromClientX(clientX: number) {
     const rect = timelineRailRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || !timelineDurationSeconds) return 0;
@@ -14714,8 +14741,49 @@ function ScriptActionEditor({
 
   function updateTimelineMarkerFromClientX(markerIndex: number, clientX: number) {
     const seconds = timelineTimeFromClientX(clientX);
-    seekTimeline(seconds);
-    replaceMarkerTimelineTime(markerIndex, seconds * 1000);
+    timelineDraggingRef.current = true;
+    setTimelineDraggingIndex(markerIndex);
+    setTimelineDraggingTimeSeconds(seconds);
+    setTimelineCurrentTime(seconds);
+  }
+
+  function finishTimelineMarkerDrag() {
+    if (
+      timelineDraggingIndex !== null &&
+      typeof timelineDraggingTimeSeconds === "number"
+    ) {
+      replaceMarkerTimelineTime(timelineDraggingIndex, timelineDraggingTimeSeconds * 1000);
+      seekTimeline(timelineDraggingTimeSeconds);
+    }
+    timelineDraggingRef.current = false;
+    setTimelineDraggingIndex(null);
+    setTimelineDraggingTimeSeconds(null);
+  }
+
+  function beginTimelineScrub() {
+    timelineScrubbingRef.current = true;
+    timelineScrubTimeRef.current = timelineCurrentTime;
+    setTimelineScrubTime(timelineCurrentTime);
+  }
+
+  function updateTimelineScrub(nextTime: number) {
+    const normalizedTime = clamp(nextTime, 0, timelineDurationSeconds || 0);
+    if (timelineScrubbingRef.current) {
+      timelineScrubTimeRef.current = normalizedTime;
+      setTimelineScrubTime(normalizedTime);
+      setTimelineCurrentTime(normalizedTime);
+      return;
+    }
+    seekTimeline(normalizedTime);
+  }
+
+  function finishTimelineScrub() {
+    const nextTime = timelineScrubbingRef.current
+      ? timelineScrubTimeRef.current
+      : timelineScrubTime ?? timelineCurrentTime;
+    timelineScrubbingRef.current = false;
+    setTimelineScrubTime(null);
+    seekTimeline(nextTime);
   }
 
   function toggleTimelinePlayback() {
@@ -14728,15 +14796,15 @@ function ScriptActionEditor({
     audio.pause();
   }
 
-  function timelinePreviewState() {
-    const elapsed = timelineCurrentTime + 0.001;
+  function timelinePreviewState(atTime = timelineCurrentTime) {
+    const elapsed = atTime + 0.001;
     let currentVisualMarker: ScriptMarkerInstance | null = null;
     let agentImageVisible = true;
     const overlays: Array<{ id: string; imagePath: string }> = [];
     const overlayMap = new Map<string, string>();
 
-    markers.forEach((marker) => {
-      if (markerTimelineTimeSeconds(marker) > elapsed) return;
+    markers.forEach((marker, index) => {
+      if (markerTimelineDisplayTimeSeconds(marker, index) > elapsed) return;
       if (isSlideMarker(marker) || marker.type === "show_image") {
         currentVisualMarker = marker;
       }
@@ -14764,14 +14832,17 @@ function ScriptActionEditor({
 
   function renderTimelineView() {
     const duration = timelineDurationSeconds || 1;
+    const visibleTimelineTime = timelineScrubTime ?? timelineCurrentTime;
     const timelineMarkers = markers.map((marker, index) => {
-      const timeSeconds = markerTimelineTimeSeconds(marker);
+      const timeSeconds = markerTimelineDisplayTimeSeconds(marker, index);
       const timeMs = Math.round(timeSeconds * 1000);
       const stackedIndex = markers
         .slice(0, index)
         .filter(
-          (previous) =>
-            Math.round(markerTimelineTimeSeconds(previous) * 1000) === timeMs,
+          (previous, previousIndex) =>
+            Math.round(
+              markerTimelineDisplayTimeSeconds(previous, previousIndex) * 1000,
+            ) === timeMs,
         ).length;
       return {
         index,
@@ -14782,9 +14853,9 @@ function ScriptActionEditor({
       };
     });
     const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
-    const preview = timelinePreviewState();
+    const preview = timelinePreviewState(visibleTimelineTime);
     const currentWordIndex = timelineWords.findIndex(
-      (word) => timelineCurrentTime >= word.start && timelineCurrentTime <= word.end,
+      (word) => visibleTimelineTime >= word.start && visibleTimelineTime <= word.end,
     );
     const currentWord =
       currentWordIndex >= 0 ? timelineWords[currentWordIndex]?.word : "";
@@ -14824,7 +14895,7 @@ function ScriptActionEditor({
               <img alt="" src={publicAsset("test-images/dLU-right.png")} />
             </div>
             <div className="script-timeline-now">
-              <span>{formatScriptAudioDuration(timelineCurrentTime)}</span>
+              <span>{formatScriptAudioDuration(visibleTimelineTime)}</span>
               <strong>{currentWord || "---"}</strong>
             </div>
           </div>
@@ -14845,33 +14916,40 @@ function ScriptActionEditor({
             disabled={!timelineAudioUrl}
             max={Math.round(duration * 1000)}
             min="0"
-            onChange={(event) => seekTimeline(Number(event.target.value) / 1000)}
+            onBlur={finishTimelineScrub}
+            onChange={(event) =>
+              updateTimelineScrub(Number(event.target.value) / 1000)
+            }
+            onPointerCancel={finishTimelineScrub}
+            onPointerDown={beginTimelineScrub}
+            onPointerUp={finishTimelineScrub}
             step="10"
             type="range"
-            value={Math.round(timelineCurrentTime * 1000)}
+            value={Math.round(visibleTimelineTime * 1000)}
           />
           <span>
-            {formatScriptAudioDuration(timelineCurrentTime)} /{" "}
+            {formatScriptAudioDuration(visibleTimelineTime)} /{" "}
             {formatScriptAudioDuration(timelineDurationSeconds)}
           </span>
         </div>
 
         <div
           className="script-timeline-rail"
-          onPointerLeave={() => setTimelineDraggingIndex(null)}
+          onPointerCancel={finishTimelineMarkerDrag}
+          onPointerLeave={finishTimelineMarkerDrag}
           onPointerMove={(event) => {
             if (timelineDraggingIndex === null) return;
             event.preventDefault();
             updateTimelineMarkerFromClientX(timelineDraggingIndex, event.clientX);
           }}
-          onPointerUp={() => setTimelineDraggingIndex(null)}
+          onPointerUp={finishTimelineMarkerDrag}
           ref={timelineRailRef}
           style={{ minHeight: `${72 + laneCount * 28}px` }}
         >
           <div className="script-timeline-waveform">{waveformBars}</div>
           <div
             className="script-timeline-playhead"
-            style={{ left: `${(timelineCurrentTime / duration) * 100}%` }}
+            style={{ left: `${(visibleTimelineTime / duration) * 100}%` }}
           />
           {timelineMarkers.map(({ index, lane, marker, timeSeconds }) => (
             <button
