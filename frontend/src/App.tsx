@@ -14130,6 +14130,8 @@ function ScriptActionEditor({
   const [timelineScrubTime, setTimelineScrubTime] = useState<number | null>(null);
   const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const timelineDraggingRef = useRef(false);
+  const timelineMarkerDragOffsetRef = useRef(0);
+  const timelineMarkerDragMovedRef = useRef(false);
   const timelineScrubTimeRef = useRef(0);
   const timelineScrubbingRef = useRef(false);
   const markers = parseScriptMarkerInstances(text);
@@ -14273,6 +14275,8 @@ function ScriptActionEditor({
     setTimelineDraggingTimeSeconds(null);
     setTimelineScrubTime(null);
     timelineDraggingRef.current = false;
+    timelineMarkerDragOffsetRef.current = 0;
+    timelineMarkerDragMovedRef.current = false;
     timelineScrubTimeRef.current = 0;
     timelineScrubbingRef.current = false;
   }, [timelineAudioUrl]);
@@ -14769,9 +14773,28 @@ function ScriptActionEditor({
     }
   }
 
-  function updateTimelineMarkerFromClientX(markerIndex: number, clientX: number) {
-    const seconds = timelineTimeFromClientX(clientX);
+  function beginTimelineMarkerDrag(
+    markerIndex: number,
+    markerTimeSeconds: number,
+    clientX: number,
+  ) {
+    const pointerSeconds = timelineTimeFromClientX(clientX);
+    timelineMarkerDragOffsetRef.current = markerTimeSeconds - pointerSeconds;
+    timelineMarkerDragMovedRef.current = false;
     timelineDraggingRef.current = true;
+    setTimelineDraggingIndex(markerIndex);
+    setTimelineDraggingTimeSeconds(markerTimeSeconds);
+    setTimelineCurrentTime(markerTimeSeconds);
+  }
+
+  function updateTimelineMarkerFromClientX(markerIndex: number, clientX: number) {
+    const seconds = clamp(
+      timelineTimeFromClientX(clientX) + timelineMarkerDragOffsetRef.current,
+      0,
+      timelineDurationSeconds || 0,
+    );
+    timelineDraggingRef.current = true;
+    timelineMarkerDragMovedRef.current = true;
     setTimelineDraggingIndex(markerIndex);
     setTimelineDraggingTimeSeconds(seconds);
     setTimelineCurrentTime(seconds);
@@ -14786,6 +14809,7 @@ function ScriptActionEditor({
       seekTimeline(timelineDraggingTimeSeconds);
     }
     timelineDraggingRef.current = false;
+    timelineMarkerDragOffsetRef.current = 0;
     setTimelineDraggingIndex(null);
     setTimelineDraggingTimeSeconds(null);
   }
@@ -15108,14 +15132,18 @@ function ScriptActionEditor({
                 .filter(Boolean)
                 .join(" ")}
               key={`${marker.id}-${index}`}
-              onClick={() => {
+              onClick={(event) => {
+                if (timelineMarkerDragMovedRef.current) {
+                  event.preventDefault();
+                  timelineMarkerDragMovedRef.current = false;
+                  return;
+                }
                 editMarker(marker);
                 seekTimeline(timeSeconds);
               }}
               onPointerDown={(event) => {
                 event.preventDefault();
-                setTimelineDraggingIndex(index);
-                updateTimelineMarkerFromClientX(index, event.clientX);
+                beginTimelineMarkerDrag(index, timeSeconds, event.clientX);
               }}
               style={{
                 left: `${(timeSeconds / duration) * 100}%`,
