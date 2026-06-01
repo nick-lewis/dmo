@@ -2781,11 +2781,33 @@ button {
 }
 
 .script-marker-controls.sound-marker-controls {
-  grid-template-columns: auto minmax(150px, 1fr) auto minmax(58px, 0.28fr);
+  grid-template-columns: auto minmax(150px, 1fr) auto minmax(58px, 0.28fr) auto;
 }
 
 .script-marker-controls.image-marker-controls {
   grid-template-columns: auto minmax(150px, 1fr);
+}
+
+.script-sound-preview-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--page-ink) 78%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 74%, transparent);
+}
+
+.script-sound-preview-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--accent-soft) 46%, var(--panel-bg-strong));
+}
+
+.script-sound-preview-button svg {
+  width: 12px;
+  height: 12px;
 }
 
 .script-marker-controls input,

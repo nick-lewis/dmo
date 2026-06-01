@@ -14118,6 +14118,8 @@ function ScriptActionEditor({
   const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(
     null,
   );
+  const [soundPreviewKey, setSoundPreviewKey] = useState<string | null>(null);
+  const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const markers = parseScriptMarkerInstances(text);
   const editingMarker =
     editingMarkerKey === null
@@ -14155,6 +14157,13 @@ function ScriptActionEditor({
       window.cancelAnimationFrame(secondFrame);
     };
   }, [text, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      soundPreviewAudioRef.current?.pause();
+      soundPreviewAudioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (editingMarkerKey !== null && editingMarker === null) {
@@ -14298,6 +14307,42 @@ function ScriptActionEditor({
 
   function replaceMarkerArgs(marker: ScriptMarkerInstance, args: string[]) {
     replaceMarker(marker, buildScriptMarker(marker.type, args));
+  }
+
+  function stopSoundPreview() {
+    soundPreviewAudioRef.current?.pause();
+    soundPreviewAudioRef.current = null;
+    setSoundPreviewKey(null);
+  }
+
+  function playSoundPreview(soundPath: string, rawVolume: string, previewKey: string) {
+    const normalizedPath = soundPath.trim();
+    if (!normalizedPath) return;
+
+    if (soundPreviewKey === previewKey && soundPreviewAudioRef.current) {
+      stopSoundPreview();
+      return;
+    }
+
+    stopSoundPreview();
+    const parsedVolume = Number.parseFloat(rawVolume);
+    const audio = new Audio(publicAsset(normalizedPath));
+    audio.preload = "auto";
+    audio.volume = Number.isFinite(parsedVolume) ? clamp(parsedVolume, 0, 1) : 1;
+    soundPreviewAudioRef.current = audio;
+    setSoundPreviewKey(previewKey);
+
+    const cleanup = () => {
+      if (soundPreviewAudioRef.current === audio) {
+        soundPreviewAudioRef.current = null;
+        setSoundPreviewKey(null);
+      }
+      audio.removeEventListener("ended", cleanup);
+      audio.removeEventListener("error", cleanup);
+    };
+    audio.addEventListener("ended", cleanup, { once: true });
+    audio.addEventListener("error", cleanup, { once: true });
+    void audio.play().catch(cleanup);
   }
 
   function dragDataMarkerKey(event: DragEvent<HTMLElement>) {
@@ -14556,6 +14601,8 @@ function ScriptActionEditor({
     } else if (marker.type === "play_sound") {
       const currentSoundPath = args[0]?.trim() || scriptSoundOptions[0].path;
       const currentVolume = args[1]?.trim() || "0.5";
+      const currentSoundPreviewKey = scriptMarkerEditKey(marker);
+      const isPreviewingSound = soundPreviewKey === currentSoundPreviewKey;
       const isKnownSound = scriptSoundOptions.some(
         (option) => option.path === currentSoundPath,
       );
@@ -14592,6 +14639,21 @@ function ScriptActionEditor({
             type="number"
             value={currentVolume}
           />
+          <button
+            aria-label={isPreviewingSound ? "Stop sound preview" : "Play sound preview"}
+            className="script-sound-preview-button"
+            onClick={() =>
+              playSoundPreview(
+                currentSoundPath,
+                currentVolume,
+                currentSoundPreviewKey,
+              )
+            }
+            title={isPreviewingSound ? "Stop sound preview" : "Play sound preview"}
+            type="button"
+          >
+            {isPreviewingSound ? <StopIcon /> : <PlayIcon />}
+          </button>
           {!isKnownSound ? (
             <>
               <span className="event-detail-label">PATH</span>
