@@ -165,7 +165,7 @@ const scriptMarkerOptions = [
   },
   {
     label: "Sound",
-    marker: "[play_sound: sounds/chime.mp3, 0.5]",
+    marker: "[play_sound: sounds/thud.mp3, 0.5]",
     title: "Play a timed sound effect while the script is spoken.",
   },
   {
