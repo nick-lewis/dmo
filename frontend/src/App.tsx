@@ -211,6 +211,50 @@ const scriptMarkerOptions = [
     title: "Allow student typing again at this point in the script.",
   },
 ] as const;
+type ScriptMarkerOption = (typeof scriptMarkerOptions)[number];
+const scriptMarkerGroups: Array<{
+  description: string;
+  label: string;
+  options: ScriptMarkerOption[];
+}> = [
+  {
+    description: "Slides, images, and overlays.",
+    label: "Visuals",
+    options: scriptMarkerOptions.filter((option) =>
+      ["Slide", "Image", "Overlay", "Clear overlay", "Image off", "Image on"].includes(
+        option.label,
+      ),
+    ),
+  },
+  {
+    description: "Sound effects and spoken timing.",
+    label: "Audio",
+    options: scriptMarkerOptions.filter((option) =>
+      ["Sound", "Pause"].includes(option.label),
+    ),
+  },
+  {
+    description: "Highlights and runtime notes.",
+    label: "Interface",
+    options: scriptMarkerOptions.filter((option) =>
+      ["Highlight", "Clear highlight", "Note"].includes(option.label),
+    ),
+  },
+  {
+    description: "Main-panel apps.",
+    label: "Apps",
+    options: scriptMarkerOptions.filter((option) =>
+      ["App", "Update app", "Clear app"].includes(option.label),
+    ),
+  },
+  {
+    description: "Student typing state.",
+    label: "Conversation",
+    options: scriptMarkerOptions.filter((option) =>
+      ["Chat off", "Chat on"].includes(option.label),
+    ),
+  },
+];
 const scriptSoundOptions = [{ label: "Thud", path: "sounds/thud.mp3" }] as const;
 const customSoundOptionValue = "__custom__";
 const scriptMarkerDragDataType = "application/x-dlu-script-marker";
@@ -4301,7 +4345,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   useEffect(() => {
     if (!isEventAddMenuOpen) return;
 
-    function closeEventAddMenuOnPointerDown(event: MouseEvent) {
+    function closeEventAddMenuOnPointerDown(event: globalThis.MouseEvent) {
       const target = event.target;
       if (
         target instanceof Node &&
@@ -4331,7 +4375,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   useEffect(() => {
     if (!isConversationAddMenuOpen) return;
 
-    function closeConversationItemAddMenuOnPointerDown(event: MouseEvent) {
+    function closeConversationItemAddMenuOnPointerDown(event: globalThis.MouseEvent) {
       const target = event.target;
       if (
         target instanceof Node &&
@@ -4375,7 +4419,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   useEffect(() => {
     if (!conversationAddMenuToolId) return;
 
-    function closeConversationAddMenuOnPointerDown(event: MouseEvent) {
+    function closeConversationAddMenuOnPointerDown(event: globalThis.MouseEvent) {
       const target = event.target;
       if (
         target instanceof Node &&
@@ -4408,7 +4452,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   useEffect(() => {
     if (!conversationAddMenuCheckId) return;
 
-    function closeConversationCheckAddMenuOnPointerDown(event: MouseEvent) {
+    function closeConversationCheckAddMenuOnPointerDown(event: globalThis.MouseEvent) {
       const target = event.target;
       if (
         target instanceof Node &&
@@ -14088,6 +14132,12 @@ function PanelWindow({ ariaLabel, children, density, style }: PanelWindowProps) 
   );
 }
 
+type ScriptActionMenuState = {
+  insertionIndex: number;
+  x: number;
+  y: number;
+};
+
 function ScriptActionEditor({
   deckUrl,
   onDeckUrlChange,
@@ -14100,6 +14150,8 @@ function ScriptActionEditor({
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement | null>(null);
+  const actionMenuTextInputRef = useRef<HTMLInputElement | null>(null);
   const [viewMode, setViewMode] = useState<ScriptEditorViewMode>(() => {
     try {
       const saved = window.localStorage.getItem("dlu.script-editor-view.v1");
@@ -14122,6 +14174,9 @@ function ScriptActionEditor({
   const [scriptInsertionIndex, setScriptInsertionIndex] = useState<number | null>(
     null,
   );
+  const [scriptActionMenu, setScriptActionMenu] =
+    useState<ScriptActionMenuState | null>(null);
+  const [scriptActionMenuText, setScriptActionMenuText] = useState("");
   const [soundPreviewKey, setSoundPreviewKey] = useState<string | null>(null);
   const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const markers = parseScriptMarkerInstances(text);
@@ -14168,6 +14223,47 @@ function ScriptActionEditor({
       soundPreviewAudioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!scriptActionMenu) return;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      actionMenuTextInputRef.current?.focus({ preventScroll: true });
+    });
+
+    function closeFromOutside(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && actionMenuRef.current?.contains(target)) {
+        return;
+      }
+      setScriptActionMenu(null);
+      setScriptActionMenuText("");
+    }
+
+    function closeFromEscape(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setScriptActionMenu(null);
+      setScriptActionMenuText("");
+    }
+
+    function closeFromLayoutChange() {
+      setScriptActionMenu(null);
+      setScriptActionMenuText("");
+    }
+
+    window.addEventListener("pointerdown", closeFromOutside);
+    window.addEventListener("keydown", closeFromEscape);
+    window.addEventListener("resize", closeFromLayoutChange);
+    window.addEventListener("scroll", closeFromLayoutChange, true);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("pointerdown", closeFromOutside);
+      window.removeEventListener("keydown", closeFromEscape);
+      window.removeEventListener("resize", closeFromLayoutChange);
+      window.removeEventListener("scroll", closeFromLayoutChange, true);
+    };
+  }, [scriptActionMenu]);
 
   useEffect(() => {
     if (scriptInsertionIndex === null || scriptInsertionIndex <= text.length) return;
@@ -14267,13 +14363,25 @@ function ScriptActionEditor({
     }
   }
 
-  function insertMarker(marker: string) {
+  function currentScriptInsertionIndex() {
+    const textarea = textareaRef.current;
+    if (viewMode === "text" && textarea) {
+      return Math.round(clamp(textarea.selectionStart ?? text.length, 0, text.length));
+    }
+    return Math.round(clamp(scriptInsertionIndex ?? text.length, 0, text.length));
+  }
+
+  function insertMarker(marker: string, insertionIndex?: number) {
     const textarea = textareaRef.current;
     const isTextMode = viewMode === "text";
-    const start = isTextMode
-      ? textarea?.selectionStart ?? text.length
-      : Math.round(clamp(scriptInsertionIndex ?? text.length, 0, text.length));
-    const end = isTextMode ? textarea?.selectionEnd ?? start : start;
+    const hasExplicitInsertionIndex = typeof insertionIndex === "number";
+    const start = hasExplicitInsertionIndex
+      ? Math.round(clamp(insertionIndex, 0, text.length))
+      : currentScriptInsertionIndex();
+    const end =
+      isTextMode && !hasExplicitInsertionIndex
+        ? textarea?.selectionEnd ?? start
+        : start;
     const before = text.slice(0, start);
     const after = text.slice(end);
     const lead = before && !/\s$/.test(before) ? " " : "";
@@ -14291,6 +14399,36 @@ function ScriptActionEditor({
       return;
     }
 
+    window.requestAnimationFrame(() => {
+      const nextTextarea = textareaRef.current;
+      if (!nextTextarea) return;
+      nextTextarea.focus();
+      nextTextarea.setSelectionRange(nextCursor, nextCursor);
+      resizeTextareaToContent(nextTextarea, {
+        maxHeight: scriptTextareaMaxHeightPx,
+        minHeight: scriptTextareaMinHeightPx,
+      });
+    });
+  }
+
+  function insertPlainScriptText(snippet: string, insertionIndex: number) {
+    const cleanSnippet = snippet.trim();
+    if (!cleanSnippet) return;
+
+    const start = Math.round(clamp(insertionIndex, 0, text.length));
+    const before = text.slice(0, start);
+    const after = text.slice(start);
+    const lead = before && !/\s$/.test(before) ? " " : "";
+    const tail = after && !/^\s/.test(after) ? " " : "";
+    const inserted = `${lead}${cleanSnippet}${tail}`;
+    const nextText = `${before}${inserted}${after}`;
+    const nextCursor = before.length + inserted.length;
+
+    onTextChange(nextText);
+    setEditingMarkerKey(null);
+    setScriptInsertionIndex(nextCursor);
+
+    if (viewMode !== "text") return;
     window.requestAnimationFrame(() => {
       const nextTextarea = textareaRef.current;
       if (!nextTextarea) return;
@@ -14453,6 +14591,7 @@ function ScriptActionEditor({
           event.stopPropagation();
           placeScriptInsertionIndex(insertionIndex);
         }}
+        onContextMenu={(event) => openScriptActionMenu(event, insertionIndex)}
         onDragEnter={(event) => {
           event.preventDefault();
           setDropInsertionIndex(insertionIndex);
@@ -14614,6 +14753,131 @@ function ScriptActionEditor({
     return option.marker;
   }
 
+  function scriptMarkerTypeForOption(option: ScriptMarkerOption) {
+    const match = option.marker.match(/^\[([a-z_]+)(?::|\])/i);
+    return match?.[1] ?? "marker";
+  }
+
+  function closeScriptActionMenu() {
+    setScriptActionMenu(null);
+    setScriptActionMenuText("");
+  }
+
+  function menuCoordinate(value: number, size: number, max: number) {
+    return Math.round(clamp(value, 12, Math.max(12, max - size - 12)));
+  }
+
+  function openScriptActionMenu(
+    event: MouseEvent<HTMLElement>,
+    insertionIndex: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const normalizedInsertionIndex = Math.round(clamp(insertionIndex, 0, text.length));
+    placeScriptInsertionIndex(normalizedInsertionIndex);
+    setScriptActionMenu({
+      insertionIndex: normalizedInsertionIndex,
+      x: menuCoordinate(event.clientX, 380, window.innerWidth),
+      y: menuCoordinate(event.clientY, 420, window.innerHeight),
+    });
+    setScriptActionMenuText("");
+  }
+
+  function openScriptActionMenuFromButton(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const insertionIndex = currentScriptInsertionIndex();
+    placeScriptInsertionIndex(insertionIndex);
+    setScriptActionMenu({
+      insertionIndex,
+      x: menuCoordinate(rect.left, 380, window.innerWidth),
+      y: menuCoordinate(rect.bottom + 7, 420, window.innerHeight),
+    });
+    setScriptActionMenuText("");
+  }
+
+  function chooseScriptMarkerOption(option: ScriptMarkerOption) {
+    if (!scriptActionMenu) return;
+    insertMarker(markerTextForOption(option), scriptActionMenu.insertionIndex);
+    closeScriptActionMenu();
+  }
+
+  function submitScriptActionMenuText() {
+    if (!scriptActionMenu) return;
+    insertPlainScriptText(scriptActionMenuText, scriptActionMenu.insertionIndex);
+    closeScriptActionMenu();
+  }
+
+  function renderScriptActionMenu() {
+    if (!scriptActionMenu) return null;
+
+    return (
+      <div
+        aria-label="Insert script content"
+        className="script-action-menu"
+        onClick={(event) => event.stopPropagation()}
+        ref={actionMenuRef}
+        role="menu"
+        style={{ left: scriptActionMenu.x, top: scriptActionMenu.y }}
+      >
+        <div className="script-action-menu-title">
+          <strong>Add here</strong>
+          <span>{scriptActionMenu.insertionIndex === text.length ? "End of script" : "Cursor"}</span>
+        </div>
+        <form
+          className="script-action-menu-text"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitScriptActionMenuText();
+          }}
+        >
+          <input
+            aria-label="Text to insert"
+            onChange={(event) => setScriptActionMenuText(event.target.value)}
+            placeholder="Type text to insert"
+            ref={actionMenuTextInputRef}
+            type="text"
+            value={scriptActionMenuText}
+          />
+          <button disabled={!scriptActionMenuText.trim()} type="submit">
+            Text
+          </button>
+        </form>
+        <div className="script-action-menu-groups">
+          {scriptMarkerGroups.map((group) => (
+            <section className="script-action-menu-group" key={group.label}>
+              <div className="script-action-menu-group-head">
+                <h4>{group.label}</h4>
+                <small>{group.description}</small>
+              </div>
+              <div className="script-action-menu-options">
+                {group.options.map((option) => (
+                  <button
+                    className="script-action-menu-option"
+                    key={option.marker}
+                    onClick={() => chooseScriptMarkerOption(option)}
+                    role="menuitem"
+                    title={option.title}
+                    type="button"
+                  >
+                    <span className="script-marker-chip-icon">
+                      {scriptMarkerIcon(scriptMarkerTypeForOption(option))}
+                    </span>
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.title}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function renderMarkerEditor(marker: ScriptMarkerInstance) {
     const args = marker.argList;
     const closeButton = (
@@ -14635,6 +14899,17 @@ function ScriptActionEditor({
         type="button"
       >
         Text
+      </button>
+    );
+    const deleteButton = (
+      <button
+        aria-label={`Remove ${marker.label} marker`}
+        className="script-marker-editor-delete"
+        onClick={() => removeMarker(marker)}
+        title={`Remove ${marker.label}`}
+        type="button"
+      >
+        <TrashIcon />
       </button>
     );
     let controls: ReactNode;
@@ -14925,6 +15200,7 @@ function ScriptActionEditor({
           <code>{marker.detail || ""}</code>
           <span className="script-marker-editor-actions">
             {textButton}
+            {deleteButton}
             {closeButton}
           </span>
         </div>
@@ -14965,6 +15241,7 @@ function ScriptActionEditor({
         onDragStart={(event) => startMarkerDrag(marker, event)}
         key={marker.id}
         onClick={() => editMarker(marker)}
+        onContextMenu={(event) => openScriptActionMenu(event, marker.end)}
         title={`Drag to move. Click to edit ${marker.label}.`}
         type="button"
       >
@@ -15052,6 +15329,15 @@ function ScriptActionEditor({
                   event,
                 )
               }
+              onContextMenu={(event) => {
+                const insertionIndex = clickIndexForTextTarget(
+                  event.currentTarget,
+                  offset + sliceStart + tokenStart,
+                  offset + sliceStart + tokenEnd,
+                  event.clientX,
+                );
+                openScriptActionMenu(event, insertionIndex);
+              }}
               onDragOver={(event) =>
                 handleTextTargetDragOver(
                   offset + sliceStart + tokenStart,
@@ -15248,19 +15534,15 @@ function ScriptActionEditor({
         }}
       >
       <div className="script-action-toolbar">
-        <div className="script-marker-bar" aria-label="Insert timed script action">
-          {scriptMarkerOptions.map((option) => (
-            <button
-              className="event-text-button"
-              key={option.marker}
-              onClick={() => insertMarker(markerTextForOption(option))}
-              title={option.title}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <button
+          className="script-action-menu-trigger"
+          onClick={openScriptActionMenuFromButton}
+          title="Add text or a timed action at the current script cursor. You can also right-click in the script."
+          type="button"
+        >
+          <PlusIcon />
+          Add
+        </button>
         <div className="script-view-switch" role="tablist" aria-label="Script view">
           {(["text", "chips", "slides"] as const).map((mode) => (
             <button
@@ -15276,12 +15558,16 @@ function ScriptActionEditor({
           ))}
         </div>
       </div>
+      {renderScriptActionMenu()}
 
       {viewMode === "text" ? (
         <textarea
           aria-label="Speech text"
           className="event-script-textarea"
           onChange={(event) => onTextChange(event.target.value)}
+          onContextMenu={(event) =>
+            openScriptActionMenu(event, event.currentTarget.selectionStart ?? text.length)
+          }
           onInput={(event) =>
             resizeTextareaToContent(event.currentTarget, {
               maxHeight: scriptTextareaMaxHeightPx,
@@ -15299,6 +15585,11 @@ function ScriptActionEditor({
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               placeScriptInsertionIndex(text.length);
+            }
+          }}
+          onContextMenu={(event) => {
+            if (event.target === event.currentTarget) {
+              openScriptActionMenu(event, text.length);
             }
           }}
         >
@@ -15320,6 +15611,14 @@ function ScriptActionEditor({
                     );
                   }
                 }}
+                onContextMenu={(event) => {
+                  if (event.target === event.currentTarget) {
+                    openScriptActionMenu(
+                      event,
+                      segment.contentOffset + segment.content.length,
+                    );
+                  }
+                }}
               >
                 {renderInlineScriptParts(
                   segment.content,
@@ -15334,45 +15633,6 @@ function ScriptActionEditor({
 
       {editingMarker ? renderMarkerEditor(editingMarker) : null}
 
-      {viewMode === "text" && markers.length ? (
-        <div className="script-marker-strip" aria-label="Timed script actions">
-          {markers.map((marker, index) => (
-            <div className="script-marker-token" key={marker.id}>
-              <button
-                className="script-marker-token-main"
-                onClick={() => focusMarker(marker)}
-                title="Select this marker in the script text."
-                type="button"
-              >
-                <span className="script-marker-chip-icon">
-                  {scriptMarkerIcon(marker.type)}
-                </span>
-                <strong>{marker.label}</strong>
-                {marker.detail ? <code>{marker.detail}</code> : null}
-                <small>
-                  {marker.wordIndex > 0 ? `after ${marker.wordIndex} words` : "start"}
-                </small>
-              </button>
-              <button
-                aria-label={`Remove ${marker.label} marker ${index + 1}`}
-                className="script-marker-token-remove"
-                onClick={() => removeMarker(marker)}
-                title="Remove this timed action marker."
-                type="button"
-              >
-                <TrashIcon />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {viewMode !== "text" && markers.length ? (
-        <div className="script-marker-strip compact" aria-label="Timed script actions">
-          {markers.map((marker) => (
-            <Fragment key={marker.id}>{renderMarkerChip(marker)}</Fragment>
-          ))}
-        </div>
-      ) : null}
       <div className="event-context-line single-value script-deck-line">
         <span className="event-detail-label">DECK</span>
         <input
