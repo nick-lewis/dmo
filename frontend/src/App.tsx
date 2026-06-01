@@ -5,6 +5,7 @@ import {
   type FocusEvent,
   type FormEvent,
   Fragment,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -14102,13 +14103,13 @@ function ScriptActionEditor({
   const [viewMode, setViewMode] = useState<ScriptEditorViewMode>(() => {
     try {
       const saved = window.localStorage.getItem("dlu.script-editor-view.v1");
-      if (saved === "chips" || saved === "slides" || saved === "text") {
+      if (saved === "chips" || saved === "slides") {
         return saved;
       }
     } catch {
       // Ignore storage failures.
     }
-    return "text";
+    return "chips";
   });
   const [slidePreviews, setSlidePreviews] = useState<
     Record<string, ScriptSlidePreview>
@@ -14116,6 +14117,9 @@ function ScriptActionEditor({
   const [editingMarkerKey, setEditingMarkerKey] = useState<string | null>(null);
   const [draggingMarkerKey, setDraggingMarkerKey] = useState<string | null>(null);
   const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(
+    null,
+  );
+  const [scriptInsertionIndex, setScriptInsertionIndex] = useState<number | null>(
     null,
   );
   const [soundPreviewKey, setSoundPreviewKey] = useState<string | null>(null);
@@ -14164,6 +14168,11 @@ function ScriptActionEditor({
       soundPreviewAudioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (scriptInsertionIndex === null || scriptInsertionIndex <= text.length) return;
+    setScriptInsertionIndex(text.length);
+  }, [scriptInsertionIndex, text.length]);
 
   useEffect(() => {
     if (editingMarkerKey !== null && editingMarker === null) {
@@ -14260,19 +14269,26 @@ function ScriptActionEditor({
 
   function insertMarker(marker: string) {
     const textarea = textareaRef.current;
-    const start = textarea?.selectionStart ?? text.length;
-    const end = textarea?.selectionEnd ?? start;
+    const isTextMode = viewMode === "text";
+    const start = isTextMode
+      ? textarea?.selectionStart ?? text.length
+      : Math.round(clamp(scriptInsertionIndex ?? text.length, 0, text.length));
+    const end = isTextMode ? textarea?.selectionEnd ?? start : start;
     const before = text.slice(0, start);
     const after = text.slice(end);
     const lead = before && !/\s$/.test(before) ? " " : "";
     const tail = after && !/^\s/.test(after) ? " " : "";
     const inserted = `${lead}${marker}${tail}`;
     const nextText = `${before}${inserted}${after}`;
+    const markerStart = before.length + lead.length;
+    const markerEnd = markerStart + marker.length;
     const nextCursor = before.length + inserted.length;
 
     onTextChange(nextText);
-    if (viewMode !== "text") {
-      changeViewMode("text");
+    setScriptInsertionIndex(markerEnd);
+    setEditingMarkerKey(scriptMarkerEditKeyFrom(markerStart, markerEnd, marker));
+    if (!isTextMode) {
+      return;
     }
 
     window.requestAnimationFrame(() => {
@@ -14296,6 +14312,7 @@ function ScriptActionEditor({
       marker.end,
     )}`;
     onTextChange(nextText);
+    setScriptInsertionIndex(marker.start + nextMarker.length);
     setEditingMarkerKey(
       scriptMarkerEditKeyFrom(
         marker.start,
@@ -14393,6 +14410,7 @@ function ScriptActionEditor({
     setEditingMarkerKey(
       scriptMarkerEditKeyFrom(nextStart, nextStart + marker.marker.length, marker.marker),
     );
+    setScriptInsertionIndex(nextStart + marker.marker.length);
     endMarkerDrag();
   }
 
@@ -14413,18 +14431,28 @@ function ScriptActionEditor({
     moveMarkerToIndex(sourceMarker, insertionIndex);
   }
 
+  function placeScriptInsertionIndex(insertionIndex: number) {
+    setScriptInsertionIndex(Math.round(clamp(insertionIndex, 0, text.length)));
+  }
+
   function renderMarkerDropTarget(insertionIndex: number, key: string) {
+    const isInsertionCursor = scriptInsertionIndex === insertionIndex;
     return (
       <span
         aria-hidden="true"
         className={[
           "script-chip-drop-target",
           draggingMarkerKey ? "visible" : "",
+          isInsertionCursor ? "cursor" : "",
           dropInsertionIndex === insertionIndex ? "active" : "",
         ]
           .filter(Boolean)
           .join(" ")}
         key={key}
+        onClick={(event) => {
+          event.stopPropagation();
+          placeScriptInsertionIndex(insertionIndex);
+        }}
         onDragEnter={(event) => {
           event.preventDefault();
           setDropInsertionIndex(insertionIndex);
@@ -14454,6 +14482,15 @@ function ScriptActionEditor({
   ) {
     const rect = element.getBoundingClientRect();
     return clientX < rect.left + rect.width / 2 ? beforeIndex : afterIndex;
+  }
+
+  function clickIndexForTextTarget(
+    element: HTMLElement,
+    beforeIndex: number,
+    afterIndex: number,
+    clientX: number,
+  ) {
+    return dropIndexForTextTarget(element, beforeIndex, afterIndex, clientX);
   }
 
   function handleTextTargetDragOver(
@@ -14490,6 +14527,22 @@ function ScriptActionEditor({
     handleMarkerDrop(insertionIndex, event);
   }
 
+  function handleTextTargetClick(
+    beforeIndex: number,
+    afterIndex: number,
+    event: MouseEvent<HTMLElement>,
+  ) {
+    event.stopPropagation();
+    placeScriptInsertionIndex(
+      clickIndexForTextTarget(
+        event.currentTarget,
+        beforeIndex,
+        afterIndex,
+        event.clientX,
+      ),
+    );
+  }
+
   function focusMarker(marker: ScriptMarkerInstance) {
     if (viewMode !== "text") {
       changeViewMode("text");
@@ -14517,6 +14570,7 @@ function ScriptActionEditor({
     if (editingMarkerKey === scriptMarkerEditKey(marker)) {
       setEditingMarkerKey(null);
     }
+    setScriptInsertionIndex(nextCursor);
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
@@ -14979,6 +15033,10 @@ function ScriptActionEditor({
             <span
               className={[
                 "script-chip-word-drop-zone",
+                scriptInsertionIndex === offset + sliceStart + tokenStart ||
+                scriptInsertionIndex === offset + sliceStart + tokenEnd
+                  ? "cursor"
+                  : "",
                 dropInsertionIndex === offset + sliceStart + tokenStart ||
                 dropInsertionIndex === offset + sliceStart + tokenEnd
                   ? "active"
@@ -14987,6 +15045,13 @@ function ScriptActionEditor({
                 .filter(Boolean)
                 .join(" ")}
               key={`${keyPrefix}-token-${tokenStart}`}
+              onClick={(event) =>
+                handleTextTargetClick(
+                  offset + sliceStart + tokenStart,
+                  offset + sliceStart + tokenEnd,
+                  event,
+                )
+              }
               onDragOver={(event) =>
                 handleTextTargetDragOver(
                   offset + sliceStart + tokenStart,
@@ -15174,9 +15239,14 @@ function ScriptActionEditor({
   }
 
   return (
-    <div
-      className={`script-action-editor${draggingMarkerKey ? " dragging-marker" : ""}`}
-    >
+      <div
+        className={`script-action-editor${draggingMarkerKey ? " dragging-marker" : ""}`}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) {
+            placeScriptInsertionIndex(text.length);
+          }
+        }}
+      >
       <div className="script-action-toolbar">
         <div className="script-marker-bar" aria-label="Insert timed script action">
           {scriptMarkerOptions.map((option) => (
@@ -15223,7 +15293,15 @@ function ScriptActionEditor({
           value={text}
         />
       ) : viewMode === "chips" ? (
-        <div className="script-chip-view" aria-label="Script with marker chips">
+        <div
+          className="script-chip-view"
+          aria-label="Script with marker chips"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              placeScriptInsertionIndex(text.length);
+            }
+          }}
+        >
           {renderInlineScriptParts(text, 0, "No script text")}
         </div>
       ) : (
@@ -15233,7 +15311,16 @@ function ScriptActionEditor({
               <div className="script-slide-cell">
                 {renderSlideVisual(segment.marker)}
               </div>
-              <div className="script-slide-script">
+              <div
+                className="script-slide-script"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) {
+                    placeScriptInsertionIndex(
+                      segment.contentOffset + segment.content.length,
+                    );
+                  }
+                }}
+              >
                 {renderInlineScriptParts(
                   segment.content,
                   segment.contentOffset,
