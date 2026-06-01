@@ -878,7 +878,7 @@ button {
   display: grid;
   grid-template-columns:
     minmax(122px, 0.42fr) minmax(0, 1fr) minmax(92px, 0.28fr)
-    minmax(54px, auto) minmax(70px, auto) minmax(52px, auto) 28px 28px;
+    minmax(54px, auto) minmax(70px, auto) minmax(64px, auto) 28px 28px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -945,10 +945,40 @@ button {
 }
 
 .script-audio-detail-toggle {
-  min-width: 52px;
-  min-height: 24px;
-  padding: 2px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: stretch;
+  min-width: 64px;
+  min-height: 25px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 17%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--page-ink) 72%, var(--muted-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 58%, transparent);
+  box-shadow: none;
   font-size: 0.62rem;
+  font-weight: 830;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.script-audio-detail-toggle:hover {
+  border-color: color-mix(in srgb, var(--accent-2) 30%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
+}
+
+.script-audio-detail-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-2) 46%, transparent);
+  outline-offset: 2px;
+}
+
+.script-audio-detail-toggle[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent-2) 34%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-2) 65%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--panel-bg-strong));
 }
 
 .script-audio-artifacts {

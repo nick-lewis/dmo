@@ -16227,7 +16227,7 @@ function ScriptAudioPanel({
                 </span>
                 <button
                   aria-expanded={isDetailExpanded}
-                  className="event-text-button script-audio-detail-toggle"
+                  className="script-audio-detail-toggle"
                   onClick={() =>
                     setExpandedItemId((current) =>
                       current === item.id ? "" : item.id,
@@ -16236,7 +16236,7 @@ function ScriptAudioPanel({
                   title="Show script text, cached artifact metadata, and timing preview."
                   type="button"
                 >
-                  Details
+                  {isDetailExpanded ? "Hide" : "Details"}
                 </button>
                 <button
                   aria-label={
