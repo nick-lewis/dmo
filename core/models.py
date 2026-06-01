@@ -105,6 +105,7 @@ class ExperienceEvent(models.Model):
     slug = models.SlugField(max_length=180)
     description = models.TextField(blank=True, default="")
     chat_instructions = models.TextField(blank=True, default="")
+    conversation_choices = models.JSONField(blank=True, default=list)
     is_start = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

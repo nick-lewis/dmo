@@ -1160,6 +1160,97 @@ class EventEditorApiTests(TestCase):
             "An experience needs at least one event.",
         )
 
+    def test_event_patch_persists_conversation_choices(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Primer",
+            slug="primer",
+            sort_order=1,
+        )
+
+        response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/",
+            data=json.dumps(
+                {
+                    "conversationChoices": [
+                        {
+                            "enabled": True,
+                            "id": "quick-primer",
+                            "label": "Yes, quick primer",
+                            "sortOrder": 0,
+                            "triggersEvent": "primer",
+                        }
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        start.refresh_from_db()
+        self.assertEqual(start.conversation_choices[0]["label"], "Yes, quick primer")
+        self.assertEqual(
+            response.json()["event"]["conversationChoices"][0]["triggersEvent"],
+            "primer",
+        )
+
+    def test_start_event_persists_conversation_choices_without_immediate_action(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+            conversation_choices=[
+                {
+                    "enabled": True,
+                    "id": "continue-choice",
+                    "label": "Continue",
+                    "sortOrder": 0,
+                    "triggersEvent": "next",
+                }
+            ],
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Next",
+            slug="next",
+            sort_order=1,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Intro",
+            config={"text": "Hello."},
+            sort_order=0,
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/start-event/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(
+            any(action["type"] == "button_choice" for action in payload["actions"])
+        )
+        buttons = payload["session"]["runtimeState"]["uiRuntime"]["buttons"]
+        self.assertEqual(buttons[0]["source"], "conversation-choice")
+        self.assertEqual(buttons[0]["label"], "Continue")
+
     def test_restore_event_from_serialized_payload_preserves_nested_shape(self):
         ExperienceEvent.objects.create(
             experience=self.experience,

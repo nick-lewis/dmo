@@ -60,7 +60,7 @@ type EventStepDropTarget = {
   stepId: string;
 };
 
-type ConversationItemKind = HandlerActionOwnerKind;
+type ConversationItemKind = HandlerActionOwnerKind | "conversationChoice";
 
 type DraggingConversationItem = {
   itemId: string;
@@ -364,6 +364,14 @@ type EventClassifierGroup = {
   updatedAt: string;
 };
 
+type EventConversationChoice = {
+  id: string;
+  label: string;
+  triggersEvent: string;
+  enabled: boolean;
+  sortOrder: number;
+};
+
 type ExperienceEvent = {
   id: string;
   experienceId: string;
@@ -371,6 +379,7 @@ type ExperienceEvent = {
   slug: string;
   description: string;
   chatInstructions: string;
+  conversationChoices: EventConversationChoice[];
   isStart: boolean;
   sortOrder: number;
   steps: EventActionStep[];
@@ -496,8 +505,17 @@ type EventClassifierGroupDraft = {
   triggersEvent: string;
 };
 
+type EventConversationChoiceDraft = {
+  enabled: boolean;
+  id: string;
+  label: string;
+  sortOrder: number;
+  triggersEvent: string;
+};
+
 type EventDraft = {
   chatInstructions: string;
+  conversationChoices: EventConversationChoiceDraft[];
   title: string;
   description: string;
   steps: EventStepDraft[];
@@ -571,6 +589,7 @@ type RuntimeUiTrigger = {
 type RuntimeButton = {
   eventId: string;
   label: string;
+  source?: string;
   stepId: string;
   triggersEvent: string;
 };
@@ -1177,6 +1196,13 @@ function sortedEventClassifierGroups(groups: EventClassifierGroup[]) {
   );
 }
 
+function sortedEventConversationChoices(choices: EventConversationChoice[] = []) {
+  return [...choices].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder || left.id.localeCompare(right.id),
+  );
+}
+
 function sortedEventClassifiers(classifiers: EventClassifier[]) {
   return [...classifiers].sort(
     (left, right) =>
@@ -1395,6 +1421,18 @@ function classifierGroupDraftFromGroup(
   };
 }
 
+function conversationChoiceDraftFromChoice(
+  choice: EventConversationChoice,
+): EventConversationChoiceDraft {
+  return {
+    enabled: choice.enabled,
+    id: choice.id,
+    label: choice.label,
+    sortOrder: choice.sortOrder,
+    triggersEvent: choice.triggersEvent,
+  };
+}
+
 function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
   return {
     chatInstructions: event?.chatInstructions ?? "",
@@ -1409,6 +1447,11 @@ function eventDraftFromEvent(event: ExperienceEvent | null): EventDraft {
     conversationChecks: event
       ? sortedEventConversationChecks(event.conversationChecks ?? []).map(
           conversationCheckDraftFromCheck,
+        )
+      : [],
+    conversationChoices: event
+      ? sortedEventConversationChoices(event.conversationChoices ?? []).map(
+          conversationChoiceDraftFromChoice,
         )
       : [],
     description: event?.description ?? "",
@@ -1778,6 +1821,17 @@ function eventOutgoingLinks(event: ExperienceEvent) {
     links.push(
       ...actionSequenceOutgoingLinks(group.handlerActions, `Classifiers ${group.title}`),
     );
+  }
+  for (const choice of event.conversationChoices ?? []) {
+    const triggersEvent = choice.triggersEvent.trim();
+    if (!triggersEvent) continue;
+    links.push({
+      condition: "shown after entry",
+      kind: "Choice",
+      slug: triggersEvent,
+      source: choice.label || "Conversation choice",
+      sourceItemId: choice.id,
+    });
   }
   return links;
 }
@@ -2621,6 +2675,29 @@ function comparableClassifierGroupDraft(group: EventClassifierGroupDraft) {
 
 function comparableClassifierGroup(group: EventClassifierGroup) {
   return comparableClassifierGroupDraft(classifierGroupDraftFromGroup(group));
+}
+
+function comparableConversationChoiceDraft(choice: EventConversationChoiceDraft) {
+  return {
+    enabled: choice.enabled,
+    label: choice.label,
+    sortOrder: choice.sortOrder,
+    triggersEvent: choice.triggersEvent,
+  };
+}
+
+function comparableConversationChoice(choice: EventConversationChoice) {
+  return comparableConversationChoiceDraft(conversationChoiceDraftFromChoice(choice));
+}
+
+function conversationChoicePayloadFromDraft(choice: EventConversationChoiceDraft) {
+  return {
+    enabled: choice.enabled,
+    id: choice.id,
+    label: choice.label,
+    sortOrder: choice.sortOrder,
+    triggersEvent: choice.triggersEvent,
+  };
 }
 
 function chatToolPayloadFromDraft(tool: EventChatToolDraft) {
@@ -3612,6 +3689,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     chatTools: [],
     classifierGroups: [],
     conversationChecks: [],
+    conversationChoices: [],
     description: "",
     steps: [],
     title: "Start",
@@ -4713,7 +4791,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     );
     if (draft.classifierGroups.length !== currentGroups.length) return true;
 
-    return draft.classifierGroups.some((draftGroup) => {
+    const hasGroupChanges = draft.classifierGroups.some((draftGroup) => {
       const currentGroup = currentGroups.find(
         (group) => group.id === draftGroup.id,
       );
@@ -4745,6 +4823,24 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         );
       });
     });
+    if (hasGroupChanges) return true;
+
+    const currentChoices = sortedEventConversationChoices(
+      selectedEvent.conversationChoices ?? [],
+    );
+    if (draft.conversationChoices.length !== currentChoices.length) return true;
+
+    return draft.conversationChoices.some((draftChoice) => {
+      const currentChoice = currentChoices.find(
+        (choice) => choice.id === draftChoice.id,
+      );
+      if (!currentChoice) return true;
+
+      return (
+        JSON.stringify(comparableConversationChoiceDraft(draftChoice)) !==
+        JSON.stringify(comparableConversationChoice(currentChoice))
+      );
+    });
   }
 
   async function persistEventDraft(draft: EventDraft, version: number) {
@@ -4770,11 +4866,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       const currentGroups = sortedEventClassifierGroups(
         selectedEvent.classifierGroups ?? [],
       );
+      const currentChoices = sortedEventConversationChoices(
+        selectedEvent.conversationChoices ?? [],
+      );
+      const hasChoiceChanges =
+        draft.conversationChoices.length !== currentChoices.length ||
+        draft.conversationChoices.some((draftChoice) => {
+          const currentChoice = currentChoices.find(
+            (choice) => choice.id === draftChoice.id,
+          );
+          if (!currentChoice) return true;
+          return (
+            JSON.stringify(comparableConversationChoiceDraft(draftChoice)) !==
+            JSON.stringify(comparableConversationChoice(currentChoice))
+          );
+        });
 
       if (
         draft.title !== selectedEvent.title ||
         draft.description !== selectedEvent.description ||
-        draft.chatInstructions !== (selectedEvent.chatInstructions ?? "")
+        draft.chatInstructions !== (selectedEvent.chatInstructions ?? "") ||
+        hasChoiceChanges
       ) {
         const eventPayload = await apiFetch<{ event: ExperienceEvent }>(
           `/api/experiences/${experience.id}/events/${selectedEvent.id}/`,
@@ -4782,6 +4894,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             method: "PATCH",
             body: JSON.stringify({
               chatInstructions: draft.chatInstructions,
+              conversationChoices: draft.conversationChoices.map(
+                conversationChoicePayloadFromDraft,
+              ),
               description: draft.description,
               title: draft.title,
             }),
@@ -5568,6 +5683,78 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         position,
       ),
     });
+  }
+
+  function updateEventConversationChoiceDraft(
+    choiceId: string,
+    updater: (choice: EventConversationChoiceDraft) => EventConversationChoiceDraft,
+  ) {
+    const nextDraft = {
+      ...eventDraft,
+      conversationChoices: eventDraft.conversationChoices.map((choice) =>
+        choice.id === choiceId ? updater(choice) : choice,
+      ),
+    };
+
+    stageEventDraft(nextDraft);
+  }
+
+  function updateEventConversationChoiceDraftField<
+    K extends keyof EventConversationChoiceDraft,
+  >(
+    choiceId: string,
+    field: K,
+    value: EventConversationChoiceDraft[K],
+  ) {
+    updateEventConversationChoiceDraft(choiceId, (choice) => ({
+      ...choice,
+      [field]: value,
+    }));
+  }
+
+  function reorderEventConversationChoice(
+    choiceId: string,
+    targetChoiceId: string,
+    position: DropPosition = "before",
+  ) {
+    stageEventDraft({
+      ...eventDraft,
+      conversationChoices: reorderDraftOrderedItems(
+        eventDraft.conversationChoices,
+        choiceId,
+        targetChoiceId,
+        position,
+      ),
+    });
+  }
+
+  function addEventConversationChoice() {
+    const choiceId = localMessageId("conversation-choice");
+    const destination = editorEvents.find((event) => event.id !== selectedEventId);
+    const nextChoice: EventConversationChoiceDraft = {
+      enabled: true,
+      id: choiceId,
+      label: "Continue",
+      sortOrder: eventDraft.conversationChoices.length,
+      triggersEvent: destination?.slug ?? "",
+    };
+
+    stageEventDraft({
+      ...eventDraft,
+      conversationChoices: [...eventDraft.conversationChoices, nextChoice],
+    });
+    openExpandedItem(choiceId);
+    setIsConversationAddMenuOpen(false);
+  }
+
+  function deleteEventConversationChoice(choiceId: string) {
+    stageEventDraft({
+      ...eventDraft,
+      conversationChoices: eventDraft.conversationChoices
+        .filter((choice) => choice.id !== choiceId)
+        .map((choice, index) => ({ ...choice, sortOrder: index })),
+    });
+    closeExpandedItem(choiceId);
   }
 
   function updateEventChatToolActionDraft(
@@ -6756,7 +6943,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       if (
         (parsed.itemKind === "chatTool" ||
           parsed.itemKind === "conversationCheck" ||
-          parsed.itemKind === "classifierGroup") &&
+          parsed.itemKind === "classifierGroup" ||
+          parsed.itemKind === "conversationChoice") &&
         typeof parsed.itemId === "string"
       ) {
         return parsed as DraggingConversationItem;
@@ -6854,6 +7042,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     if (source.itemKind === "conversationCheck") {
       reorderEventConversationCheck(source.itemId, target.itemId, position);
+      return;
+    }
+
+    if (source.itemKind === "conversationChoice") {
+      reorderEventConversationChoice(source.itemId, target.itemId, position);
       return;
     }
 
@@ -7430,6 +7623,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         target:
           eventTitleForTrigger(editorEvents, group.triggersEvent) ||
           "No direct route",
+      })),
+    )
+    .concat(
+      eventDraft.conversationChoices.map((choice) => ({
+        id: choice.id,
+        label: "Choice",
+        target:
+          eventTitleForTrigger(editorEvents, choice.triggersEvent) ||
+          "Choose event",
       })),
     );
   const nextStructuralUndo = eventStructuralUndoStack[0];
@@ -10255,9 +10457,166 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     </article>
                   );
                 })}
+                {eventDraft.conversationChoices.map((choice) => {
+                  const isExpanded = isExpandedItem(choice.id);
+                  const targetEventSlug = choice.triggersEvent;
+                  const hasTriggerEventOption = editorEvents.some(
+                    (event) => event.slug === targetEventSlug,
+                  );
+                  const dragPayload: DraggingConversationItem = {
+                    itemId: choice.id,
+                    itemKind: "conversationChoice",
+                  };
+
+                  return (
+                    <article
+                      className={[
+                        "event-step",
+                        "chat-exit-step",
+                        "conversation-choice-step",
+                        "tone-flow",
+                        isDraggingConversationItem(dragPayload)
+                          ? "is-dragging"
+                          : "",
+                        conversationItemDropTarget?.itemId === choice.id &&
+                        conversationItemDropTarget.itemKind === "conversationChoice"
+                          ? `is-drop-${conversationItemDropTarget.position}`
+                          : "",
+                        isExpanded ? "is-expanded" : "",
+                        !choice.enabled ? "is-disabled" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      draggable
+                      key={choice.id}
+                      onDragEnd={clearActionDragState}
+                      onDragLeave={(event) =>
+                        dragLeaveConversationItem(event, dragPayload)
+                      }
+                      onDragOver={(event) =>
+                        dragOverConversationItem(event, dragPayload)
+                      }
+                      onDragStart={(event) =>
+                        dragConversationItem(event, dragPayload)
+                      }
+                      onDrop={(event) =>
+                        dropConversationItem(event, dragPayload)
+                      }
+                      title="Drag to reorder"
+                    >
+                      <div className="event-step-main">
+                        <span
+                          aria-label="Drag choice"
+                          className="event-drag-handle"
+                          title="Drag to reorder"
+                        >
+                          <GripIcon />
+                        </span>
+
+                        <div className="event-step-summary chat-exit-summary">
+                          <button
+                            aria-expanded={isExpanded}
+                            className="event-step-kind chat-exit-expand-button"
+                            onClick={() => toggleExpandedItem(choice.id)}
+                            type="button"
+                          >
+                            Choice
+                          </button>
+                          <input
+                            aria-label="Conversation choice label"
+                            className="chat-exit-title-input"
+                            onChange={(event) =>
+                              updateEventConversationChoiceDraftField(
+                                choice.id,
+                                "label",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Continue"
+                            style={inlineFieldWidthStyle(
+                              choice.label,
+                              "Continue",
+                              8,
+                              30,
+                            )}
+                            type="text"
+                            value={choice.label}
+                          />
+                        </div>
+
+                        <div className="event-step-tools">
+                          <button
+                            aria-label={
+                              choice.enabled ? "Disable choice" : "Enable choice"
+                            }
+                            className={`event-enable-button${
+                              choice.enabled ? "" : " is-off"
+                            }`}
+                            onClick={() =>
+                              updateEventConversationChoiceDraft(
+                                choice.id,
+                                (currentChoice) => ({
+                                  ...currentChoice,
+                                  enabled: !currentChoice.enabled,
+                                }),
+                              )
+                            }
+                            title={choice.enabled ? "Enabled" : "Disabled"}
+                            type="button"
+                          >
+                            <span />
+                          </button>
+                          <button
+                            aria-label="Delete choice"
+                            className="event-icon-button danger"
+                            onClick={() => deleteEventConversationChoice(choice.id)}
+                            type="button"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="event-step-detail chat-exit-detail">
+                          <div className="event-context-line chat-exit-core-line">
+                            <span className="event-detail-label">
+                              DESTINATION
+                            </span>
+                            <select
+                              aria-label="Conversation choice destination event"
+                              onChange={(event) =>
+                                updateEventConversationChoiceDraftField(
+                                  choice.id,
+                                  "triggersEvent",
+                                  event.target.value,
+                                )
+                              }
+                              value={targetEventSlug}
+                            >
+                              <option value="">Choose event</option>
+                              {targetEventSlug && !hasTriggerEventOption ? (
+                                <option value={targetEventSlug}>
+                                  {targetEventSlug}
+                                </option>
+                              ) : null}
+                              {editorEvents.map((event) => (
+                                <option key={event.id} value={event.slug}>
+                                  {event.title || event.slug}
+                                  {event.isStart ? " (start)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
                 {!eventDraft.chatTools.length &&
                 !eventDraft.conversationChecks.length &&
-                !eventDraft.classifierGroups.length ? (
+                !eventDraft.classifierGroups.length &&
+                !eventDraft.conversationChoices.length ? (
                   <div className="chat-exit-empty">---</div>
                 ) : null}
               </div>
@@ -10303,6 +10662,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       <span>Classifier group</span>
                       <small>Concurrent function-call style classifiers</small>
                     </button>
+                    <button
+                      className="event-add-option tone-flow"
+                      onClick={addEventConversationChoice}
+                      type="button"
+                    >
+                      <span>Choice</span>
+                      <small>Button shown after entry script finishes</small>
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -10333,6 +10700,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const realtimeConnectionRef = useRef<DluRealtimeConnection | null>(null);
   const activeSessionIdRef = useRef("");
   const playedScriptMessageIdsRef = useRef(new Set<string>());
+  const deferredConversationChoiceStepIdsRef = useRef(new Set<string>());
   const scriptAudioRef = useRef<HTMLAudioElement | null>(null);
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const scriptAudioSkipRef = useRef<(() => void) | null>(null);
@@ -10544,7 +10912,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (payload.ranMessages?.[0]) {
         setTurnAnchorMessageId(payload.ranMessages[0].id);
       }
-      queueScriptMessages(payload.session, payload.ranMessages);
+      queueScriptMessages(
+        payload.session,
+        payload.ranMessages,
+        conversationChoiceActionsFromRanEvents(payload.ranEvents),
+      );
       return true;
     } catch (error) {
       if (interactiveSaveVersionRef.current !== version) return false;
@@ -10906,6 +11278,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         next.push({
           eventId: typeof action.eventId === "string" ? action.eventId : "",
           label,
+          source: typeof action.source === "string" ? action.source : "",
           stepId,
           triggersEvent,
         });
@@ -11017,11 +11390,20 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         const label = typeof button.label === "string" ? button.label : "";
         const triggersEvent =
           typeof button.triggersEvent === "string" ? button.triggersEvent : "";
+        const source = typeof button.source === "string" ? button.source : "";
+        const stepId = typeof button.stepId === "string" ? button.stepId : "";
         if (!label || !triggersEvent) return;
+        if (
+          source === "conversation-choice" &&
+          deferredConversationChoiceStepIdsRef.current.has(stepId)
+        ) {
+          return;
+        }
         nextButtons.push({
           eventId: typeof button.eventId === "string" ? button.eventId : "",
           label,
-          stepId: typeof button.stepId === "string" ? button.stepId : "",
+          source,
+          stepId,
           triggersEvent,
         });
       });
@@ -11235,6 +11617,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     clearInteractiveSaveTimer();
     clearNotebookSaveTimer();
     stopRuntimeSoundEffects();
+    deferredConversationChoiceStepIdsRef.current.clear();
     setNotesVisible(false);
     setRuntimeNotes([]);
     setRuntimeActionLog([]);
@@ -11428,7 +11811,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (payload.ranMessages?.[0]) {
           setTurnAnchorMessageId(payload.ranMessages[0].id);
         }
-        queueScriptMessages(payload.session, payload.ranMessages);
+        queueScriptMessages(
+          payload.session,
+          payload.ranMessages,
+          conversationChoiceActionsFromRanEvents(payload.ranEvents, payload.event),
+        );
       } catch (error) {
         if (isCancelled) return;
 
@@ -11491,7 +11878,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (payload.ranMessages?.[0]) {
         setTurnAnchorMessageId(payload.ranMessages[0].id);
       }
-      queueScriptMessages(payload.session, payload.ranMessages);
+      queueScriptMessages(
+        payload.session,
+        payload.ranMessages,
+        conversationChoiceActionsFromRanEvents(payload.ranEvents, payload.event),
+      );
     } catch (error) {
       setChatStatus("error");
       setChatError(
@@ -12147,12 +12538,67 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     }
   }
 
+  function conversationChoiceActionsForEvent(event: ExperienceEvent | null) {
+    if (!event) return [];
+
+    return sortedEventConversationChoices(event.conversationChoices ?? [])
+      .filter(
+        (choice) =>
+          choice.enabled &&
+          choice.label.trim().length > 0 &&
+          choice.triggersEvent.trim().length > 0,
+      )
+      .map((choice) => ({
+        eventId: event.id,
+        label: choice.label.trim(),
+        source: "conversation-choice",
+        stepId: `conversation-choice:${choice.id}`,
+        triggersEvent: choice.triggersEvent.trim(),
+        type: "button_choice",
+      }));
+  }
+
+  function conversationChoiceActionsFromRanEvents(
+    ranEvents: ExperienceEvent[] | undefined,
+    fallbackEvent?: ExperienceEvent | null,
+  ) {
+    const finalEvent = ranEvents?.length
+      ? ranEvents[ranEvents.length - 1]
+      : fallbackEvent ?? null;
+    return conversationChoiceActionsForEvent(finalEvent);
+  }
+
+  function conversationChoiceStepIds(actions: Array<Record<string, unknown>>) {
+    return actions
+      .filter((action) => action.source === "conversation-choice")
+      .map((action) => (typeof action.stepId === "string" ? action.stepId : ""))
+      .filter(Boolean);
+  }
+
+  function deferConversationChoiceActions(actions: Array<Record<string, unknown>>) {
+    for (const stepId of conversationChoiceStepIds(actions)) {
+      deferredConversationChoiceStepIdsRef.current.add(stepId);
+    }
+  }
+
+  function revealConversationChoiceActions(actions: Array<Record<string, unknown>>) {
+    for (const stepId of conversationChoiceStepIds(actions)) {
+      deferredConversationChoiceStepIdsRef.current.delete(stepId);
+    }
+    applyRuntimeActions(actions);
+  }
+
   function queueScriptMessages(
     activeSession: TutoringSession,
     candidateMessages: ChatMessage[] | undefined,
+    afterEntryActions: Array<Record<string, unknown>> = [],
   ) {
     const scriptMessages = candidateMessages?.filter(isScriptAudioMessage) ?? [];
-    if (!scriptMessages.length) return;
+    if (!scriptMessages.length) {
+      revealConversationChoiceActions(afterEntryActions);
+      return;
+    }
+    deferConversationChoiceActions(afterEntryActions);
 
     const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
     const immediateActions = scriptMessages.flatMap((message) =>
@@ -12189,6 +12635,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         try {
           await playScriptMessages(activeSession, scriptMessages);
         } finally {
+          if (activeSessionIdRef.current === activeSession.id) {
+            revealConversationChoiceActions(afterEntryActions);
+          }
           setIsScriptAudioPlaying(false);
         }
       });
@@ -12410,7 +12859,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     if (payload.ranMessages?.[0]) {
       setTurnAnchorMessageId(payload.ranMessages[0].id);
     }
-    queueScriptMessages(payload.session, payload.ranMessages);
+    queueScriptMessages(
+      payload.session,
+      payload.ranMessages,
+      conversationChoiceActionsFromRanEvents(payload.ranEvents, payload.event),
+    );
   }
 
   async function runConversationChecks(activeSession: TutoringSession) {
@@ -12434,7 +12887,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (payload.ranMessages?.[0]) {
         setTurnAnchorMessageId(payload.ranMessages[0].id);
       }
-      queueScriptMessages(payload.session, payload.ranMessages);
+      queueScriptMessages(
+        payload.session,
+        payload.ranMessages,
+        conversationChoiceActionsFromRanEvents(payload.ranEvents),
+      );
     }
 
     return {

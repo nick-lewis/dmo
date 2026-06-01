@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlencode
@@ -773,6 +774,118 @@ def tool_capture_save_map(tool):
     return {}
 
 
+def normalize_conversation_choice(choice, index=0):
+    if not isinstance(choice, dict):
+        return None
+
+    choice_id = str(choice.get("id", "") or "").strip()
+    if not choice_id:
+        choice_id = uuid.uuid4().hex
+
+    label = str(choice.get("label", "") or "").strip()[:120]
+    triggers_event = str(choice.get("triggersEvent", "") or "").strip()[:180]
+    enabled = choice.get("enabled")
+    sort_order = choice.get("sortOrder", index)
+    try:
+        sort_order = int(sort_order)
+    except (TypeError, ValueError):
+        sort_order = index
+    if sort_order < 0:
+        sort_order = index
+
+    return {
+        "id": choice_id[:80],
+        "label": label,
+        "triggersEvent": triggers_event,
+        "enabled": enabled is not False,
+        "sortOrder": sort_order,
+    }
+
+
+def normalize_conversation_choices(value):
+    if not isinstance(value, list):
+        return []
+
+    choices = []
+    seen_ids = set()
+    for index, raw_choice in enumerate(value):
+        choice = normalize_conversation_choice(raw_choice, index)
+        if not choice:
+            continue
+        choice_id = choice["id"]
+        if choice_id in seen_ids:
+            choice["id"] = uuid.uuid4().hex
+        seen_ids.add(choice["id"])
+        choices.append(choice)
+
+    return sorted(choices, key=lambda choice: choice["sortOrder"])
+
+
+def validate_conversation_choices(value):
+    if value is None:
+        return [], ""
+    if not isinstance(value, list):
+        return None, "Conversation choices must be a list."
+    if len(value) > 50:
+        return None, "Conversation choices are limited to 50 per event."
+
+    normalized = []
+    for index, raw_choice in enumerate(value):
+        if not isinstance(raw_choice, dict):
+            return None, "Each conversation choice must be an object."
+
+        label = str(raw_choice.get("label", "") or "").strip()
+        if len(label) > 120:
+            return None, "Conversation choice label is too long."
+
+        triggers_event, event_error = validate_event_slug(
+            raw_choice.get("triggersEvent"),
+            label="Conversation choice destination",
+            required=False,
+        )
+        if event_error:
+            return None, event_error
+
+        choice = normalize_conversation_choice(
+            {
+                **raw_choice,
+                "label": label,
+                "triggersEvent": triggers_event,
+            },
+            index,
+        )
+        if choice:
+            normalized.append(choice)
+
+    return normalize_conversation_choices(normalized), ""
+
+
+def conversation_choice_actions(event):
+    actions = []
+    for choice in normalize_conversation_choices(event.conversation_choices):
+        label = str(choice.get("label", "") or "").strip()
+        triggers_event = str(choice.get("triggersEvent", "") or "").strip()
+        if choice.get("enabled") is False or not label or not triggers_event:
+            continue
+        actions.append(
+            {
+                "type": "button_choice",
+                "eventId": str(event.id),
+                "label": label,
+                "source": "conversation-choice",
+                "stepId": f"conversation-choice:{choice.get('id')}",
+                "triggersEvent": triggers_event,
+            }
+        )
+    return actions
+
+
+def conversation_choice_actions_for_ran_events(ran_events):
+    if not ran_events:
+        return []
+    return conversation_choice_actions(ran_events[-1])
+
+
 def serialize_experience_event(event):
     ensure_default_event_step(event)
     return {
@@ -782,6 +895,9 @@ def serialize_experience_event(event):
         "slug": event.slug,
         "description": event.description,
         "chatInstructions": event.chat_instructions,
+        "conversationChoices": normalize_conversation_choices(
+            event.conversation_choices
+        ),
         "isStart": event.is_start,
         "sortOrder": event.sort_order,
         "steps": [
@@ -1127,6 +1243,20 @@ def experience_validation_summary(experience):
             app_issues.extend(handler_app_issues)
             script_issues.extend(handler_script_issues)
 
+        for choice in normalize_conversation_choices(event.conversation_choices):
+            triggers_event = str(choice.get("triggersEvent", "") or "").strip()
+            if not triggers_event:
+                continue
+            routes.append(
+                validation_route_record(
+                    event,
+                    "Choice",
+                    triggers_event,
+                    choice.get("label") or "Conversation choice",
+                    choice.get("id", ""),
+                )
+            )
+
     unresolved_routes = [
         route
         for route in routes
@@ -1296,6 +1426,10 @@ def duplicate_experience_for_user(source, user):
                 slug=source_event.slug,
                 description=source_event.description,
                 chat_instructions=source_event.chat_instructions,
+                conversation_choices=clone_json(
+                    normalize_conversation_choices(source_event.conversation_choices),
+                    [],
+                ),
                 is_start=source_event.is_start,
                 sort_order=source_event.sort_order,
             )
@@ -1580,6 +1714,14 @@ def import_classifier_groups(event, groups):
             )
 
 
+def import_conversation_choices(event, choices):
+    normalized, error = validate_conversation_choices(import_json_list(choices))
+    if error:
+        raise ExperienceImportError(error)
+    event.conversation_choices = normalized
+    event.save(update_fields=["conversation_choices", "updated_at"])
+
+
 def create_experience_from_export_payload(user, payload):
     if not isinstance(payload, dict):
         return None, "Import file must contain a JSON object."
@@ -1710,6 +1852,9 @@ def create_experience_from_export_payload(user, payload):
                         max_length=12000,
                         strip=False,
                     ),
+                    conversation_choices=normalize_conversation_choices(
+                        event_data.get("conversationChoices")
+                    ),
                     is_start=import_bool(event_data.get("isStart"), index == 0),
                     sort_order=import_int(event_data.get("sortOrder"), index),
                 )
@@ -1717,6 +1862,10 @@ def create_experience_from_export_payload(user, payload):
                 import_chat_tools(event, event_data.get("chatTools"))
                 import_conversation_checks(event, event_data.get("conversationChecks"))
                 import_classifier_groups(event, event_data.get("classifierGroups"))
+                import_conversation_choices(
+                    event,
+                    event_data.get("conversationChoices"),
+                )
             ensure_start_event(experience)
     except ExperienceImportError as error:
         return None, str(error)
@@ -1753,6 +1902,9 @@ def create_experience_event_from_payload(experience, event_data):
             max_length=12000,
             strip=False,
         ),
+        conversation_choices=normalize_conversation_choices(
+            event_data.get("conversationChoices")
+        ),
         is_start=import_bool(event_data.get("isStart"), False),
         sort_order=import_int(event_data.get("sortOrder"), next_sort_order),
     )
@@ -1767,6 +1919,7 @@ def create_experience_event_from_payload(experience, event_data):
     import_chat_tools(event, event_data.get("chatTools"))
     import_conversation_checks(event, event_data.get("conversationChecks"))
     import_classifier_groups(event, event_data.get("classifierGroups"))
+    import_conversation_choices(event, event_data.get("conversationChoices"))
     return event
 
 
@@ -4006,6 +4159,7 @@ def apply_runtime_actions_to_state(
                 {
                     "eventId": str(action.get("eventId", "")),
                     "label": str(action.get("label", "")),
+                    "source": str(action.get("source", "")),
                     "stepId": step_id,
                     "triggersEvent": str(action.get("triggersEvent", "")),
                 }
@@ -5605,6 +5759,14 @@ def update_experience_event(request, experience_id, event_id):
             )
         event.chat_instructions = chat_instructions
 
+    if "conversationChoices" in data:
+        choices, choices_error = validate_conversation_choices(
+            data.get("conversationChoices")
+        )
+        if choices_error:
+            return JsonResponse({"detail": choices_error}, status=400)
+        event.conversation_choices = choices
+
     if "isStart" in data and bool(data.get("isStart")):
         event.is_start = True
         ExperienceEvent.objects.filter(experience=experience).exclude(
@@ -6245,7 +6407,10 @@ def run_start_event(request, session_id):
         )
         state["startEventId"] = str(event.id)
         state["startEventComplete"] = True
-        state = apply_runtime_actions_to_state(state, actions)
+        state = apply_runtime_actions_to_state(
+            state,
+            actions + conversation_choice_actions_for_ran_events(ran_events),
+        )
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 
@@ -6345,7 +6510,7 @@ def run_session_event(request, session_id):
         )
         state = apply_runtime_actions_to_state(
             state,
-            actions,
+            actions + conversation_choice_actions_for_ran_events(ran_events),
             clear_buttons=clear_buttons,
             clear_trigger_selector=trigger_selector,
         )
@@ -6493,7 +6658,10 @@ def update_session_interactive(request, session_id):
                     }
                 )
 
-        state = apply_runtime_actions_to_state(state, actions)
+        state = apply_runtime_actions_to_state(
+            state,
+            actions + conversation_choice_actions_for_ran_events(ran_events),
+        )
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 
@@ -6726,7 +6894,11 @@ def run_session_chat_tool(request, session_id):
                 actions.extend(step_actions)
                 messages.extend(event_messages)
 
-        state = apply_runtime_actions_to_state(state, actions, clear_buttons=True)
+        state = apply_runtime_actions_to_state(
+            state,
+            actions + conversation_choice_actions_for_ran_events(ran_events),
+            clear_buttons=True,
+        )
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 
@@ -6944,7 +7116,7 @@ def run_session_conversation_checks(request, session_id):
 
             state = apply_runtime_actions_to_state(
                 state,
-                actions,
+                actions + conversation_choice_actions_for_ran_events(ran_events),
                 clear_buttons=handled,
             )
             session.runtime_state = state
@@ -7091,7 +7263,11 @@ def run_session_conversation_checks(request, session_id):
             if handled:
                 break
 
-        state = apply_runtime_actions_to_state(state, actions, clear_buttons=handled)
+        state = apply_runtime_actions_to_state(
+            state,
+            actions + conversation_choice_actions_for_ran_events(ran_events),
+            clear_buttons=handled,
+        )
         session.runtime_state = state
         session.save(update_fields=["runtime_context", "runtime_state", "updated_at"])
 
