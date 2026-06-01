@@ -104,6 +104,8 @@ const slideDissolveDurationMs = 720;
 const defaultScriptActionOffsetMs = 800;
 const scriptTextareaMinHeightPx = 220;
 const scriptTextareaMaxHeightPx = 680;
+const scriptSlideTextareaMinHeightPx = 82;
+const scriptSlideTextareaMaxHeightPx = 360;
 const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
 const defaultChoiceIconPath = "test-images/dLU-right.png";
 const sampleSlideDeckUrl =
@@ -14150,6 +14152,7 @@ function ScriptActionEditor({
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const slideTableRef = useRef<HTMLDivElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const actionMenuTextInputRef = useRef<HTMLInputElement | null>(null);
   const [viewMode, setViewMode] = useState<ScriptEditorViewMode>(() => {
@@ -14209,6 +14212,34 @@ function ScriptActionEditor({
     firstFrame = window.requestAnimationFrame(() => {
       resizeScriptTextarea();
       secondFrame = window.requestAnimationFrame(resizeScriptTextarea);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [text, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "slides") return;
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const resizeSlideTextareas = () => {
+      slideTableRef.current
+        ?.querySelectorAll<HTMLTextAreaElement>(".script-slide-textarea")
+        .forEach((textarea) =>
+          resizeTextareaToContent(textarea, {
+            maxHeight: scriptSlideTextareaMaxHeightPx,
+            minHeight: scriptSlideTextareaMinHeightPx,
+          }),
+        );
+    };
+
+    resizeSlideTextareas();
+    firstFrame = window.requestAnimationFrame(() => {
+      resizeSlideTextareas();
+      secondFrame = window.requestAnimationFrame(resizeSlideTextareas);
     });
 
     return () => {
@@ -14439,6 +14470,16 @@ function ScriptActionEditor({
         minHeight: scriptTextareaMinHeightPx,
       });
     });
+  }
+
+  function replaceScriptRange(start: number, end: number, nextValue: string) {
+    const safeStart = Math.round(clamp(start, 0, text.length));
+    const safeEnd = Math.round(clamp(end, safeStart, text.length));
+    const nextText = `${text.slice(0, safeStart)}${nextValue}${text.slice(
+      safeEnd,
+    )}`;
+    onTextChange(nextText);
+    setScriptInsertionIndex(safeStart + nextValue.length);
   }
 
   function editMarker(marker: ScriptMarkerInstance) {
@@ -15481,6 +15522,65 @@ function ScriptActionEditor({
     return segments;
   }
 
+  function googleSlideUrl(marker: ScriptMarkerInstance) {
+    const trimmedDeckUrl = deckUrl.trim();
+    if (!trimmedDeckUrl) return "";
+
+    const baseUrl = trimmedDeckUrl.split("#")[0];
+    const preview = slidePreviewFor(marker);
+    const fallbackSlideRef = marker.argList[0]?.trim() || "";
+    const pageId =
+      preview.status === "ready" && preview.detail
+        ? preview.detail.trim()
+        : /^\D/.test(fallbackSlideRef)
+          ? fallbackSlideRef
+          : "";
+
+    if (!pageId) return baseUrl;
+    return `${baseUrl}#slide=id.${pageId.replace(/^id\./, "")}`;
+  }
+
+  function renderSlideNarrationEditor(segment: {
+    content: string;
+    contentOffset: number;
+  }) {
+    const segmentEnd = segment.contentOffset + segment.content.length;
+    const placeCaret = (textarea: HTMLTextAreaElement) => {
+      placeScriptInsertionIndex(segment.contentOffset + textarea.selectionStart);
+    };
+
+    return (
+      <textarea
+        aria-label="Slide narration"
+        className="script-slide-textarea"
+        onChange={(event) =>
+          replaceScriptRange(
+            segment.contentOffset,
+            segmentEnd,
+            event.target.value,
+          )
+        }
+        onClick={(event) => placeCaret(event.currentTarget)}
+        onContextMenu={(event) =>
+          openScriptActionMenu(
+            event,
+            segment.contentOffset + event.currentTarget.selectionStart,
+          )
+        }
+        onInput={(event) =>
+          resizeTextareaToContent(event.currentTarget, {
+            maxHeight: scriptSlideTextareaMaxHeightPx,
+            minHeight: scriptSlideTextareaMinHeightPx,
+          })
+        }
+        onKeyUp={(event) => placeCaret(event.currentTarget)}
+        onSelect={(event) => placeCaret(event.currentTarget)}
+        placeholder="Spoken words for this visual..."
+        value={segment.content}
+      />
+    );
+  }
+
   function renderSlideVisual(marker: ScriptMarkerInstance | null) {
     if (!marker) {
       return <span className="script-slide-placeholder">No visual</span>;
@@ -15489,26 +15589,49 @@ function ScriptActionEditor({
     if (isSlideMarker(marker)) {
       const slideRef = marker.argList[0]?.trim() || "1";
       const preview = slidePreviewFor(marker);
+      const slideHref = googleSlideUrl(marker);
       return (
         <div className="script-slide-preview">
-          {preview.status === "ready" && preview.imageUrl ? (
-            <img alt={`Slide ${slideRef}`} src={preview.imageUrl} />
-          ) : (
-            <span className="script-slide-placeholder">
-              {preview.status === "loading"
-                ? "Loading slide..."
-                : `Slide ${slideRef}`}
-            </span>
-          )}
-          <button
-            className="script-slide-refresh"
-            disabled={!deckUrl.trim() || preview.status === "loading"}
-            onClick={() => void resolveSlidePreview(slideRef, true)}
-            title="Refresh this slide thumbnail."
-            type="button"
+          <a
+            aria-label={`Open slide ${slideRef} in Google Slides`}
+            className={`script-slide-open${slideHref ? "" : " disabled"}`}
+            href={slideHref || undefined}
+            onClick={(event) => {
+              if (!slideHref) event.preventDefault();
+            }}
+            rel="noreferrer"
+            target="_blank"
+            title="Open this slide in Google Slides."
           >
-            Refresh
-          </button>
+            {preview.status === "ready" && preview.imageUrl ? (
+              <img alt={`Slide ${slideRef}`} src={preview.imageUrl} />
+            ) : (
+              <span className="script-slide-placeholder">
+                {preview.status === "loading"
+                  ? "Loading slide..."
+                  : `Slide ${slideRef}`}
+              </span>
+            )}
+          </a>
+          <div className="script-slide-controls">
+            <label>
+              <span>Slide</span>
+              <input
+                aria-label="Slide reference"
+                onChange={(event) => replaceMarkerArgs(marker, [event.target.value])}
+                type="text"
+                value={slideRef}
+              />
+            </label>
+            <button
+              disabled={!deckUrl.trim() || preview.status === "loading"}
+              onClick={() => void resolveSlidePreview(slideRef, true)}
+              title="Refresh this slide thumbnail."
+              type="button"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
       );
     }
@@ -15596,7 +15719,11 @@ function ScriptActionEditor({
           {renderInlineScriptParts(text, 0, "No script text")}
         </div>
       ) : (
-        <div className="script-slide-table" aria-label="Script slide table">
+        <div
+          className="script-slide-table"
+          aria-label="Script slide table"
+          ref={slideTableRef}
+        >
           {visualSegments().map((segment) => (
             <div className="script-slide-row" key={segment.key}>
               <div className="script-slide-cell">
@@ -15620,11 +15747,7 @@ function ScriptActionEditor({
                   }
                 }}
               >
-                {renderInlineScriptParts(
-                  segment.content,
-                  segment.contentOffset,
-                  "No narration for this visual",
-                )}
+                {renderSlideNarrationEditor(segment)}
               </div>
             </div>
           ))}
