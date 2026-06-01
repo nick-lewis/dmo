@@ -15302,7 +15302,7 @@ function TutorControls({
         </label>
 
         <label className="control-field offset-field" title={actionOffsetHelp}>
-          <span title={actionOffsetHelp}>Action offset</span>
+          <span title={actionOffsetHelp}>Timing offset ms</span>
           <input
             aria-label="Script action timing offset in milliseconds"
             max={3000}
