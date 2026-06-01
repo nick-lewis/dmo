@@ -18134,16 +18134,16 @@ function ChatPanelContent({
           <div className="runtime-choice-row" aria-label="Runtime choices">
             {runtimeButtons.map((button) => (
               <button
-                className="runtime-choice-button"
+                className={`runtime-choice-button${button.iconPath ? " has-icon" : ""}`}
                 key={button.stepId || `${button.label}-${button.triggersEvent}`}
                 onClick={() => onChooseRuntimeButton(button)}
                 type="button"
               >
-                <span className="runtime-choice-icon-slot" aria-hidden="true">
-                  {button.iconPath ? (
+                {button.iconPath ? (
+                  <span className="runtime-choice-icon-slot" aria-hidden="true">
                     <img alt="" src={publicAsset(button.iconPath)} />
-                  ) : null}
-                </span>
+                  </span>
+                ) : null}
                 <span className="runtime-choice-label">{button.label}</span>
               </button>
             ))}

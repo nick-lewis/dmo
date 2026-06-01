@@ -5407,25 +5407,32 @@ button {
 
 .runtime-choice-button {
   display: inline-grid;
-  grid-template-columns: 20px minmax(0, auto);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  min-height: 30px;
-  padding: 4px 12px 4px 8px;
+  justify-items: start;
+  gap: 9px;
+  min-height: 38px;
+  padding: 7px 15px;
   border: 1px solid color-mix(in srgb, var(--accent-2) 24%, var(--panel-soft-border));
   border-radius: 999px;
   color: color-mix(in srgb, var(--page-ink) 84%, var(--accent-2));
   background: color-mix(in srgb, var(--panel-bg-strong) 74%, transparent);
-  font-size: 0.74rem;
+  font-size: 0.8rem;
   font-weight: 820;
   cursor: pointer;
+  animation: runtime-choice-fade-in 180ms ease-out both;
+}
+
+.runtime-choice-button.has-icon {
+  grid-template-columns: 24px minmax(0, 1fr);
+  padding-left: 8px;
 }
 
 .runtime-choice-icon-slot {
   display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   overflow: hidden;
   border-radius: 999px;
 }
@@ -5439,6 +5446,24 @@ button {
 .runtime-choice-label {
   min-width: 0;
   text-align: left;
+}
+
+@keyframes runtime-choice-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-choice-button {
+    animation: none;
+  }
 }
 
 .runtime-choice-button:hover,
