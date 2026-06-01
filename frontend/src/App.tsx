@@ -6848,6 +6848,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     if (!(target instanceof Element)) return false;
     if (target.closest(".event-drag-handle")) return false;
     if (target.closest(".event-step-summary")) return false;
+    if (target.closest(".event-step-detail")) return true;
     const isEditableControl = Boolean(
       target.closest(
         [
@@ -8428,12 +8429,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       ]
                         .filter(Boolean)
                         .join(" ")}
-                      draggable
+                      draggable={!isExpanded}
                       key={step.id}
                       onDragEnd={clearActionDragState}
                       onDragLeave={(event) => dragLeaveEventStep(event, step.id)}
                       onDragOver={(event) => dragOverEventStep(event, step.id)}
-                      onDragStart={(event) => dragEventStep(event, step.id)}
+                      onDragStart={(event) => {
+                        if (!isExpanded) dragEventStep(event, step.id);
+                      }}
                       onDrop={(event) => void dropEventStep(event, step.id)}
                       title="Drag to reorder"
                     >
@@ -8441,6 +8444,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <span
                           aria-label={`Drag step ${index + 1}`}
                           className="event-drag-handle"
+                          draggable={isExpanded}
+                          onDragStart={(event) => dragEventStep(event, step.id)}
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -8449,7 +8454,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <button
                           aria-expanded={isExpanded}
                           className="event-step-summary"
+                          draggable={isExpanded}
                           onClick={() => toggleExpandedItem(step.id)}
+                          onDragStart={(event) => dragEventStep(event, step.id)}
                           type="button"
                         >
                           <span className="event-step-kind">
@@ -9073,7 +9080,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       ]
                         .filter(Boolean)
                         .join(" ")}
-                      draggable
+                      draggable={!isExpanded}
                       key={tool.id}
                       onDragEnd={clearActionDragState}
                       onDragLeave={(event) =>
@@ -9082,9 +9089,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       onDragOver={(event) =>
                         dragOverConversationItem(event, dragPayload)
                       }
-                      onDragStart={(event) =>
-                        dragConversationItem(event, dragPayload)
-                      }
+                      onDragStart={(event) => {
+                        if (!isExpanded) dragConversationItem(event, dragPayload);
+                      }}
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
@@ -9094,6 +9101,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <span
                           aria-label="Drag FC route"
                           className="event-drag-handle"
+                          draggable={isExpanded}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -9103,11 +9114,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <button
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
+                            draggable={isExpanded}
                             onClick={() =>
                               toggleExpandedParent(
                                 tool.id,
                                 tool.handlerActions.map((step) => step.id),
                               )
+                            }
+                            onDragStart={(event) =>
+                              dragConversationItem(event, dragPayload)
                             }
                             type="button"
                           >
@@ -9363,7 +9378,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
-                                      draggable
+                                      draggable={!isActionExpanded}
                                       key={step.id}
                                       onDragEnd={clearActionDragState}
                                       onDragLeave={(event) =>
@@ -9372,9 +9387,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       onDragOver={(event) =>
                                         dragOverHandlerAction(event, dragPayload)
                                       }
-                                      onDragStart={(event) =>
-                                        dragHandlerAction(event, dragPayload)
-                                      }
+                                      onDragStart={(event) => {
+                                        if (!isActionExpanded) {
+                                          dragHandlerAction(event, dragPayload);
+                                        }
+                                      }}
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
@@ -9384,6 +9401,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <span
                                           aria-label="Drag route action"
                                           className="event-drag-handle"
+                                          draggable={isActionExpanded}
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
+                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
@@ -9392,8 +9413,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <button
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
+                                          draggable={isActionExpanded}
                                           onClick={() =>
                                             toggleExpandedItem(step.id)
+                                          }
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
                                           }
                                           type="button"
                                         >
@@ -9538,7 +9563,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       ]
                         .filter(Boolean)
                         .join(" ")}
-                      draggable
+                      draggable={!isExpanded}
                       key={check.id}
                       onDragEnd={clearActionDragState}
                       onDragLeave={(event) =>
@@ -9547,9 +9572,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       onDragOver={(event) =>
                         dragOverConversationItem(event, dragPayload)
                       }
-                      onDragStart={(event) =>
-                        dragConversationItem(event, dragPayload)
-                      }
+                      onDragStart={(event) => {
+                        if (!isExpanded) dragConversationItem(event, dragPayload);
+                      }}
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
@@ -9559,6 +9584,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <span
                           aria-label="Drag conversation check"
                           className="event-drag-handle"
+                          draggable={isExpanded}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -9568,11 +9597,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <button
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
+                            draggable={isExpanded}
                             onClick={() =>
                               toggleExpandedParent(
                                 check.id,
                                 check.handlerActions.map((step) => step.id),
                               )
+                            }
+                            onDragStart={(event) =>
+                              dragConversationItem(event, dragPayload)
                             }
                             type="button"
                           >
@@ -9786,7 +9819,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
-                                      draggable
+                                      draggable={!isActionExpanded}
                                       key={step.id}
                                       onDragEnd={clearActionDragState}
                                       onDragLeave={(event) =>
@@ -9795,9 +9828,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       onDragOver={(event) =>
                                         dragOverHandlerAction(event, dragPayload)
                                       }
-                                      onDragStart={(event) =>
-                                        dragHandlerAction(event, dragPayload)
-                                      }
+                                      onDragStart={(event) => {
+                                        if (!isActionExpanded) {
+                                          dragHandlerAction(event, dragPayload);
+                                        }
+                                      }}
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
@@ -9807,6 +9842,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <span
                                           aria-label="Drag check action"
                                           className="event-drag-handle"
+                                          draggable={isActionExpanded}
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
+                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
@@ -9815,8 +9854,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <button
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
+                                          draggable={isActionExpanded}
                                           onClick={() =>
                                             toggleExpandedItem(step.id)
+                                          }
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
                                           }
                                           type="button"
                                         >
@@ -9960,7 +10003,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       ]
                         .filter(Boolean)
                         .join(" ")}
-                      draggable
+                      draggable={!isExpanded}
                       key={group.id}
                       onDragEnd={clearActionDragState}
                       onDragLeave={(event) =>
@@ -9969,9 +10012,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       onDragOver={(event) =>
                         dragOverConversationItem(event, dragPayload)
                       }
-                      onDragStart={(event) =>
-                        dragConversationItem(event, dragPayload)
-                      }
+                      onDragStart={(event) => {
+                        if (!isExpanded) dragConversationItem(event, dragPayload);
+                      }}
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
@@ -9981,6 +10024,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <span
                           aria-label="Drag classifier group"
                           className="event-drag-handle"
+                          draggable={isExpanded}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -9990,11 +10037,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <button
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
+                            draggable={isExpanded}
                             onClick={() =>
                               toggleExpandedParent(
                                 group.id,
                                 group.handlerActions.map((step) => step.id),
                               )
+                            }
+                            onDragStart={(event) =>
+                              dragConversationItem(event, dragPayload)
                             }
                             type="button"
                           >
@@ -10317,7 +10368,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
-                                      draggable
+                                      draggable={!isActionExpanded}
                                       key={step.id}
                                       onDragEnd={clearActionDragState}
                                       onDragLeave={(event) =>
@@ -10326,9 +10377,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                       onDragOver={(event) =>
                                         dragOverHandlerAction(event, dragPayload)
                                       }
-                                      onDragStart={(event) =>
-                                        dragHandlerAction(event, dragPayload)
-                                      }
+                                      onDragStart={(event) => {
+                                        if (!isActionExpanded) {
+                                          dragHandlerAction(event, dragPayload);
+                                        }
+                                      }}
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
@@ -10338,6 +10391,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <span
                                           aria-label="Drag classifier action"
                                           className="event-drag-handle"
+                                          draggable={isActionExpanded}
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
+                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
@@ -10346,8 +10403,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         <button
                                           aria-expanded={isActionExpanded}
                                           className="event-step-summary"
+                                          draggable={isActionExpanded}
                                           onClick={() =>
                                             toggleExpandedItem(step.id)
+                                          }
+                                          onDragStart={(event) =>
+                                            dragHandlerAction(event, dragPayload)
                                           }
                                           type="button"
                                         >
@@ -10487,7 +10548,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       ]
                         .filter(Boolean)
                         .join(" ")}
-                      draggable
+                      draggable={!isExpanded}
                       key={choice.id}
                       onDragEnd={clearActionDragState}
                       onDragLeave={(event) =>
@@ -10496,9 +10557,9 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       onDragOver={(event) =>
                         dragOverConversationItem(event, dragPayload)
                       }
-                      onDragStart={(event) =>
-                        dragConversationItem(event, dragPayload)
-                      }
+                      onDragStart={(event) => {
+                        if (!isExpanded) dragConversationItem(event, dragPayload);
+                      }}
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
@@ -10508,6 +10569,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         <span
                           aria-label="Drag choice"
                           className="event-drag-handle"
+                          draggable={isExpanded}
+                          onDragStart={(event) =>
+                            dragConversationItem(event, dragPayload)
+                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -10517,7 +10582,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                           <button
                             aria-expanded={isExpanded}
                             className="event-step-kind chat-exit-expand-button"
+                            draggable={isExpanded}
                             onClick={() => toggleExpandedItem(choice.id)}
+                            onDragStart={(event) =>
+                              dragConversationItem(event, dragPayload)
+                            }
                             type="button"
                           >
                             Choice
