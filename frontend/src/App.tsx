@@ -108,6 +108,8 @@ const scriptSlideTextareaMinHeightPx = 82;
 const scriptSlideTextareaMaxHeightPx = 360;
 const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
 const defaultChoiceIconPath = "test-images/wrench.png";
+const tutorVoiceTextareaMinHeightPx = 30;
+const tutorVoiceTextareaMaxHeightPx = 180;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -17111,6 +17113,27 @@ function TutorControls({
         : "Play voice sample";
   const actionOffsetHelp =
     "Shifts every timed action inside scripted speech. Negative values fire actions earlier; positive values fire them later.";
+  const voiceInstructionsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = voiceInstructionsTextareaRef.current;
+    resizeTextareaToContent(textarea, {
+      maxHeight: tutorVoiceTextareaMaxHeightPx,
+      minHeight: tutorVoiceTextareaMinHeightPx,
+    });
+
+    if (!textarea || typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(() => {
+      resizeTextareaToContent(textarea, {
+        maxHeight: tutorVoiceTextareaMaxHeightPx,
+        minHeight: tutorVoiceTextareaMinHeightPx,
+      });
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [tutor.voiceInstructions]);
+
   const closeAvatarPickerOnBlur = (event: FocusEvent<HTMLDivElement>) => {
     const nextFocus = event.relatedTarget as Node | null;
     if (!nextFocus || !event.currentTarget.contains(nextFocus)) {
@@ -17233,8 +17256,15 @@ function TutorControls({
             <span>Voice and personality</span>
             <textarea
               className="prompt-textarea compact"
-              onChange={(event) => onVoiceInstructionsChange(event.target.value)}
+              onChange={(event) => {
+                resizeTextareaToContent(event.currentTarget, {
+                  maxHeight: tutorVoiceTextareaMaxHeightPx,
+                  minHeight: tutorVoiceTextareaMinHeightPx,
+                });
+                onVoiceInstructionsChange(event.target.value);
+              }}
               placeholder="How the agent should sound..."
+              ref={voiceInstructionsTextareaRef}
               rows={1}
               value={tutor.voiceInstructions}
             />

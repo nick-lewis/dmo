@@ -711,7 +711,8 @@ button {
 
 .tutor-editor-section .control-field textarea.prompt-textarea.compact {
   min-height: 30px;
-  overflow: auto;
+  overflow: hidden;
+  resize: none;
 }
 
 .script-audio-section {
