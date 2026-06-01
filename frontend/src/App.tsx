@@ -87,6 +87,8 @@ const scriptTextStreamMaxMs = 16000;
 const scriptImmediateCueProgress = 0.001;
 const slideDissolveDurationMs = 720;
 const defaultScriptActionOffsetMs = 800;
+const scriptTextareaMinHeightPx = 220;
+const scriptTextareaMaxHeightPx = 680;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -851,10 +853,23 @@ function localMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function resizeTextareaToContent(textarea: HTMLTextAreaElement | null) {
+function resizeTextareaToContent(
+  textarea: HTMLTextAreaElement | null,
+  options: { maxHeight?: number; minHeight?: number } = {},
+) {
   if (!textarea) return;
+  const computedStyle = window.getComputedStyle(textarea);
+  const cssMinHeight = Number.parseFloat(computedStyle.minHeight) || 0;
+  const minHeight = options.minHeight ?? cssMinHeight;
+  const maxHeight = options.maxHeight ?? Number.POSITIVE_INFINITY;
+
   textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
+  const nextHeight = Math.ceil(clamp(textarea.scrollHeight, minHeight, maxHeight));
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY =
+    Number.isFinite(maxHeight) && textarea.scrollHeight > maxHeight
+      ? "auto"
+      : "hidden";
 }
 
 function inlineFieldWidthStyle(
@@ -13282,8 +13297,27 @@ function ScriptActionEditor({
   const slidePreviewKey = slidePreviewRefs.join("\u001f");
 
   useEffect(() => {
-    resizeTextareaToContent(textareaRef.current);
-  }, [text]);
+    if (viewMode !== "text") return;
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const resizeScriptTextarea = () =>
+      resizeTextareaToContent(textareaRef.current, {
+        maxHeight: scriptTextareaMaxHeightPx,
+        minHeight: scriptTextareaMinHeightPx,
+      });
+
+    resizeScriptTextarea();
+    firstFrame = window.requestAnimationFrame(() => {
+      resizeScriptTextarea();
+      secondFrame = window.requestAnimationFrame(resizeScriptTextarea);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [text, viewMode]);
 
   useEffect(() => {
     if (viewMode === "text" || !deckUrl.trim() || !slidePreviewRefs.length) {
@@ -13394,7 +13428,10 @@ function ScriptActionEditor({
       if (!nextTextarea) return;
       nextTextarea.focus();
       nextTextarea.setSelectionRange(nextCursor, nextCursor);
-      resizeTextareaToContent(nextTextarea);
+      resizeTextareaToContent(nextTextarea, {
+        maxHeight: scriptTextareaMaxHeightPx,
+        minHeight: scriptTextareaMinHeightPx,
+      });
     });
   }
 
@@ -13427,7 +13464,10 @@ function ScriptActionEditor({
       if (!textarea) return;
       textarea.focus();
       textarea.setSelectionRange(nextCursor, nextCursor);
-      resizeTextareaToContent(textarea);
+      resizeTextareaToContent(textarea, {
+        maxHeight: scriptTextareaMaxHeightPx,
+        minHeight: scriptTextareaMinHeightPx,
+      });
     });
   }
 
@@ -13643,7 +13683,12 @@ function ScriptActionEditor({
           aria-label="Speech text"
           className="event-script-textarea"
           onChange={(event) => onTextChange(event.target.value)}
-          onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+          onInput={(event) =>
+            resizeTextareaToContent(event.currentTarget, {
+              maxHeight: scriptTextareaMaxHeightPx,
+              minHeight: scriptTextareaMinHeightPx,
+            })
+          }
           placeholder="What the agent says... [gslide: 1]"
           ref={textareaRef}
           value={text}
