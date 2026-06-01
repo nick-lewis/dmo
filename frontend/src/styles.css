@@ -3415,10 +3415,10 @@ button {
 .left-stack-scroll {
   display: grid;
   grid-template-rows:
-    minmax(170px, 0.9fr)
-    minmax(260px, 1.45fr)
-    minmax(135px, 0.7fr)
-    minmax(135px, 0.7fr);
+    minmax(150px, 0.55fr)
+    minmax(190px, 0.72fr)
+    minmax(320px, 1.55fr)
+    minmax(180px, 0.7fr);
   align-content: stretch;
   gap: var(--panel-gap);
   width: var(--left-width);
@@ -3745,6 +3745,16 @@ button {
   resize: vertical;
 }
 
+.panel-notebook {
+  min-height: 320px;
+  resize: vertical;
+}
+
+.panel-terminal {
+  min-height: 180px;
+  resize: vertical;
+}
+
 .panel-lower {
   resize: none;
 }
@@ -3994,6 +4004,373 @@ button {
   --syntax-number: color-mix(in srgb, var(--accent-5) 76%, white);
   --syntax-operator: color-mix(in srgb, var(--page-ink) 74%, var(--accent-2));
   --syntax-string: color-mix(in srgb, var(--accent-2) 76%, white);
+}
+
+.python-notebook-panel,
+.python-terminal-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  min-height: 100%;
+  color: var(--page-ink);
+}
+
+.python-terminal-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.python-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.python-panel-header > div:first-child {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.python-panel-header span {
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.python-panel-header strong {
+  overflow: hidden;
+  color: var(--page-ink);
+  font-size: 0.86rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.python-panel-actions,
+.python-cell-add-row,
+.python-cell-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.python-panel-header button,
+.python-cell-add-row button,
+.python-cell-toolbar button {
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+  font-size: 0.64rem;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.python-panel-header button:disabled,
+.python-cell-add-row button:disabled,
+.python-cell-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.python-cell-add-row {
+  justify-content: start;
+  min-width: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-soft-border);
+}
+
+.python-cell-add-row span {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.python-panel-error {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent) 75%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 46%, transparent);
+  font-size: 0.7rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.python-cell-list {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.python-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 84%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--accent-2) 22%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
+}
+
+.python-cell.active {
+  border-color: color-mix(in srgb, var(--accent-2) 22%, var(--panel-soft-border));
+  border-left-color: color-mix(in srgb, var(--accent-2) 70%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, transparent);
+}
+
+.python-cell.error {
+  border-left-color: color-mix(in srgb, var(--accent) 76%, var(--panel-soft-border));
+}
+
+.python-cell-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.python-cell-toolbar > span {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.markdown-cell-editor {
+  min-height: 62px;
+  padding: 7px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 62%, transparent);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.notebook-markdown-preview {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-soft) 26%, transparent);
+}
+
+.notebook-markdown-preview h3,
+.notebook-markdown-preview h4,
+.notebook-markdown-preview h5,
+.notebook-markdown-preview p,
+.notebook-markdown-preview ul {
+  margin: 0;
+}
+
+.notebook-markdown-preview h3,
+.notebook-markdown-preview h4,
+.notebook-markdown-preview h5 {
+  color: var(--page-ink);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.notebook-markdown-preview p,
+.notebook-markdown-preview li {
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--muted-ink));
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.notebook-markdown-preview ul {
+  padding-left: 16px;
+}
+
+.python-editor-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 96px;
+  overflow: hidden;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--page-ink) 4%, var(--panel-bg-strong));
+  font-family: var(--mono-font);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.python-editor-shell textarea,
+.python-highlight-layer {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  max-height: 240px;
+  margin: 0;
+  padding: 8px;
+  border: 0;
+  font: inherit;
+  line-height: inherit;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.python-highlight-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.python-highlight-layer code {
+  color: color-mix(in srgb, var(--page-ink) 82%, black);
+}
+
+.python-editor-shell textarea {
+  position: relative;
+  z-index: 1;
+  display: block;
+  min-width: 0;
+  overflow: auto;
+  color: transparent;
+  background: transparent;
+  caret-color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+  outline: none;
+  resize: vertical;
+}
+
+.python-editor-shell textarea::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--accent-2) 22%, transparent);
+}
+
+.python-cell-output {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.python-output-meta,
+.python-cell-output.empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.python-output-meta span,
+.python-cell-output.empty span {
+  color: var(--muted-ink);
+  font-size: 0.6rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.python-output-meta code,
+.python-cell-output.empty code {
+  color: color-mix(in srgb, var(--page-ink) 62%, var(--muted-ink));
+  font-family: var(--mono-font);
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+
+.python-cell-output pre,
+.python-terminal-entry pre {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-height: 150px;
+  margin: 0;
+  overflow: auto;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 84%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--page-ink) 84%, black);
+  background: color-mix(in srgb, var(--page-ink) 5%, var(--panel-bg-strong));
+  font-family: var(--mono-font);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.python-cell-output pre > span {
+  color: var(--muted-ink);
+  font-family: inherit;
+  font-size: 0.58rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.python-cell-output pre.error,
+.python-cell-output pre.stderr {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent) 72%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
+}
+
+.python-terminal-stream {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.python-terminal-entry {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.python-terminal-entry > span {
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-family: var(--mono-font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.python-terminal-entry pre {
+  max-height: 110px;
+}
+
+.python-terminal-empty {
+  margin: 0;
+  padding: 8px;
+  border: 1px dashed var(--panel-soft-border);
+  border-radius: 7px;
+  color: var(--muted-ink);
+  font-size: 0.72rem;
+  font-weight: 690;
+  line-height: 1.35;
 }
 
 .slide-workspace {

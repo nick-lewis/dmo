@@ -32,6 +32,14 @@ import {
   type MainPanelAppHost,
   type RuntimeInteractive,
 } from "./mainPanelApps";
+import {
+  PythonNotebookPanel,
+  PythonTerminalPanel,
+  defaultPythonNotebookState,
+  normalizePythonNotebookState,
+  type PythonNotebookState,
+  type PythonNotebookStatus,
+} from "./PythonNotebookPanel";
 
 type ClassificationModelId = string;
 type HandlerActionOwnerKind =
@@ -55,8 +63,8 @@ type DraggingConversationItem = {
 const leftPanels = [
   { density: "tall", kind: "experience", label: "Experience" },
   { density: "tutor", kind: "tutor", label: "Tutor settings" },
-  { density: "compact", kind: "slides", label: "Slide controls" },
-  { density: "compact", kind: "checks", label: "Left panel four" },
+  { density: "notebook", kind: "notebook", label: "Python notebook" },
+  { density: "terminal", kind: "terminal", label: "Python terminal" },
 ] as const;
 
 const rowDividerHeight = 12;
@@ -491,9 +499,15 @@ type InteractiveRuntimePayload = SessionPayload & {
   ranMessages?: ChatMessage[];
 };
 
+type PythonNotebookPayload = SessionPayload & {
+  actions: Array<Record<string, unknown>>;
+  notebook: PythonNotebookState;
+};
+
 type RuntimeUiState = {
   avatarPath?: string;
   interactive?: Record<string, unknown>;
+  leftPanels?: Record<string, unknown>;
   notes?: RuntimeNote[];
   notesVisible: boolean;
   overlays?: Record<string, RuntimeOverlay>;
@@ -1911,6 +1925,10 @@ function runtimeActionText(action: Record<string, unknown>) {
   }
   if (type === "interactive_clear") {
     return "clear main-panel app";
+  }
+  if (type === "python_notebook") {
+    if (action.runAll) return "python notebook run all";
+    return `python ${compactRuntimeValue(action.cellId, "notebook")}`;
   }
   if (type === "chat_availability") {
     return action.enabled === false ? "chat off" : "chat on";
@@ -9948,6 +9966,8 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const runtimeSoundEffectsRef = useRef(new Set<HTMLAudioElement>());
   const interactiveSaveTimerRef = useRef<number | null>(null);
   const interactiveSaveVersionRef = useRef(0);
+  const notebookSaveTimerRef = useRef<number | null>(null);
+  const notebookSaveVersionRef = useRef(0);
   const suppressSlideControlResetRef = useRef(false);
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -9996,6 +10016,12 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [runtimeInteractiveState, setRuntimeInteractiveState] = useState<
     Record<string, unknown>
   >({});
+  const [pythonNotebook, setPythonNotebook] = useState<PythonNotebookState>(
+    defaultPythonNotebookState(),
+  );
+  const [pythonNotebookStatus, setPythonNotebookStatus] =
+    useState<PythonNotebookStatus>("idle");
+  const [pythonNotebookError, setPythonNotebookError] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("idle");
   const [chatStatus, setChatStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -10055,6 +10081,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     return {
       avatarPath: runtimeAvatarPath,
       interactive: runtimeInteractiveState,
+      leftPanels: {
+        pythonNotebook,
+      },
       notes: runtimeNotes,
       notesVisible,
       overlays: runtimeOverlays,
@@ -10195,6 +10224,114 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       {},
       actions,
     );
+  }
+
+  function clearNotebookSaveTimer() {
+    if (notebookSaveTimerRef.current !== null) {
+      window.clearTimeout(notebookSaveTimerRef.current);
+      notebookSaveTimerRef.current = null;
+    }
+  }
+
+  async function persistPythonNotebook(
+    notebook: PythonNotebookState,
+    action: "save" | "run" | "format" = "save",
+    options: { cellId?: string; runAll?: boolean } = {},
+  ) {
+    if (!session) return false;
+
+    const version = notebookSaveVersionRef.current + 1;
+    notebookSaveVersionRef.current = version;
+    if (action !== "save") {
+      clearNotebookSaveTimer();
+    }
+
+    setPythonNotebookStatus(
+      action === "run" ? "running" : action === "format" ? "formatting" : "saving",
+    );
+    setPythonNotebookError("");
+
+    try {
+      const payload = await apiFetch<PythonNotebookPayload>(
+        `/api/sessions/${session.id}/notebook/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            action,
+            cellId: options.cellId ?? notebook.activeCellId,
+            notebook,
+            runAll: Boolean(options.runAll),
+          }),
+        },
+      );
+
+      if (notebookSaveVersionRef.current !== version) return false;
+
+      setSession(payload.session);
+      setMessages(payload.messages);
+      setPythonNotebook(normalizePythonNotebookState(payload.notebook));
+      applyRuntimeActions(payload.actions);
+      setPythonNotebookStatus("idle");
+      return true;
+    } catch (error) {
+      if (notebookSaveVersionRef.current !== version) return false;
+      setPythonNotebookStatus("idle");
+      setPythonNotebookError(
+        error instanceof Error ? error.message : "Could not update Python notebook.",
+      );
+      return false;
+    }
+  }
+
+  function queuePythonNotebookSave(nextNotebook: PythonNotebookState) {
+    clearNotebookSaveTimer();
+    notebookSaveTimerRef.current = window.setTimeout(() => {
+      notebookSaveTimerRef.current = null;
+      void persistPythonNotebook(nextNotebook, "save");
+    }, 500);
+  }
+
+  function changePythonNotebook(nextNotebook: PythonNotebookState) {
+    const updatedNotebook = {
+      ...nextNotebook,
+      updatedAt: new Date().toISOString(),
+    };
+    setPythonNotebook(updatedNotebook);
+    queuePythonNotebookSave(updatedNotebook);
+  }
+
+  function clearPythonNotebookOutputs() {
+    changePythonNotebook({
+      ...pythonNotebook,
+      cells: pythonNotebook.cells.map((cell) => {
+        const { output: _output, ...rest } = cell;
+        return rest;
+      }),
+    });
+  }
+
+  function runPythonNotebookCell(cellId: string) {
+    const nextNotebook = {
+      ...pythonNotebook,
+      activeCellId: cellId,
+      updatedAt: new Date().toISOString(),
+    };
+    setPythonNotebook(nextNotebook);
+    void persistPythonNotebook(nextNotebook, "run", { cellId });
+  }
+
+  function runPythonNotebookAll() {
+    void persistPythonNotebook(pythonNotebook, "run", { runAll: true });
+  }
+
+  function formatPythonNotebookCell(cellId: string) {
+    const nextNotebook = {
+      ...pythonNotebook,
+      activeCellId: cellId,
+      updatedAt: new Date().toISOString(),
+    };
+    setPythonNotebook(nextNotebook);
+    void persistPythonNotebook(nextNotebook, "format", { cellId });
   }
 
   function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
@@ -10461,6 +10598,12 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const avatarPathValue = uiRuntime.avatarPath;
     const overlaysValue = uiRuntime.overlays;
     const notesValue = uiRuntime.notes;
+    const leftPanelsValue =
+      uiRuntime.leftPanels &&
+      typeof uiRuntime.leftPanels === "object" &&
+      !Array.isArray(uiRuntime.leftPanels)
+        ? (uiRuntime.leftPanels as Record<string, unknown>)
+        : {};
     const nextHighlights: Record<string, RuntimeHighlight> = {};
     const nextButtons: RuntimeButton[] = [];
 
@@ -10530,6 +10673,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setRuntimeNotes(runtimeNotesFromValue(notesValue));
     setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
+    setPythonNotebook(
+      normalizePythonNotebookState(leftPanelsValue.pythonNotebook),
+    );
 
     const nextInteractive = runtimeInteractiveFromRecord(interactiveValue);
     if (nextInteractive) {
@@ -10698,10 +10844,14 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
   useEffect(() => {
     clearInteractiveSaveTimer();
+    clearNotebookSaveTimer();
     stopRuntimeSoundEffects();
     setNotesVisible(false);
     setRuntimeNotes([]);
     setRuntimeActionLog([]);
+    setPythonNotebook(defaultPythonNotebookState());
+    setPythonNotebookError("");
+    setPythonNotebookStatus("idle");
     setResolvedSlide(null);
     setSlideError("");
     setSlideStatus("empty");
@@ -12160,6 +12310,16 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
                     user,
                   }}
                   kind={panel.kind}
+                  notebook={{
+                    error: pythonNotebookError,
+                    notebook: pythonNotebook,
+                    onChange: changePythonNotebook,
+                    onClearOutputs: clearPythonNotebookOutputs,
+                    onFormatCell: formatPythonNotebookCell,
+                    onRunAll: runPythonNotebookAll,
+                    onRunCell: runPythonNotebookCell,
+                    status: pythonNotebookStatus,
+                  }}
                   runtime={{
                     notes: runtimeNotes,
                     notesVisible,
@@ -12985,7 +13145,7 @@ function RuntimeInspectorPanel({
 }
 
 type PanelWindowProps = {
-  density: "compact" | "tall" | "tutor" | "main" | "lower";
+  density: "compact" | "tall" | "tutor" | "notebook" | "terminal" | "main" | "lower";
   ariaLabel: string;
   children: ReactNode;
   style?: CSSProperties;
@@ -13532,15 +13692,28 @@ type SlideControlsProps = {
   status: SlideStatus;
 };
 
+type PythonNotebookControlsProps = {
+  error: string;
+  notebook: PythonNotebookState;
+  onChange: (notebook: PythonNotebookState) => void;
+  onClearOutputs: () => void;
+  onFormatCell: (cellId: string) => void;
+  onRunAll: () => void;
+  onRunCell: (cellId: string) => void;
+  status: PythonNotebookStatus;
+};
+
 function LeftPanelContent({
   experience,
   kind,
+  notebook,
   runtime,
   slides,
   tutor,
 }: {
   experience: ExperienceControlsProps;
   kind: LeftPanelKind;
+  notebook: PythonNotebookControlsProps;
   runtime: {
     notes: RuntimeNote[];
     notesVisible: boolean;
@@ -13599,43 +13772,29 @@ function LeftPanelContent({
     );
   }
 
-  if (kind === "slides") {
+  if (kind === "notebook") {
     return (
-      <RuntimePlaceholderPanel
-        kicker={slides.status === "ready" ? "Slide ready" : "Materials"}
-        title="Learning surface"
-        tags={["Slides", "Notebook", "Artifacts"]}
-      >
-        <p>
-          This will become a compact readout for whatever the experience is
-          controlling in the main panel.
-        </p>
-      </RuntimePlaceholderPanel>
+      <PythonNotebookPanel
+        error={notebook.error}
+        notebook={notebook.notebook}
+        onChange={notebook.onChange}
+        onClearOutputs={notebook.onClearOutputs}
+        onFormatCell={notebook.onFormatCell}
+        onRunAll={notebook.onRunAll}
+        onRunCell={notebook.onRunCell}
+        status={notebook.status}
+      />
     );
   }
 
-  if (kind === "checks") {
+  if (kind === "terminal") {
     return (
-      <RuntimePlaceholderPanel
-        kicker={experience.user?.displayName || "Learner"}
-        title="Signals"
-        tags={["Progress", "Checks", "Notes"]}
-      >
-        <ul className="check-list">
-          <li>
-            <span>Current event</span>
-            <strong>entry</strong>
-          </li>
-          <li>
-            <span>Runtime context</span>
-            <strong>pending</strong>
-          </li>
-          <li>
-            <span>Next action</span>
-            <strong>observe</strong>
-          </li>
-        </ul>
-      </RuntimePlaceholderPanel>
+      <PythonTerminalPanel
+        error={notebook.error}
+        notebook={notebook.notebook}
+        onRunAll={notebook.onRunAll}
+        status={notebook.status}
+      />
     );
   }
 

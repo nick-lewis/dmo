@@ -55,6 +55,7 @@ from core.views import (
     update_experience,
     update_experience_event,
     update_session_interactive,
+    update_session_notebook,
 )
 
 urlpatterns = [
@@ -237,6 +238,11 @@ urlpatterns = [
         "api/sessions/<uuid:session_id>/interactive/",
         update_session_interactive,
         name="update-session-interactive",
+    ),
+    path(
+        "api/sessions/<uuid:session_id>/notebook/",
+        update_session_notebook,
+        name="update-session-notebook",
     ),
     path(
         "api/sessions/<uuid:session_id>/chat-tool/",

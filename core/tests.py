@@ -572,6 +572,124 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "Main-panel app is not registered.")
 
+    def test_python_notebook_run_persists_state_and_runtime_context(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+        self.client.force_login(self.user)
+        notebook = {
+            "activeCellId": "code-1",
+            "cells": [
+                {
+                    "id": "md-1",
+                    "kind": "markdown",
+                    "source": "### Work",
+                },
+                {
+                    "id": "code-1",
+                    "kind": "code",
+                    "source": "x = 2\nx + 3",
+                },
+            ],
+            "executionCount": 0,
+        }
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/notebook/",
+            data=json.dumps(
+                {
+                    "action": "run",
+                    "cellId": "code-1",
+                    "notebook": notebook,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        code_cell = payload["notebook"]["cells"][1]
+        self.assertEqual(code_cell["output"]["result"], "5")
+        self.assertEqual(code_cell["output"]["status"], "ok")
+        session.refresh_from_db()
+        saved_notebook = session.runtime_state["uiRuntime"]["leftPanels"][
+            "pythonNotebook"
+        ]
+        self.assertEqual(saved_notebook["cells"][1]["output"]["result"], "5")
+        context_notebook = session.runtime_context["python_notebook"]
+        self.assertIn("x = 2", context_notebook["cells"][1]["source"])
+        self.assertIn("result: 5", context_notebook["terminal"])
+        self.assertEqual(payload["actions"][0]["type"], "python_notebook")
+
+    def test_python_notebook_run_preserves_prior_code_state_for_target_cell(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/notebook/",
+            data=json.dumps(
+                {
+                    "action": "run",
+                    "cellId": "code-2",
+                    "notebook": {
+                        "cells": [
+                            {
+                                "id": "code-1",
+                                "kind": "code",
+                                "source": "base = 10",
+                            },
+                            {
+                                "id": "code-2",
+                                "kind": "code",
+                                "source": "base * 4",
+                            },
+                        ],
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cells = response.json()["notebook"]["cells"]
+        self.assertEqual(cells[1]["output"]["result"], "40")
+
+    def test_python_notebook_format_updates_code_cell(self):
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/notebook/",
+            data=json.dumps(
+                {
+                    "action": "format",
+                    "cellId": "code-1",
+                    "notebook": {
+                        "cells": [
+                            {
+                                "id": "code-1",
+                                "kind": "code",
+                                "source": "x=1+2   ",
+                            }
+                        ]
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        source = response.json()["notebook"]["cells"][0]["source"]
+        self.assertIn("x", source)
+        self.assertTrue(source.endswith("\n"))
+
     def test_interactive_update_can_change_submit_destination(self):
         state = apply_runtime_actions_to_state(
             {},
