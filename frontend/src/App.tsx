@@ -10007,7 +10007,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const notebookSaveTimerRef = useRef<number | null>(null);
   const notebookSaveVersionRef = useRef(0);
   const suppressSlideControlResetRef = useRef(false);
-  const [isLeftOpen, setIsLeftOpen] = useState(true);
+  const [isLeftOpen, setIsLeftOpen] = useState(!initialExperienceId);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [workspaceWidth, setWorkspaceWidth] = useState(
     initialPanelLayout.current.workspaceWidth ?? standardWorkspaceWidth,
@@ -11981,6 +11981,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       setTurnAnchorMessageId(null);
       setRuntimeActionLog([]);
       setChatStatus("ready");
+      if (routeExperience(window.location.pathname).mode === "run") {
+        setIsLeftOpen(false);
+      }
     } catch (error) {
       setChatStatus("error");
       setChatError(
