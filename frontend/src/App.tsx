@@ -16840,19 +16840,23 @@ function displaySlotsAreEqual(left: string[], right: string[]) {
 
 function normalizeDisplayBreaks(value: unknown, slotCount = 0) {
   if (!Array.isArray(value)) return [];
-  const breaks = new Set<number>();
+  const breaks: number[] = [];
   value.forEach((item) => {
     const index = Number(item);
     if (!Number.isInteger(index) || index < 0) return;
     if (slotCount && index >= slotCount - 1) return;
-    breaks.add(index);
+    breaks.push(index);
   });
-  return [...breaks].sort((left, right) => left - right);
+  return breaks.sort((left, right) => left - right);
 }
 
 function displayBreaksAreEqual(left: number[], right: number[]) {
   if (left.length !== right.length) return false;
   return left.every((breakIndex, index) => breakIndex === right[index]);
+}
+
+function displayBreakCount(breaks: number[], slotIndex: number) {
+  return breaks.filter((breakIndex) => breakIndex === slotIndex).length;
 }
 
 function displayDraftKey(slots: string[], breaks: number[]) {
@@ -17156,7 +17160,6 @@ function ScriptAudioPanel({
               displayBreakDrafts[item.id] ?? persistedDisplayBreaks,
               displaySlotDraft.length,
             );
-            const displayBreakSet = new Set(displayBreakDraft);
             const expectedDisplayWordCount =
               displayBaseSlots.length ||
               item.displayExpectedWordCount ||
@@ -17183,9 +17186,28 @@ function ScriptAudioPanel({
                   current[item.id] ?? displayBreakDraft,
                   displaySlotDraft.length,
                 );
-                const nextBreaks = currentBreaks.includes(slotIndex)
-                  ? currentBreaks.filter((breakIndex) => breakIndex !== slotIndex)
-                  : [...currentBreaks, slotIndex].sort((left, right) => left - right);
+                const nextBreaks = [...currentBreaks, slotIndex].sort(
+                  (left, right) => left - right,
+                );
+                return {
+                  ...current,
+                  [item.id]: nextBreaks,
+                };
+              });
+            };
+            const removeDisplayBreak = (slotIndex: number) => {
+              setDisplayBreakDrafts((current) => {
+                const currentBreaks = normalizeDisplayBreaks(
+                  current[item.id] ?? displayBreakDraft,
+                  displaySlotDraft.length,
+                );
+                const breakIndexToRemove = currentBreaks.indexOf(slotIndex);
+                if (breakIndexToRemove === -1) {
+                  return current;
+                }
+                const nextBreaks = currentBreaks.filter(
+                  (_, breakIndex) => breakIndex !== breakIndexToRemove,
+                );
                 return {
                   ...current,
                   [item.id]: nextBreaks,
@@ -17335,73 +17357,94 @@ function ScriptAudioPanel({
                         className="script-audio-display-slots"
                         role="group"
                       >
-                        {displaySlotDraft.map((slot, index) => (
-                          <Fragment key={`${item.id}-${index}`}>
-                            <label
-                              className={[
-                                "script-audio-display-slot",
-                                slot.trim() ? "" : "is-blank",
-                              ]
-                                .filter(Boolean)
-                                .join(" ")}
-                            >
-                              <span>{index + 1}</span>
-                              <input
-                                aria-label={`Displayed word slot ${index + 1}`}
-                                onChange={(event) => {
-                                  const nextValue = event.target.value;
-                                  setDisplaySlotDrafts((current) => {
-                                    const nextSlots = [
-                                      ...(current[item.id] ?? displaySlotDraft),
-                                    ];
-                                    nextSlots[index] = nextValue;
-                                    return {
-                                      ...current,
-                                      [item.id]: nextSlots,
-                                    };
-                                  });
-                                }}
-                                onKeyDown={(event) => {
-                                  if (event.key !== "Enter") return;
-                                  event.preventDefault();
-                                  if (index < displaySlotDraft.length - 1) {
-                                    toggleDisplayBreak(index);
-                                  }
-                                }}
-                                placeholder="[blank]"
-                                style={displaySlotWidthStyle(slot)}
-                                value={slot}
-                              />
-                            </label>
-                            {index < displaySlotDraft.length - 1 ? (
-                              <button
-                                aria-label={`Toggle line break after displayed word ${index + 1}`}
-                                aria-pressed={displayBreakSet.has(index)}
+                        {displaySlotDraft.map((slot, index) => {
+                          const breakCount = displayBreakCount(displayBreakDraft, index);
+                          return (
+                            <Fragment key={`${item.id}-${index}`}>
+                              <label
                                 className={[
-                                  "script-audio-line-break-toggle",
-                                  displayBreakSet.has(index) ? "is-active" : "",
+                                  "script-audio-display-slot",
+                                  slot.trim() ? "" : "is-blank",
                                 ]
                                   .filter(Boolean)
                                   .join(" ")}
-                                onClick={() => toggleDisplayBreak(index)}
-                                title={
-                                  displayBreakSet.has(index)
-                                    ? "Remove line break after this word."
-                                    : "Add line break after this word."
-                                }
-                                type="button"
                               >
-                                ↵
-                              </button>
-                            ) : null}
-                            {displayBreakSet.has(index) ? (
-                              <span
-                                aria-hidden="true"
-                                className="script-audio-display-line-break"
-                              />
-                            ) : null}
-                          </Fragment>
-                        ))}
+                                <span>{index + 1}</span>
+                                <input
+                                  aria-label={`Displayed word slot ${index + 1}`}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    setDisplaySlotDrafts((current) => {
+                                      const nextSlots = [
+                                        ...(current[item.id] ?? displaySlotDraft),
+                                      ];
+                                      nextSlots[index] = nextValue;
+                                      return {
+                                        ...current,
+                                        [item.id]: nextSlots,
+                                      };
+                                    });
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.preventDefault();
+                                    if (index < displaySlotDraft.length - 1) {
+                                      toggleDisplayBreak(index);
+                                    }
+                                  }}
+                                  placeholder="[blank]"
+                                  style={displaySlotWidthStyle(slot)}
+                                  value={slot}
+                                />
+                              </label>
+                              {index < displaySlotDraft.length - 1 ? (
+                                <span className="script-audio-line-break-control">
+                                  <button
+                                    aria-label={`Add line break after displayed word ${index + 1}`}
+                                    className={[
+                                      "script-audio-line-break-toggle",
+                                      breakCount ? "is-active" : "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ")}
+                                    onClick={() => toggleDisplayBreak(index)}
+                                    title={
+                                      breakCount
+                                        ? `${breakCount} line break${breakCount === 1 ? "" : "s"} after this word. Click to add another.`
+                                        : "Add a line break after this word."
+                                    }
+                                    type="button"
+                                  >
+                                    <span aria-hidden="true">↵</span>
+                                    {breakCount ? (
+                                      <span className="script-audio-line-break-count">
+                                        {breakCount}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                  {breakCount ? (
+                                    <button
+                                      aria-label={`Remove one line break after displayed word ${index + 1}`}
+                                      className="script-audio-line-break-remove"
+                                      onClick={() => removeDisplayBreak(index)}
+                                      title="Remove one line break after this word."
+                                      type="button"
+                                    >
+                                      −
+                                    </button>
+                                  ) : null}
+                                </span>
+                              ) : null}
+                              {Array.from({ length: breakCount }, (_, breakIndex) => (
+                                <span
+                                  aria-hidden="true"
+                                  className="script-audio-display-line-break"
+                                  key={`${item.id}-${index}-break-${breakIndex}`}
+                                />
+                              ))}
+                            </Fragment>
+                          );
+                        })}
                       </div>
                       <div className="script-audio-display-actions">
                         <button

@@ -1167,9 +1167,19 @@ button {
   background: color-mix(in srgb, var(--page-bg) 68%, var(--panel-bg-strong));
 }
 
-.script-audio-line-break-toggle {
+.script-audio-line-break-control {
+  display: inline-flex;
+  align-items: center;
   align-self: center;
-  width: 1.45rem;
+  gap: 2px;
+}
+
+.script-audio-line-break-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 1.45rem;
   height: 1.45rem;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
@@ -1194,9 +1204,43 @@ button {
   background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
 }
 
+.script-audio-line-break-toggle.is-active {
+  padding: 0 5px;
+}
+
+.script-audio-line-break-count {
+  color: inherit;
+  font-size: 0.52rem;
+  font-weight: 900;
+}
+
+.script-audio-line-break-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 10%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted-ink) 70%, transparent);
+  background: color-mix(in srgb, var(--page-bg) 55%, transparent);
+  font-size: 0.65rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.script-audio-line-break-remove:hover,
+.script-audio-line-break-remove:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 34%, var(--panel-soft-border));
+  color: var(--page-ink);
+  outline: 0;
+}
+
 .script-audio-display-line-break {
   flex-basis: 100%;
-  height: 0;
+  height: 0.18rem;
 }
 
 .script-audio-timing-preview,

@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlencode
@@ -239,7 +240,7 @@ def normalize_script_audio_display_slots(value):
 def normalize_script_audio_display_breaks(value, slot_count=0):
     if not isinstance(value, list):
         return []
-    breaks = set()
+    breaks = []
     for item in value:
         try:
             index = int(item)
@@ -249,20 +250,21 @@ def normalize_script_audio_display_breaks(value, slot_count=0):
             continue
         if slot_count and index >= slot_count - 1:
             continue
-        breaks.add(index)
+        breaks.append(index)
     return sorted(breaks)
 
 
 def script_audio_display_text_from_slots(slots, breaks=None):
-    normalized_breaks = set(normalize_script_audio_display_breaks(breaks, len(slots)))
-    pieces = []
+    normalized_breaks = normalize_script_audio_display_breaks(breaks, len(slots))
+    break_counts = Counter(normalized_breaks)
+    lines = [""]
     for index, slot in enumerate(slots):
         text = str(slot).strip()
         if text:
-            pieces.append(text)
-        if index in normalized_breaks:
-            pieces.append("\n")
-    return " ".join(pieces).replace(" \n ", "\n").replace("\n ", "\n").replace(" \n", "\n")
+            lines[-1] = f"{lines[-1]} {text}".strip()
+        for _ in range(break_counts.get(index, 0)):
+            lines.append("")
+    return "\n".join(lines).strip("\n")
 
 
 def load_script_audio_display_payload(script):

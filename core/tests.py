@@ -2174,6 +2174,46 @@ class ScriptAudioCachePayloadTests(TestCase):
         self.assertEqual(items[0]["displayText"], "First line\nsecond line.")
         self.assertTrue(items[0]["hasDisplayTranscript"])
 
+    def test_display_transcript_can_store_repeated_visual_line_breaks(self):
+        script = "First line second line."
+        display_slots = ["First", "line", "second", "line."]
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+                self.client.force_login(self.user)
+                item = collect_experience_script_audio_items(self.experience)[0]
+
+                response = self.client.put(
+                    f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
+                    data=json.dumps(
+                        {
+                            "displayBreaks": [1, 1],
+                            "displaySlots": display_slots,
+                        }
+                    ),
+                    content_type="application/json",
+                )
+
+                items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["displayBreaks"], [1, 1])
+        self.assertEqual(response.json()["displayText"], "First line\n\nsecond line.")
+        self.assertEqual(items[0]["displayBreaks"], [1, 1])
+        self.assertEqual(items[0]["displayText"], "First line\n\nsecond line.")
+
     def test_script_audio_inventory_groups_duplicate_sources(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,
