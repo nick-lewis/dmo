@@ -16064,11 +16064,9 @@ function ScriptAudioPanel({
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState("");
   const readyCount = items.filter(scriptAudioItemIsReady).length;
-  const audioCount = items.filter((item) => item.cached).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
   const generatableCount = items.filter((item) => item.canGenerate).length;
   const missingCount = items.filter(scriptAudioItemNeedsGeneration).length;
-  const timingCount = items.filter((item) => item.wordsCached).length;
   const statusLabel =
     status === "generating"
       ? "Generating"
@@ -16102,10 +16100,6 @@ function ScriptAudioPanel({
           <div className="script-audio-summary">
             <span>{readyCount}/{items.length} ready</span>
             {missingCount ? <span>{missingCount} missing</span> : null}
-            <span>{audioCount}/{items.length} audio</span>
-            <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
-              {timingCount}/{items.length} timed subtitles
-            </span>
             {dynamicCount ? (
               <span title="Dynamic scripts contain template variables and are skipped by pregeneration for now.">
                 {dynamicCount} dynamic
