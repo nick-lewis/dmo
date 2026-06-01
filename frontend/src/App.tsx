@@ -3114,7 +3114,6 @@ function ExperienceHome() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [duplicatingExperienceId, setDuplicatingExperienceId] = useState("");
   const [exportingExperienceId, setExportingExperienceId] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -3319,38 +3318,6 @@ function ExperienceHome() {
 
     writeSelectedExperienceId(experience.id);
     window.location.assign(experienceEditPath(experience.id));
-  }
-
-  async function duplicateExperience(experience: Experience) {
-    const didSave = await flushExperienceAutosave(experience);
-    if (!didSave) return;
-
-    setDuplicatingExperienceId(experience.id);
-    setError("");
-
-    try {
-      const payload = await apiFetch<{ experience: Experience }>(
-        `/api/experiences/${experience.id}/duplicate/`,
-        {
-          method: "POST",
-          body: JSON.stringify({}),
-        },
-      );
-      setExperiences((current) => [payload.experience, ...current]);
-      setDrafts((current) => ({
-        ...current,
-        [payload.experience.id]: draftFromExperience(payload.experience),
-      }));
-      writeSelectedExperienceId(payload.experience.id);
-    } catch (duplicateError) {
-      setError(
-        duplicateError instanceof Error
-          ? duplicateError.message
-          : "Could not duplicate experience.",
-      );
-    } finally {
-      setDuplicatingExperienceId("");
-    }
   }
 
   async function exportExperience(experience: Experience) {
@@ -3636,22 +3603,16 @@ function ExperienceHome() {
                 </div>
                 <div className="experience-row-actions">
                   <button
-                    className="header-action secondary"
-                    disabled={duplicatingExperienceId === experience.id}
-                    onClick={() => void duplicateExperience(experience)}
-                    type="button"
-                  >
-                    {duplicatingExperienceId === experience.id
-                      ? "Duplicating..."
-                      : "Duplicate"}
-                  </button>
-                  <button
+                    aria-label={`Download ${draft.title || "experience"} as JSON`}
                     className="header-action secondary"
                     disabled={exportingExperienceId === experience.id}
                     onClick={() => void exportExperience(experience)}
+                    title="Download a .dlu-experience.json file with the tutor settings, events, scripts, conversation logic, classifiers, and editor structure."
                     type="button"
                   >
-                    {exportingExperienceId === experience.id ? "Exporting..." : "Export"}
+                    {exportingExperienceId === experience.id
+                      ? "Downloading..."
+                      : "Download JSON"}
                   </button>
                   <button
                     className="header-action secondary"
