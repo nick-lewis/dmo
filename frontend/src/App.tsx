@@ -85,6 +85,7 @@ const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
 const scriptTextStreamMaxMs = 16000;
 const scriptImmediateCueProgress = 0.001;
+const slideDissolveDurationMs = 420;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -15597,17 +15598,7 @@ function MainPanelContent({
   }
 
   if (slide) {
-    return (
-      <div className="slide-workspace">
-        <div className="slide-image-stage">
-          <img
-            alt={`Google slide ${slide.slideRef}`}
-            className="google-slide-image"
-            src={slide.imageUrl}
-          />
-        </div>
-      </div>
-    );
+    return <DissolveSlideWorkspace slide={slide} />;
   }
 
   if (error) {
@@ -15625,6 +15616,140 @@ function MainPanelContent({
       aria-label={status === "loading" ? "Loading slide" : "Empty slide panel"}
       className="slide-workspace empty"
     />
+  );
+}
+
+function slideRenderKey(slide: ResolvedSlide) {
+  return [
+    slide.imageUrl,
+    slide.pageId,
+    slide.presentationId,
+    slide.slideRef,
+  ].join("::");
+}
+
+function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
+  const [currentSlide, setCurrentSlide] = useState<ResolvedSlide | null>(slide);
+  const [incomingSlide, setIncomingSlide] = useState<ResolvedSlide | null>(null);
+  const [isDissolving, setIsDissolving] = useState(false);
+  const currentKeyRef = useRef(slideRenderKey(slide));
+  const timeoutRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
+
+  function clearPendingTransition() {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (frameRef.current !== null) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return clearPendingTransition;
+  }, []);
+
+  useEffect(() => {
+    const nextKey = slideRenderKey(slide);
+    if (!currentKeyRef.current) {
+      currentKeyRef.current = nextKey;
+      setCurrentSlide(slide);
+      setIncomingSlide(null);
+      setIsDissolving(false);
+      return;
+    }
+
+    if (nextKey === currentKeyRef.current) {
+      setCurrentSlide(slide);
+      return;
+    }
+
+    let cancelled = false;
+    clearPendingTransition();
+
+    const startTransition = () => {
+      if (cancelled) return;
+
+      setIncomingSlide(slide);
+      setIsDissolving(false);
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = window.requestAnimationFrame(() => {
+          if (!cancelled) {
+            setIsDissolving(true);
+          }
+        });
+      });
+      timeoutRef.current = window.setTimeout(() => {
+        if (cancelled) return;
+
+        currentKeyRef.current = nextKey;
+        setCurrentSlide(slide);
+        setIncomingSlide(null);
+        setIsDissolving(false);
+        timeoutRef.current = null;
+      }, slideDissolveDurationMs + 80);
+    };
+
+    const image = new Image();
+    image.onload = startTransition;
+    image.onerror = startTransition;
+    image.src = slide.imageUrl;
+
+    return () => {
+      cancelled = true;
+      clearPendingTransition();
+    };
+  }, [slide.imageUrl, slide.pageId, slide.presentationId, slide.slideRef]);
+
+  return (
+    <div className="slide-workspace">
+      <div
+        className="slide-image-stage dissolve-stage"
+        style={
+          {
+            "--slide-dissolve-duration": `${slideDissolveDurationMs}ms`,
+          } as CSSProperties
+        }
+      >
+        {currentSlide ? (
+          <div
+            className={[
+              "slide-dissolve-layer",
+              "current",
+              incomingSlide && isDissolving ? "" : "visible",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <img
+              alt={`Google slide ${currentSlide.slideRef}`}
+              className="google-slide-image"
+              src={currentSlide.imageUrl}
+            />
+          </div>
+        ) : null}
+        {incomingSlide ? (
+          <div
+            className={[
+              "slide-dissolve-layer",
+              "incoming",
+              "dissolve-in",
+              isDissolving ? "visible" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <img
+              alt={`Google slide ${incomingSlide.slideRef}`}
+              className="google-slide-image"
+              src={incomingSlide.imageUrl}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

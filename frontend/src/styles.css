@@ -4391,6 +4391,7 @@ button {
 }
 
 .slide-image-stage {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4399,6 +4400,35 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  isolation: isolate;
+  background: #ffffff;
+}
+
+.slide-dissolve-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--slide-dissolve-duration, 420ms) ease-in-out;
+}
+
+.slide-dissolve-layer.current {
+  z-index: 1;
+}
+
+.slide-dissolve-layer.incoming {
+  z-index: 2;
+}
+
+.slide-dissolve-layer.visible {
+  opacity: 1;
+}
+
+.slide-dissolve-layer.dissolve-in {
+  mix-blend-mode: plus-lighter;
 }
 
 .google-slide-image {
