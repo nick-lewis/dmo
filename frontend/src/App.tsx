@@ -816,13 +816,6 @@ type ScriptAudioDisplayPayload = {
   script: string;
 };
 
-type SlideRecachePayload = {
-  errorCount: number;
-  recachedCount: number;
-  skippedCount: number;
-  totalTargets: number;
-};
-
 type ScriptEditorViewMode = "text" | "chips" | "slides" | "timeline";
 
 type ScriptSlidePreview = {
@@ -3662,10 +3655,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     "idle" | "loading" | "generating"
   >("idle");
   const [scriptAudioError, setScriptAudioError] = useState("");
-  const [slideRecacheStatus, setSlideRecacheStatus] = useState<
-    "idle" | "loading"
-  >("idle");
-  const [slideRecacheSummary, setSlideRecacheSummary] = useState("");
   const [experienceSnapshots, setExperienceSnapshots] = useState<
     ExperienceSnapshot[]
   >([]);
@@ -7297,41 +7286,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
-  async function recacheExperienceSlides() {
-    if (!experience || slideRecacheStatus === "loading") return;
-
-    const didSave = await flushEditorAutosave();
-    if (!didSave) return;
-
-    setSlideRecacheStatus("loading");
-    setSlideRecacheSummary("");
-    setError("");
-    try {
-      const payload = await apiFetch<SlideRecachePayload>(
-        `/api/experiences/${experience.id}/slides/recache/`,
-        {
-          method: "POST",
-        },
-      );
-      const pieces = [`${payload.recachedCount} recached`];
-      if (payload.skippedCount) {
-        pieces.push(`${payload.skippedCount} skipped`);
-      }
-      if (payload.errorCount) {
-        pieces.push(`${payload.errorCount} failed`);
-      }
-      setSlideRecacheSummary(pieces.join(" / "));
-    } catch (recacheError) {
-      setError(
-        recacheError instanceof Error
-          ? recacheError.message
-          : "Could not recache slides.",
-      );
-    } finally {
-      setSlideRecacheStatus("idle");
-    }
-  }
-
   function stopScriptAudioPreview(resetState = true) {
     scriptAudioPreviewRef.current?.pause();
     scriptAudioPreviewRef.current = null;
@@ -8021,19 +7975,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           {experience ? <p className="study-kicker">{experienceForm.title}</p> : null}
         </div>
         <div className="study-actions">
-          {slideRecacheSummary ? (
-            <span className="study-status">{slideRecacheSummary}</span>
-          ) : null}
           {user ? <span className="study-user">{user.displayName}</span> : null}
-          <button
-            className="header-action secondary"
-            disabled={!experience || slideRecacheStatus === "loading"}
-            onClick={() => void recacheExperienceSlides()}
-            title="Force refresh cached Google slide images used by static script slide markers in this experience."
-            type="button"
-          >
-            {slideRecacheStatus === "loading" ? "Recaching..." : "Recache slides"}
-          </button>
           <button
             className="header-action"
             disabled={!experience}
