@@ -3246,6 +3246,13 @@ def validate_action_config(action_type, value):
     if action_type == EventActionStep.ActionType.INTERACTIVE_CLEAR:
         return {}, ""
 
+    if action_type == EventActionStep.ActionType.PYTHON_NOTEBOOK:
+        try:
+            notebook = normalize_notebook(value.get("notebook"))
+        except ValueError as error:
+            return None, str(error)
+        return {"notebook": notebook}, ""
+
     if action_type == EventActionStep.ActionType.CHAT_AVAILABILITY:
         return {"enabled": value.get("enabled") is not False}, ""
 
@@ -3552,6 +3559,15 @@ def runtime_action_summary(action):
         return f"{action.get('interactiveId', 'app')}: {action.get('detail', 'not registered')}"
     if action_type == "interactive_clear":
         return "clear main-panel app"
+    if action_type == "python_notebook":
+        notebook = action.get("notebook")
+        if isinstance(notebook, dict):
+            cells = notebook.get("cells")
+            if isinstance(cells, list):
+                return f"load Python notebook ({len(cells)} cells)"
+        if action.get("runAll"):
+            return "Python notebook run all"
+        return "Python notebook"
     if action_type == "interactive_action_rejected":
         return f"{action.get('actionType', 'action')}: {action.get('reason', 'rejected')}"
     if action_type == "chat_availability":
@@ -3802,6 +3818,12 @@ def apply_runtime_actions_to_state(
     overlays = dict(overlays_value) if isinstance(overlays_value, dict) else {}
     notes_value = ui_runtime.get("notes")
     notes = list(notes_value) if isinstance(notes_value, list) else []
+    left_panels_value = ui_runtime.get("leftPanels")
+    left_panels = (
+        dict(left_panels_value)
+        if isinstance(left_panels_value, dict)
+        else {}
+    )
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     triggers = list(ui_runtime.get("triggers") or [])
@@ -3883,6 +3905,15 @@ def apply_runtime_actions_to_state(
         if action_type == "interactive_clear":
             interactive = None
             interactive_state = {}
+            continue
+
+        if action_type == "python_notebook":
+            try:
+                left_panels["pythonNotebook"] = normalize_notebook(
+                    action.get("notebook")
+                )
+            except ValueError:
+                pass
             continue
 
         if action_type == "chat_availability":
@@ -3984,6 +4015,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
+    ui_runtime["leftPanels"] = left_panels
     ui_runtime["notes"] = notes[-80:]
     ui_runtime["overlays"] = overlays
     ui_runtime["slide"] = slide
@@ -4284,6 +4316,38 @@ def run_action_sequence(
                     "type": "interactive_clear",
                     "eventId": str(event.id),
                     "stepId": step_id,
+                    **metadata,
+                }
+            )
+            continue
+
+        if action_type == EventActionStep.ActionType.PYTHON_NOTEBOOK:
+            try:
+                notebook = normalize_notebook(config.get("notebook"))
+            except ValueError as error:
+                actions.append(
+                    {
+                        "detail": str(error),
+                        "eventId": str(event.id),
+                        "source": source,
+                        "stepId": step_id,
+                        "type": "python_notebook_error",
+                        **metadata,
+                    }
+                )
+                continue
+
+            runtime_context[NOTEBOOK_CONTEXT_KEY] = notebook_context_snapshot(
+                notebook
+            )
+            actions.append(
+                {
+                    "eventId": str(event.id),
+                    "notebook": notebook,
+                    "source": source,
+                    "status": "loaded",
+                    "stepId": step_id,
+                    "type": "python_notebook",
                     **metadata,
                 }
             )

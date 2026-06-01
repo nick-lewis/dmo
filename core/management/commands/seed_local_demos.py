@@ -11,6 +11,12 @@ from core.management.commands.seed_interactive_timing_demo import (
 from core.management.commands.seed_interactive_timing_demo import (
     Command as TimingSeedCommand,
 )
+from core.management.commands.seed_python_notebook_code_coach import (
+    DEFAULT_USERNAMES as NOTEBOOK_DEFAULT_USERNAMES,
+)
+from core.management.commands.seed_python_notebook_code_coach import (
+    Command as NotebookSeedCommand,
+)
 
 
 class Command(BaseCommand):
@@ -26,7 +32,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         usernames = options.get("usernames") or sorted(
-            set(FRUIT_DEFAULT_USERNAMES + TIMING_DEFAULT_USERNAMES)
+            set(
+                FRUIT_DEFAULT_USERNAMES
+                + TIMING_DEFAULT_USERNAMES
+                + NOTEBOOK_DEFAULT_USERNAMES
+            )
         )
         User = get_user_model()
         users = list(User.objects.filter(username__in=usernames).order_by("id"))
@@ -36,13 +46,15 @@ class Command(BaseCommand):
 
         fruit_seed = FruitSeedCommand()
         timing_seed = TimingSeedCommand()
+        notebook_seed = NotebookSeedCommand()
 
         for user in users:
             fruit = fruit_seed.seed_for_user(user)
             timing = timing_seed.seed_for_user(user)
+            notebook = notebook_seed.seed_for_user(user)
             self.stdout.write(
                 self.style.SUCCESS(
                     f"Seeded local demos for {user.username}: "
-                    f"{fruit.id}, {timing.id}"
+                    f"{fruit.id}, {timing.id}, {notebook.id}"
                 )
             )

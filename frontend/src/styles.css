@@ -2539,6 +2539,12 @@ button {
   font-weight: 860;
 }
 
+.event-inline-note {
+  color: color-mix(in srgb, var(--page-ink) 68%, transparent);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
 .event-condition-editor input,
 .event-context-line input,
 .event-context-line select,

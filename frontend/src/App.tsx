@@ -101,6 +101,7 @@ const eventActionOptions = [
   { id: "interactive", label: "Main panel app" },
   { id: "interactive_update", label: "Update app" },
   { id: "interactive_clear", label: "Clear app" },
+  { id: "python_notebook", label: "Notebook" },
   { id: "chat_availability", label: "Chat" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "goto_event", label: "Go to event" },
@@ -250,6 +251,7 @@ type EventActionStep = {
     | "interactive"
     | "interactive_update"
     | "interactive_clear"
+    | "python_notebook"
     | "chat_availability"
     | "set_ui_trigger"
     | "goto_event"
@@ -1410,6 +1412,9 @@ function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_clear") {
     return {};
   }
+  if (actionType === "python_notebook") {
+    return { notebook: defaultPythonNotebookState() };
+  }
   if (actionType === "chat_availability") {
     return { enabled: false };
   }
@@ -1459,6 +1464,7 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive") return "Show main-panel app";
   if (actionType === "interactive_update") return "Update app";
   if (actionType === "interactive_clear") return "Clear main-panel app";
+  if (actionType === "python_notebook") return "Load Python notebook";
   if (actionType === "chat_availability") return "Set chat availability";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
@@ -1559,6 +1565,9 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_clear") {
     return "Clear the current main-panel app";
   }
+  if (actionType === "python_notebook") {
+    return "Load starter cells into the Python notebook panel";
+  }
   if (actionType === "chat_availability") {
     return "Enable or block learner typing";
   }
@@ -1596,6 +1605,7 @@ function eventActionToneClass(actionType: EventActionStep["actionType"]) {
     actionType === "interactive" ||
     actionType === "interactive_update" ||
     actionType === "interactive_clear" ||
+    actionType === "python_notebook" ||
     actionType === "chat_availability"
   ) {
     return "ui";
@@ -1927,6 +1937,7 @@ function runtimeActionText(action: Record<string, unknown>) {
     return "clear main-panel app";
   }
   if (type === "python_notebook") {
+    if (action.status === "loaded" || action.notebook) return "load Python notebook";
     if (action.runAll) return "python notebook run all";
     return `python ${compactRuntimeValue(action.cellId, "notebook")}`;
   }
@@ -2308,6 +2319,10 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
   }
   if (step.actionType === "interactive_clear") {
     return "Clear main-panel app";
+  }
+  if (step.actionType === "python_notebook") {
+    const notebook = normalizePythonNotebookState(step.config.notebook);
+    return `Load Python notebook (${notebook.cells.length} cells)`;
   }
   if (step.actionType === "chat_availability") {
     return step.config.enabled === false ? "Chat off" : "Chat on";
@@ -7421,6 +7436,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </>
         ) : null}
 
+        {step.actionType === "python_notebook" ? (
+          <div className="event-context-line single-value">
+            <span className="event-detail-label">NOTEBOOK</span>
+            <span className="event-inline-note">
+              {normalizePythonNotebookState(step.config.notebook).cells.length} cells
+            </span>
+          </div>
+        ) : null}
+
         {step.actionType === "chat_availability" ? (
           <div className="event-context-line single-value">
             <span className="event-detail-label">CHAT</span>
@@ -8351,6 +8375,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                 </select>
                               </div>
                             </>
+                          ) : null}
+
+                          {step.actionType === "python_notebook" ? (
+                            <div className="event-context-line single-value">
+                              <span className="event-detail-label">NOTEBOOK</span>
+                              <span className="event-inline-note">
+                                {
+                                  normalizePythonNotebookState(
+                                    step.config.notebook,
+                                  ).cells.length
+                                } cells
+                              </span>
+                            </div>
                           ) : null}
 
                           {step.actionType === "chat_availability" ? (
@@ -10441,6 +10478,10 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (action.type === "interactive_clear") {
         setRuntimeInteractive(null);
         setRuntimeInteractiveState({});
+      }
+
+      if (action.type === "python_notebook" && action.notebook) {
+        setPythonNotebook(normalizePythonNotebookState(action.notebook));
       }
 
       if (action.type === "chat_availability") {

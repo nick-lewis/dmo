@@ -137,6 +137,7 @@ class EventActionStep(models.Model):
         INTERACTIVE = "interactive", "Interactive"
         INTERACTIVE_UPDATE = "interactive_update", "Update interactive"
         INTERACTIVE_CLEAR = "interactive_clear", "Clear interactive"
+        PYTHON_NOTEBOOK = "python_notebook", "Python notebook"
         CHAT_AVAILABILITY = "chat_availability", "Chat availability"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
         GOTO_EVENT = "goto_event", "Go to event"

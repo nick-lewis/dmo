@@ -622,6 +622,60 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertIn("result: 5", context_notebook["terminal"])
         self.assertEqual(payload["actions"][0]["type"], "python_notebook")
 
+    def test_python_notebook_event_action_loads_panel_and_context(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start notebook",
+            slug="start-notebook",
+            is_start=True,
+        )
+        notebook = {
+            "activeCellId": "code-task",
+            "cells": [
+                {
+                    "id": "md-task",
+                    "kind": "markdown",
+                    "source": "### Task",
+                },
+                {
+                    "id": "code-task",
+                    "kind": "code",
+                    "source": "answer = 42",
+                },
+            ],
+            "executionCount": 0,
+        }
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.PYTHON_NOTEBOOK,
+            config={"notebook": notebook},
+            label="Load starter notebook",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/start-event/",
+            data=json.dumps({"uiState": {}}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["actions"][0]["type"], "python_notebook")
+        session.refresh_from_db()
+        saved_notebook = session.runtime_state["uiRuntime"]["leftPanels"][
+            "pythonNotebook"
+        ]
+        self.assertEqual(saved_notebook["activeCellId"], "code-task")
+        self.assertIn(
+            "answer = 42",
+            session.runtime_context["python_notebook"]["cells"][1]["source"],
+        )
+
     def test_python_notebook_run_preserves_prior_code_state_for_target_cell(self):
         session = TutoringSession.objects.create(
             user=self.user,
@@ -1357,6 +1411,7 @@ class SeedLocalDemosCommandTests(TestCase):
         )
         self.assertIn("fruit-test", slugs)
         self.assertIn("interactive-timing-demo", slugs)
+        self.assertIn("python-notebook-code-coach", slugs)
 
 
 class RuntimeContextActionTests(TestCase):
