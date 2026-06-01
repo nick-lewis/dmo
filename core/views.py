@@ -25,12 +25,14 @@ from .audio_cache import (
     OPENAI_CHAT_COMPLETIONS_URL,
     audio_duration_seconds,
     compute_script_audio_cache_key,
+    compute_script_audio_display_key,
     get_or_create_script_audio,
     get_or_create_script_audio_words,
     get_or_create_voice_sample,
     normalize_transcription_words,
     openai_error_message,
     script_audio_audio_path,
+    script_audio_display_path,
     script_audio_metadata_path,
     script_audio_words_path,
     voice_sample_audio_path,
@@ -220,6 +222,75 @@ def interactive_id_error(interactive_id):
 
 def script_word_count(text):
     return len(SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text)))
+
+
+def load_script_audio_display_text(script):
+    display_key = compute_script_audio_display_key(script)
+    display_path = script_audio_display_path(display_key)
+    if not display_path.exists():
+        return ""
+
+    try:
+        payload = json.loads(display_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+
+    display_text = payload.get("displayText")
+    if not isinstance(display_text, str):
+        return ""
+    return display_text.strip()
+
+
+def runtime_script_audio_display_text(script, expected_word_count=0):
+    display_text = load_script_audio_display_text(script)
+    if not display_text:
+        return ""
+
+    expected_count = expected_word_count or script_word_count(script)
+    if expected_count and script_word_count(display_text) != expected_count:
+        return ""
+    return display_text
+
+
+def save_script_audio_display_text(script, display_text):
+    display_key = compute_script_audio_display_key(script)
+    display_path = script_audio_display_path(display_key)
+    normalized_script = str(script or "").strip()
+    normalized_display = str(display_text or "").strip()
+
+    if not normalized_display or normalized_display == normalized_script:
+        try:
+            display_path.unlink()
+        except FileNotFoundError:
+            pass
+        return ""
+
+    display_path.parent.mkdir(parents=True, exist_ok=True)
+    display_path.write_text(
+        json.dumps(
+            {
+                "displayText": normalized_display,
+                "version": "script-audio-display-v1",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return normalized_display
+
+
+def script_audio_display_payload(item):
+    return {
+        "displayBaseText": item.get("displayBaseText", ""),
+        "displayExpectedWordCount": item.get("displayExpectedWordCount", 0),
+        "displayText": item.get("displayText", ""),
+        "displayWordCount": item.get("displayWordCount", 0),
+        "hasDisplayTranscript": bool(item.get("hasDisplayTranscript")),
+        "id": item.get("id", ""),
+        "script": item.get("script", ""),
+    }
 
 
 def parse_script_marker_args(args_text):
@@ -592,11 +663,13 @@ def cached_script_audio_payload(session, script, script_cues=None):
             )
         except (OSError, ValueError):
             script_words = []
+    display_text = runtime_script_audio_display_text(script, len(script_words))
 
     payload = {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/",
         "cached": True,
         "durationSeconds": audio_duration_seconds(audio_path),
+        "displayText": display_text,
         "messageId": "",
         "realtimeModel": tutor_settings.realtime_model,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
@@ -2043,8 +2116,12 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     cached = audio_path.exists()
     words_cached = words_path.exists()
     can_generate = script_is_static_for_audio(raw_text)
+    display_key = compute_script_audio_display_key(script)
+    display_text = load_script_audio_display_text(script)
+    display_base_text = script
     timing_preview = []
     timing_word_count = 0
+    timing_words = []
     timed_marker_count = 0
     if words_cached:
         try:
@@ -2053,8 +2130,11 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
             )
         except (OSError, ValueError):
             words = []
+        timing_words = words
         timing_word_count = len(words)
         timing_preview = words[:12]
+        if words:
+            display_base_text = " ".join(word["word"] for word in words)
         timed_marker_count = sum(
             1
             for marker in script_cues_with_word_times(markers, words)
@@ -2067,6 +2147,11 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "characterCount": len(script),
         "cached": cached,
         "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
+        "displayBaseText": display_base_text,
+        "displayExpectedWordCount": len(timing_words) or script_word_count(script),
+        "displayKey": display_key,
+        "displayText": display_text,
+        "displayWordCount": script_word_count(display_text) if display_text else 0,
         "experienceId": str(experience.id),
         "generationReason": ""
         if can_generate
@@ -2081,6 +2166,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "source": source,
         "sourceCount": 1,
         "sources": [source],
+        "hasDisplayTranscript": bool(display_text),
         "timedMarkerCount": timed_marker_count,
         "timingPreview": timing_preview,
         "timingWordCount": timing_word_count,
@@ -5564,6 +5650,62 @@ def experience_script_audio(request, experience_id):
     )
 
 
+@require_http_methods(["GET", "PUT"])
+def script_audio_display_transcript(request, experience_id, script_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    item = next(
+        (
+            candidate
+            for candidate in collect_experience_script_audio_items(experience)
+            if candidate["id"] == str(script_id)
+        ),
+        None,
+    )
+    if not item:
+        return JsonResponse({"detail": "Script audio item not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse(script_audio_display_payload(item))
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    display_text = str(data.get("displayText", "")).strip()
+    expected_word_count = int(item.get("displayExpectedWordCount") or 0)
+    display_word_count = script_word_count(display_text)
+    if display_text and expected_word_count and display_word_count != expected_word_count:
+        return JsonResponse(
+            {
+                "detail": (
+                    "Display transcript must keep the same number of timed word slots "
+                    f"({expected_word_count}); found {display_word_count}."
+                ),
+                "displayExpectedWordCount": expected_word_count,
+                "displayWordCount": display_word_count,
+            },
+            status=400,
+        )
+
+    save_script_audio_display_text(item.get("script", ""), display_text)
+    refreshed_item = next(
+        (
+            candidate
+            for candidate in collect_experience_script_audio_items(experience)
+            if candidate["id"] == str(script_id)
+        ),
+        item,
+    )
+    return JsonResponse(script_audio_display_payload(refreshed_item))
+
+
 @require_POST
 def recache_experience_slides(request, experience_id):
     auth_response = auth_required_response(request)
@@ -7442,6 +7584,7 @@ def create_message_audio(request, session_id, message_id):
         return JsonResponse({"detail": error.message}, status=error.status_code)
 
     duration_seconds = audio_duration_seconds(recording.audio_path)
+    display_text = runtime_script_audio_display_text(script)
     script_words = []
     script_cues = metadata.get("scriptCues", [])
     timing_warning = ""
@@ -7454,6 +7597,7 @@ def create_message_audio(request, session_id, message_id):
             safety_identifier=hash_safety_identifier(request.user),
             script=script,
         )
+        display_text = runtime_script_audio_display_text(script, len(script_words))
         script_cues = script_cues_with_word_times(script_cues, script_words)
         next_metadata = dict(metadata)
         next_metadata["scriptCues"] = script_cues
@@ -7462,6 +7606,7 @@ def create_message_audio(request, session_id, message_id):
             {
                 "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
                 "cached": recording.cached,
+                "displayText": display_text,
                 "durationSeconds": duration_seconds,
                 "messageId": str(message.id),
                 "realtimeModel": realtime_model,
@@ -7481,6 +7626,7 @@ def create_message_audio(request, session_id, message_id):
         {
             "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
             "cached": recording.cached,
+            "displayText": display_text,
             "durationSeconds": duration_seconds,
             "messageId": str(message.id),
             "realtimeModel": realtime_model,

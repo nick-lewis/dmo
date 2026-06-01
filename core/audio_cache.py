@@ -13,6 +13,7 @@ OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 OPENAI_AUDIO_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v2"
 SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v1"
+SCRIPT_AUDIO_DISPLAY_VERSION = "script-audio-display-v1"
 SCRIPT_AUDIO_TIMING_VERSION = "script-audio-timing-v1"
 
 
@@ -71,6 +72,10 @@ def script_audio_audio_path(cache_key):
 
 def script_audio_metadata_path(cache_key):
     return script_audio_cache_dir() / f"{cache_key}.json"
+
+
+def script_audio_display_path(display_key):
+    return script_audio_cache_dir() / f"{display_key}.display.json"
 
 
 def safe_cache_part(value):
@@ -182,6 +187,15 @@ def compute_script_audio_cache_key(
         "version": SCRIPT_AUDIO_CACHE_VERSION,
         "voice": voice,
         "voiceInstructions": voice_instructions.strip(),
+    }
+    cache_source = json.dumps(cache_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(cache_source.encode("utf-8")).hexdigest()[:32]
+
+
+def compute_script_audio_display_key(script):
+    cache_payload = {
+        "script": str(script or "").strip(),
+        "version": SCRIPT_AUDIO_DISPLAY_VERSION,
     }
     cache_source = json.dumps(cache_payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(cache_source.encode("utf-8")).hexdigest()[:32]

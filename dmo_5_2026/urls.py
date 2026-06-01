@@ -44,6 +44,7 @@ from core.views import (
     run_session_conversation_checks,
     run_session_event,
     run_start_event,
+    script_audio_display_transcript,
     serve_script_audio,
     serve_google_slide_image,
     serve_voice_sample_audio,
@@ -126,6 +127,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/script-audio/",
         experience_script_audio,
         name="experience-script-audio",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/script-audio/<str:script_id>/display/",
+        script_audio_display_transcript,
+        name="script-audio-display-transcript",
     ),
     path(
         "api/experiences/<uuid:experience_id>/slides/recache/",

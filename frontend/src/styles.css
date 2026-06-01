@@ -1060,6 +1060,67 @@ button {
   white-space: normal;
 }
 
+.script-audio-display-editor {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--page-bg) 48%, var(--panel-bg-strong));
+}
+
+.script-audio-display-head,
+.script-audio-display-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.script-audio-display-head strong {
+  color: color-mix(in srgb, var(--page-ink) 78%, transparent);
+  font-size: 0.63rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.script-audio-display-head span {
+  color: var(--muted-ink);
+  font-size: 0.61rem;
+  font-weight: 760;
+}
+
+.script-audio-display-head .script-audio-word-count-error {
+  color: #b45435;
+}
+
+.script-audio-display-editor textarea {
+  width: 100%;
+  min-height: 58px;
+  max-height: 150px;
+  padding: 6px 7px;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 13%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 82%, transparent);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.script-audio-display-editor textarea:focus {
+  outline: 0;
+  border-color: color-mix(in srgb, var(--accent-2) 35%, var(--panel-soft-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+.script-audio-display-actions {
+  justify-content: flex-start;
+}
+
 .script-audio-timing-preview,
 .script-audio-no-timing {
   display: block;

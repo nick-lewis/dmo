@@ -749,6 +749,7 @@ type VoiceSamplePayload = {
 type MessageAudioPayload = {
   audioUrl: string;
   cached: boolean;
+  displayText?: string;
   durationSeconds?: number | null;
   messageId: string;
   realtimeModel: RealtimeModelId;
@@ -766,8 +767,13 @@ type ScriptAudioItem = {
   cacheKey: string;
   canGenerate: boolean;
   characterCount?: number;
+  displayBaseText?: string;
   durationSeconds: number | null;
+  displayExpectedWordCount?: number;
+  displayText?: string;
+  displayWordCount?: number;
   generationReason?: string;
+  hasDisplayTranscript?: boolean;
   id: string;
   markerCount?: number;
   preview: string;
@@ -791,6 +797,16 @@ type ScriptAudioPayload = {
   generated?: number;
   scripts: ScriptAudioItem[];
   totalScripts: number;
+};
+
+type ScriptAudioDisplayPayload = {
+  displayBaseText: string;
+  displayExpectedWordCount: number;
+  displayText: string;
+  displayWordCount: number;
+  hasDisplayTranscript: boolean;
+  id: string;
+  script: string;
 };
 
 type SlideRecachePayload = {
@@ -977,6 +993,10 @@ function inlineFieldWidthStyle(
 function countScriptWords(text: string) {
   const words = text.trim().match(/[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g);
   return words?.length ?? 0;
+}
+
+function countDisplayTranscriptWords(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function scriptMarkerLabel(type: string) {
@@ -2356,6 +2376,7 @@ function cachedScriptAudioFromMessage(
   return {
     audioUrl,
     cached: Boolean(audio.cached),
+    displayText: typeof audio.displayText === "string" ? audio.displayText : "",
     durationSeconds:
       typeof audio.durationSeconds === "number" &&
       Number.isFinite(audio.durationSeconds)
@@ -2374,6 +2395,11 @@ function cachedScriptAudioFromMessage(
     ttsModel: typeof audio.ttsModel === "string" ? audio.ttsModel : "",
     voice: voice as RealtimeVoiceId,
   };
+}
+
+function displayTextFromScriptAudioMessage(message: ChatMessage) {
+  const displayText = cachedScriptAudioFromMessage(message)?.displayText?.trim();
+  return displayText || message.content;
 }
 
 function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
@@ -7180,6 +7206,53 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function saveScriptAudioDisplayTranscript(
+    scriptId: string,
+    displayText: string,
+  ) {
+    if (!experience) {
+      throw new Error("Experience is not loaded.");
+    }
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) {
+      throw new Error("Could not save the current editor draft.");
+    }
+
+    setScriptAudioError("");
+    try {
+      const payload = await apiFetch<ScriptAudioDisplayPayload>(
+        `/api/experiences/${experience.id}/script-audio/${scriptId}/display/`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ displayText }),
+        },
+      );
+      setScriptAudioItems((current) =>
+        current.map((item) =>
+          item.id === scriptId
+            ? {
+                ...item,
+                displayBaseText: payload.displayBaseText,
+                displayExpectedWordCount: payload.displayExpectedWordCount,
+                displayText: payload.displayText,
+                displayWordCount: payload.displayWordCount,
+                hasDisplayTranscript: payload.hasDisplayTranscript,
+              }
+            : item,
+        ),
+      );
+      return payload;
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save display transcript.";
+      setScriptAudioError(message);
+      throw saveError;
+    }
+  }
+
   async function recacheExperienceSlides() {
     if (!experience || slideRecacheStatus === "loading") return;
 
@@ -8018,6 +8091,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 playingId={playingScriptAudioId}
                 playbackRate={scriptAudioPlaybackRate}
                 onPlaybackRateChange={setScriptAudioPlaybackRate}
+                onSaveDisplayTranscript={saveScriptAudioDisplayTranscript}
                 status={scriptAudioStatus}
               />
             </section>
@@ -12183,8 +12257,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   function streamScriptMessageText(
     message: ChatMessage,
     durationMs: number,
+    displayText = "",
   ) {
-    const fullText = message.content;
+    const fullText = displayText.trim() || message.content;
     if (!fullText.trim()) return Promise.resolve();
 
     setMessages((current) =>
@@ -12388,11 +12463,17 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     audioUrl: string,
     cueValue?: unknown,
     durationSeconds?: number | null,
+    displayText = "",
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
-    const durationMs = scriptStreamDurationMs(message.content);
-    const fallbackDurationSeconds = durationMs / 1000;
+    const messageDisplayText =
+      displayText.trim() || displayTextFromScriptAudioMessage(message);
+    const durationMs = scriptStreamDurationMs(messageDisplayText);
+    const fallbackDurationSeconds =
+      durationSeconds && Number.isFinite(durationSeconds)
+        ? durationSeconds
+        : durationMs / 1000;
 
     const allCues = scriptCuesFromMessage(message, cueValue);
     const scriptActionOffsetMs = tutorForm.scriptActionOffsetMs;
@@ -12409,7 +12490,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         ),
     );
     await Promise.all([
-      streamScriptMessageText(message, durationMs),
+      streamScriptMessageText(message, durationMs, messageDisplayText),
       playPreparedScriptAudio(
         audio,
         cues,
@@ -12419,13 +12500,15 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     ]);
   }
 
-  function revealScriptMessageText(message: ChatMessage) {
+  function revealScriptMessageText(message: ChatMessage, fallbackDisplayText = "") {
+    const displayText =
+      fallbackDisplayText.trim() || displayTextFromScriptAudioMessage(message);
     setMessages((current) =>
       current.map((currentMessage) =>
         currentMessage.id === message.id
           ? {
               ...currentMessage,
-              content: message.content,
+              content: displayText,
               metadata: {
                 ...currentMessage.metadata,
                 scriptHidden: false,
@@ -12449,8 +12532,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       if (playedScriptMessageIdsRef.current.has(message.id)) continue;
       playedScriptMessageIdsRef.current.add(message.id);
 
+      let payload: MessageAudioPayload | null = null;
       try {
-        let payload = cachedScriptAudioFromMessage(message);
+        payload = cachedScriptAudioFromMessage(message);
         const messageCues = scriptCuesFromMessage(message);
         const needsAlignedTiming =
           !payload?.scriptWords?.length ||
@@ -12485,10 +12569,11 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           payload.audioUrl,
           payload.scriptCues,
           payload.durationSeconds,
+          payload.displayText,
         );
       } catch (error) {
         scriptTextSkipRef.current?.();
-        revealScriptMessageText(message);
+        revealScriptMessageText(message, payload?.displayText);
         const detail =
           error instanceof Error
             ? error.message
@@ -16072,6 +16157,7 @@ function scriptAudioArtifactTags(item: ScriptAudioItem) {
     item.ttsModel ? `tts ${item.ttsModel}` : "",
     item.timingModel ? `timing ${item.timingModel}` : "",
     item.realtimeModel ? `chat ${item.realtimeModel}` : "",
+    item.hasDisplayTranscript ? "display override" : "",
     item.markerCount ? `${item.markerCount} timed actions` : "",
     item.timedMarkerCount ? `${item.timedMarkerCount} aligned` : "",
     item.characterCount ? `${item.characterCount} chars` : "",
@@ -16091,6 +16177,18 @@ function scriptAudioTimingPreviewText(item: ScriptAudioItem) {
     .join(" / ");
 }
 
+function scriptAudioSpokenText(item: ScriptAudioItem) {
+  return item.script || item.preview || "";
+}
+
+function scriptAudioDisplayBaseText(item: ScriptAudioItem) {
+  return item.displayBaseText?.trim() || scriptAudioSpokenText(item);
+}
+
+function scriptAudioDisplayText(item: ScriptAudioItem) {
+  return item.displayText?.trim() || scriptAudioDisplayBaseText(item);
+}
+
 function ScriptAudioPanel({
   error,
   isBusy,
@@ -16100,6 +16198,7 @@ function ScriptAudioPanel({
   onPlay,
   onRegenerateAll,
   onRegenerateOne,
+  onSaveDisplayTranscript,
   onStop,
   playingId,
   playbackRate,
@@ -16114,6 +16213,10 @@ function ScriptAudioPanel({
   onPlay: (item: ScriptAudioItem) => void;
   onRegenerateAll: () => void;
   onRegenerateOne: (scriptId: string) => void;
+  onSaveDisplayTranscript: (
+    scriptId: string,
+    displayText: string,
+  ) => Promise<ScriptAudioDisplayPayload>;
   onStop: () => void;
   playingId: string;
   playbackRate: number;
@@ -16122,6 +16225,8 @@ function ScriptAudioPanel({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState("");
+  const [displayDrafts, setDisplayDrafts] = useState<Record<string, string>>({});
+  const [savingDisplayId, setSavingDisplayId] = useState("");
   const readyCount = items.filter(scriptAudioItemIsReady).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
   const generatableCount = items.filter((item) => item.canGenerate).length;
@@ -16237,6 +16342,27 @@ function ScriptAudioPanel({
             const timingPreviewText = scriptAudioTimingPreviewText(item);
             const sources = scriptAudioSourceList(item);
             const sourceCount = item.sourceCount ?? sources.length;
+            const spokenText = scriptAudioSpokenText(item);
+            const displayBaseText = scriptAudioDisplayBaseText(item);
+            const persistedDisplayText = scriptAudioDisplayText(item);
+            const displayDraft =
+              displayDrafts[item.id] ?? persistedDisplayText;
+            const expectedDisplayWordCount =
+              item.displayExpectedWordCount ||
+              item.timingWordCount ||
+              item.wordCount ||
+              0;
+            const displayDraftWordCount = countDisplayTranscriptWords(displayDraft);
+            const displayWordCountMatches =
+              !expectedDisplayWordCount ||
+              displayDraftWordCount === expectedDisplayWordCount;
+            const displayHasChanges =
+              displayDraft.trim() !== persistedDisplayText.trim();
+            const canSaveDisplay =
+              !savingDisplayId &&
+              displayHasChanges &&
+              displayWordCountMatches;
+            const isSavingDisplay = savingDisplayId === item.id;
             const sourceLabel =
               sourceCount > 1
                 ? `${item.source} +${sourceCount - 1}`
@@ -16336,7 +16462,11 @@ function ScriptAudioPanel({
                       </span>
                       <span>
                         <strong>Subtitle source</strong>
-                        authored script
+                        {item.hasDisplayTranscript
+                          ? "display override"
+                          : item.timingWordCount
+                            ? "timed words"
+                            : "spoken script"}
                       </span>
                     </div>
                     {artifactTags.length ? (
@@ -16357,8 +16487,98 @@ function ScriptAudioPanel({
                       </div>
                     ) : null}
                     <p className="script-audio-script-text">
-                      {item.script || preview}
+                      {spokenText || preview}
                     </p>
+                    <div className="script-audio-display-editor">
+                      <div className="script-audio-display-head">
+                        <strong>Displayed text</strong>
+                        <span
+                          className={
+                            displayWordCountMatches
+                              ? ""
+                              : "script-audio-word-count-error"
+                          }
+                        >
+                          {displayDraftWordCount}/{expectedDisplayWordCount || "?"} words
+                        </span>
+                      </div>
+                      <textarea
+                        aria-label={`Displayed transcript for ${item.source}`}
+                        onChange={(event) =>
+                          setDisplayDrafts((current) => ({
+                            ...current,
+                            [item.id]: event.target.value,
+                          }))
+                        }
+                        rows={3}
+                        value={displayDraft}
+                      />
+                      <div className="script-audio-display-actions">
+                        <button
+                          className="header-action"
+                          disabled={!canSaveDisplay || isSavingDisplay}
+                          onClick={() => {
+                            setSavingDisplayId(item.id);
+                            void onSaveDisplayTranscript(item.id, displayDraft)
+                              .then((payload) => {
+                                setDisplayDrafts((current) => ({
+                                  ...current,
+                                  [item.id]:
+                                    payload.displayText ||
+                                    payload.displayBaseText ||
+                                    displayBaseText ||
+                                    preview,
+                                }));
+                              })
+                              .catch(() => null)
+                              .finally(() => setSavingDisplayId(""));
+                          }}
+                          title={
+                            displayWordCountMatches
+                              ? "Save the on-screen transcript without changing the spoken script or audio."
+                              : "The displayed transcript must keep the same word count as the timed script."
+                          }
+                          type="button"
+                        >
+                          {isSavingDisplay ? "Saving" : "Save display"}
+                        </button>
+                        <button
+                          className="header-action secondary"
+                          disabled={
+                            isSavingDisplay ||
+                            (!item.hasDisplayTranscript &&
+                              displayDraft.trim() === displayBaseText.trim())
+                          }
+                          onClick={() => {
+                            const nextText = displayBaseText || preview;
+                            setDisplayDrafts((current) => ({
+                              ...current,
+                              [item.id]: nextText,
+                            }));
+                            if (item.hasDisplayTranscript) {
+                              setSavingDisplayId(item.id);
+                              void onSaveDisplayTranscript(item.id, "")
+                                .then((payload) => {
+                                  setDisplayDrafts((current) => ({
+                                    ...current,
+                                    [item.id]:
+                                      payload.displayText ||
+                                      payload.displayBaseText ||
+                                      displayBaseText ||
+                                      preview,
+                                  }));
+                                })
+                                .catch(() => null)
+                                .finally(() => setSavingDisplayId(""));
+                            }
+                          }}
+                          title="Use the aligned audio words as the on-screen text."
+                          type="button"
+                        >
+                          Use timed words
+                        </button>
+                      </div>
+                    </div>
                     {timingPreviewText ? (
                       <code className="script-audio-timing-preview">
                         {timingPreviewText}
@@ -18170,7 +18390,9 @@ function ChatPanelContent({
                   ? assistantDisplayName
                   : "System";
             const body =
-              message.content ||
+              (message.metadata?.streaming
+                ? message.content
+                : displayTextFromScriptAudioMessage(message)) ||
               (message.metadata?.streaming ? "..." : "");
 
             return (
