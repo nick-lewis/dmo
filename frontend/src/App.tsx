@@ -15200,6 +15200,12 @@ function ScriptActionEditor({
                 scriptInsertionIndex === offset + sliceStart + tokenEnd
                   ? "cursor"
                   : "",
+                dropInsertionIndex === offset + sliceStart + tokenStart
+                  ? "drop-before"
+                  : "",
+                dropInsertionIndex === offset + sliceStart + tokenEnd
+                  ? "drop-after"
+                  : "",
                 dropInsertionIndex === offset + sliceStart + tokenStart ||
                 dropInsertionIndex === offset + sliceStart + tokenEnd
                   ? "active"

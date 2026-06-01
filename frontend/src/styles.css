@@ -2637,7 +2637,6 @@ button {
 }
 
 .script-marker-chip.dragging {
-  opacity: 0.46;
   cursor: grabbing;
 }
 
@@ -2671,21 +2670,24 @@ button {
 }
 
 .script-action-editor.dragging-marker .script-chip-drop-target.visible {
-  width: 0.38rem;
-  margin: 0 1px;
-  background: color-mix(in srgb, var(--accent-2) 40%, transparent);
-  opacity: 0.34;
-  pointer-events: auto;
+  width: 0;
+  margin: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .script-action-editor.dragging-marker .script-chip-drop-target.active {
-  width: 0.58rem;
-  background: color-mix(in srgb, var(--accent) 74%, var(--accent-2));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 66%, transparent);
+  position: relative;
+  width: 0;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
   opacity: 1;
 }
 
 .script-chip-word-drop-zone {
+  position: relative;
   border-radius: 3px;
   cursor: text;
 }
@@ -2696,12 +2698,36 @@ button {
 }
 
 .script-action-editor.dragging-marker .script-chip-word-drop-zone {
-  outline: 1px solid transparent;
+  outline: 0;
 }
 
 .script-action-editor.dragging-marker .script-chip-word-drop-zone.active {
-  background: color-mix(in srgb, var(--accent-soft) 56%, transparent);
-  outline-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: transparent;
+  outline: 0;
+}
+
+.script-action-editor.dragging-marker .script-chip-drop-target.active::after,
+.script-action-editor.dragging-marker .script-chip-word-drop-zone.active.drop-before::before,
+.script-action-editor.dragging-marker .script-chip-word-drop-zone.active.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 0.06em;
+  bottom: 0.06em;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 76%, var(--accent-2));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 58%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.script-action-editor.dragging-marker .script-chip-drop-target.active::after,
+.script-action-editor.dragging-marker .script-chip-word-drop-zone.active.drop-before::before {
+  left: -1px;
+}
+
+.script-action-editor.dragging-marker .script-chip-word-drop-zone.active.drop-after::after {
+  right: -1px;
 }
 
 .script-marker-chip-icon {
