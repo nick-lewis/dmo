@@ -85,7 +85,7 @@ const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
 const scriptTextStreamMaxMs = 16000;
 const scriptImmediateCueProgress = 0.001;
-const slideDissolveDurationMs = 420;
+const slideDissolveDurationMs = 720;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -15632,10 +15632,11 @@ function slideRenderKey(slide: ResolvedSlide) {
 }
 
 function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
-  const [currentSlide, setCurrentSlide] = useState<ResolvedSlide | null>(slide);
+  const [currentSlide, setCurrentSlide] = useState<ResolvedSlide | null>(null);
   const [incomingSlide, setIncomingSlide] = useState<ResolvedSlide | null>(null);
   const [isDissolving, setIsDissolving] = useState(false);
-  const currentKeyRef = useRef(slideRenderKey(slide));
+  const [currentVisible, setCurrentVisible] = useState(false);
+  const currentKeyRef = useRef("");
   const timeoutRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
 
@@ -15657,15 +15658,40 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
   useEffect(() => {
     const nextKey = slideRenderKey(slide);
     if (!currentKeyRef.current) {
-      currentKeyRef.current = nextKey;
-      setCurrentSlide(slide);
-      setIncomingSlide(null);
-      setIsDissolving(false);
-      return;
+      let cancelled = false;
+      clearPendingTransition();
+
+      const fadeInInitialSlide = () => {
+        if (cancelled) return;
+
+        currentKeyRef.current = nextKey;
+        setCurrentSlide(slide);
+        setIncomingSlide(null);
+        setIsDissolving(false);
+        setCurrentVisible(false);
+        frameRef.current = window.requestAnimationFrame(() => {
+          frameRef.current = window.requestAnimationFrame(() => {
+            if (!cancelled) {
+              setCurrentVisible(true);
+            }
+          });
+        });
+      };
+
+      const image = new Image();
+      image.onload = fadeInInitialSlide;
+      image.onerror = fadeInInitialSlide;
+      image.src = slide.imageUrl;
+
+      return () => {
+        cancelled = true;
+        clearPendingTransition();
+      };
     }
 
     if (nextKey === currentKeyRef.current) {
       setCurrentSlide(slide);
+      setCurrentVisible(true);
       return;
     }
 
@@ -15677,6 +15703,7 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
 
       setIncomingSlide(slide);
       setIsDissolving(false);
+      setCurrentVisible(true);
       frameRef.current = window.requestAnimationFrame(() => {
         frameRef.current = window.requestAnimationFrame(() => {
           if (!cancelled) {
@@ -15691,6 +15718,7 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
         setCurrentSlide(slide);
         setIncomingSlide(null);
         setIsDissolving(false);
+        setCurrentVisible(true);
         timeoutRef.current = null;
       }, slideDissolveDurationMs + 80);
     };
@@ -15721,7 +15749,7 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
             className={[
               "slide-dissolve-layer",
               "current",
-              incomingSlide && isDissolving ? "" : "visible",
+              currentVisible && !(incomingSlide && isDissolving) ? "visible" : "",
             ]
               .filter(Boolean)
               .join(" ")}
