@@ -53,11 +53,26 @@ type DraggingHandlerAction = {
   ownerKind: HandlerActionOwnerKind;
 };
 
+type DropPosition = "before" | "after";
+
+type EventStepDropTarget = {
+  position: DropPosition;
+  stepId: string;
+};
+
 type ConversationItemKind = HandlerActionOwnerKind;
 
 type DraggingConversationItem = {
   itemId: string;
   itemKind: ConversationItemKind;
+};
+
+type ConversationItemDropTarget = DraggingConversationItem & {
+  position: DropPosition;
+};
+
+type HandlerActionDropTarget = DraggingHandlerAction & {
+  position: DropPosition;
 };
 
 const leftPanels = [
@@ -3604,10 +3619,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const [eventSearch, setEventSearch] = useState("");
   const [draggingEventId, setDraggingEventId] = useState("");
   const [draggingStepId, setDraggingStepId] = useState("");
+  const [eventStepDropTarget, setEventStepDropTarget] =
+    useState<EventStepDropTarget | null>(null);
   const [draggingConversationItem, setDraggingConversationItem] =
     useState<DraggingConversationItem | null>(null);
+  const [conversationItemDropTarget, setConversationItemDropTarget] =
+    useState<ConversationItemDropTarget | null>(null);
   const [draggingHandlerAction, setDraggingHandlerAction] =
     useState<DraggingHandlerAction | null>(null);
+  const [handlerActionDropTarget, setHandlerActionDropTarget] =
+    useState<HandlerActionDropTarget | null>(null);
   const [expandedItemIds, setExpandedItemIds] = useState<string[]>([]);
   const [eventRedoStack, setEventRedoStack] = useState<EventDraft[]>([]);
   const [eventUndoStack, setEventUndoStack] = useState<EventDraft[]>([]);
@@ -3807,13 +3828,20 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     clearEventUndoHistory();
     resetExpandedItems();
     setDraggingEventId("");
-    setDraggingStepId("");
-    setDraggingConversationItem(null);
-    setDraggingHandlerAction(null);
+    clearActionDragState();
     setIsEventAddMenuOpen(false);
     setIsConversationAddMenuOpen(false);
     setConversationAddMenuToolId("");
     setConversationAddMenuCheckId("");
+  }
+
+  function clearActionDragState() {
+    setDraggingStepId("");
+    setEventStepDropTarget(null);
+    setDraggingConversationItem(null);
+    setConversationItemDropTarget(null);
+    setDraggingHandlerAction(null);
+    setHandlerActionDropTarget(null);
   }
 
   function completeStructuralHistoryMove(
@@ -5438,6 +5466,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     steps: EventStepDraft[],
     actionId: string,
     targetActionId: string,
+    position: DropPosition = "before",
   ) {
     const currentIndex = steps.findIndex((step) => step.id === actionId);
     const targetIndex = steps.findIndex((step) => step.id === targetActionId);
@@ -5447,7 +5476,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     const reorderedSteps = [...steps];
     const [movedStep] = reorderedSteps.splice(currentIndex, 1);
-    reorderedSteps.splice(targetIndex, 0, movedStep);
+    const rawInsertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+    const insertIndex = clamp(
+      rawInsertIndex > currentIndex ? rawInsertIndex - 1 : rawInsertIndex,
+      0,
+      reorderedSteps.length,
+    );
+    reorderedSteps.splice(insertIndex, 0, movedStep);
+    if (reorderedSteps.every((step, index) => step.id === steps[index]?.id)) {
+      return steps;
+    }
     return reorderedSteps.map((step, index) => ({
       ...step,
       sortOrder: index,
@@ -5458,6 +5496,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     items: T[],
     itemId: string,
     targetItemId: string,
+    position: DropPosition = "before",
   ) {
     const currentIndex = items.findIndex((item) => item.id === itemId);
     const targetIndex = items.findIndex((item) => item.id === targetItemId);
@@ -5467,42 +5506,66 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     const reorderedItems = [...items];
     const [movedItem] = reorderedItems.splice(currentIndex, 1);
-    reorderedItems.splice(targetIndex, 0, movedItem);
+    const rawInsertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+    const insertIndex = clamp(
+      rawInsertIndex > currentIndex ? rawInsertIndex - 1 : rawInsertIndex,
+      0,
+      reorderedItems.length,
+    );
+    reorderedItems.splice(insertIndex, 0, movedItem);
+    if (reorderedItems.every((item, index) => item.id === items[index]?.id)) {
+      return items;
+    }
     return reorderedItems.map((item, index) => ({
       ...item,
       sortOrder: index,
     }));
   }
 
-  function reorderEventChatTool(toolId: string, targetToolId: string) {
+  function reorderEventChatTool(
+    toolId: string,
+    targetToolId: string,
+    position: DropPosition = "before",
+  ) {
     stageEventDraft({
       ...eventDraft,
       chatTools: reorderDraftOrderedItems(
         eventDraft.chatTools,
         toolId,
         targetToolId,
+        position,
       ),
     });
   }
 
-  function reorderEventConversationCheck(checkId: string, targetCheckId: string) {
+  function reorderEventConversationCheck(
+    checkId: string,
+    targetCheckId: string,
+    position: DropPosition = "before",
+  ) {
     stageEventDraft({
       ...eventDraft,
       conversationChecks: reorderDraftOrderedItems(
         eventDraft.conversationChecks,
         checkId,
         targetCheckId,
+        position,
       ),
     });
   }
 
-  function reorderEventClassifierGroup(groupId: string, targetGroupId: string) {
+  function reorderEventClassifierGroup(
+    groupId: string,
+    targetGroupId: string,
+    position: DropPosition = "before",
+  ) {
     stageEventDraft({
       ...eventDraft,
       classifierGroups: reorderDraftOrderedItems(
         eventDraft.classifierGroups,
         groupId,
         targetGroupId,
+        position,
       ),
     });
   }
@@ -5607,6 +5670,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     toolId: string,
     actionId: string,
     targetActionId: string,
+    position: DropPosition = "before",
   ) {
     updateEventChatToolDraft(toolId, (tool) => ({
       ...tool,
@@ -5614,6 +5678,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         tool.handlerActions,
         actionId,
         targetActionId,
+        position,
       ),
     }));
   }
@@ -5745,6 +5810,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     checkId: string,
     actionId: string,
     targetActionId: string,
+    position: DropPosition = "before",
   ) {
     updateEventConversationCheckDraft(checkId, (check) => ({
       ...check,
@@ -5752,6 +5818,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         check.handlerActions,
         actionId,
         targetActionId,
+        position,
       ),
     }));
   }
@@ -5917,6 +5984,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     groupId: string,
     actionId: string,
     targetActionId: string,
+    position: DropPosition = "before",
   ) {
     updateEventClassifierGroupDraft(groupId, (group) => ({
       ...group,
@@ -5924,6 +5992,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         group.handlerActions,
         actionId,
         targetActionId,
+        position,
       ),
     }));
   }
@@ -5966,9 +6035,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     clearEventUndoHistory();
     resetExpandedItems();
     setDraggingEventId("");
-    setDraggingStepId("");
-    setDraggingConversationItem(null);
-    setDraggingHandlerAction(null);
+    clearActionDragState();
     setIsEventAddMenuOpen(false);
     setIsConversationAddMenuOpen(false);
     setConversationAddMenuToolId("");
@@ -6011,9 +6078,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       pushEventStructuralUndo({ event: payload.event, type: "delete" });
       clearEventUndoHistory();
       resetExpandedItems();
-      setDraggingStepId("");
-      setDraggingConversationItem(null);
-      setDraggingHandlerAction(null);
+      clearActionDragState();
       setIsEventAddMenuOpen(false);
       setIsConversationAddMenuOpen(false);
       setConversationAddMenuToolId("");
@@ -6537,7 +6602,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
-  async function reorderEventStep(stepId: string, targetStepId: string) {
+  async function reorderEventStep(
+    stepId: string,
+    targetStepId: string,
+    position: DropPosition = "before",
+  ) {
     const { selectedEvent } = getSelectedEventParts();
     if (!experience || !selectedEvent) return;
 
@@ -6552,13 +6621,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const didSave = await flushEventAutosave();
     if (!didSave) return;
 
-    const reorderedSteps = [...eventDraft.steps];
-    const [movedStep] = reorderedSteps.splice(currentIndex, 1);
-    reorderedSteps.splice(targetIndex, 0, movedStep);
-    const nextSteps = reorderedSteps.map((step, index) => ({
-      ...step,
-      sortOrder: index,
-    }));
+    const nextSteps = reorderDraftActionSequence(
+      eventDraft.steps,
+      stepId,
+      targetStepId,
+      position,
+    );
+    if (nextSteps === eventDraft.steps) return;
 
     rememberPersistedEventForUndo(selectedEvent);
     clearEventAutosaveTimer();
@@ -6587,18 +6656,75 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  function shouldIgnoreActionDragStart(event: DragEvent<HTMLElement>) {
+    const target = event.target;
+    if (!(target instanceof Element)) return false;
+    if (target.closest(".event-drag-handle")) return false;
+    if (target.closest(".event-step-summary")) return false;
+    const isEditableControl = Boolean(
+      target.closest(
+        [
+          "input",
+          "textarea",
+          "select",
+          "a",
+          "[contenteditable='true']",
+          "[role='tab']",
+        ].join(","),
+      ),
+    );
+    if (isEditableControl) return true;
+    if (target.closest(".chat-exit-summary")) return false;
+    return Boolean(target.closest("button,[role='button']"));
+  }
+
+  function dragPositionFromEvent(event: DragEvent<HTMLElement>): DropPosition {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  }
+
   function dragEventStep(
     event: DragEvent<HTMLElement>,
     stepId: string,
   ) {
+    if (shouldIgnoreActionDragStart(event)) {
+      event.preventDefault();
+      return;
+    }
     setDraggingStepId(stepId);
+    setEventStepDropTarget(null);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", stepId);
   }
 
-  function dragOverEventStep(event: DragEvent<HTMLElement>) {
+  function dragOverEventStep(
+    event: DragEvent<HTMLElement>,
+    targetStepId: string,
+  ) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    if (!draggingStepId || draggingStepId === targetStepId) {
+      setEventStepDropTarget(null);
+      return;
+    }
+    setEventStepDropTarget({
+      position: dragPositionFromEvent(event),
+      stepId: targetStepId,
+    });
+  }
+
+  function dragLeaveEventStep(
+    event: DragEvent<HTMLElement>,
+    targetStepId: string,
+  ) {
+    if (
+      event.currentTarget.contains(event.relatedTarget as Node | null)
+    ) {
+      return;
+    }
+    setEventStepDropTarget((current) =>
+      current?.stepId === targetStepId ? null : current,
+    );
   }
 
   async function dropEventStep(
@@ -6608,9 +6734,14 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     event.preventDefault();
     const sourceStepId =
       event.dataTransfer.getData("text/plain") || draggingStepId;
+    const position =
+      eventStepDropTarget?.stepId === targetStepId
+        ? eventStepDropTarget.position
+        : dragPositionFromEvent(event);
     setDraggingStepId("");
+    setEventStepDropTarget(null);
     if (!sourceStepId || sourceStepId === targetStepId) return;
-    await reorderEventStep(sourceStepId, targetStepId);
+    await reorderEventStep(sourceStepId, targetStepId, position);
   }
 
   function serializeConversationItemDrag(payload: DraggingConversationItem) {
@@ -6641,16 +6772,52 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     event: DragEvent<HTMLElement>,
     payload: DraggingConversationItem,
   ) {
+    if (shouldIgnoreActionDragStart(event)) {
+      event.preventDefault();
+      return;
+    }
     const serializedPayload = serializeConversationItemDrag(payload);
     setDraggingConversationItem(payload);
+    setConversationItemDropTarget(null);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(conversationItemDragMimeType, serializedPayload);
     event.dataTransfer.setData("text/plain", serializedPayload);
   }
 
-  function dragOverConversationItem(event: DragEvent<HTMLElement>) {
+  function dragOverConversationItem(
+    event: DragEvent<HTMLElement>,
+    target: DraggingConversationItem,
+  ) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    if (
+      !draggingConversationItem ||
+      draggingConversationItem.itemId === target.itemId ||
+      draggingConversationItem.itemKind !== target.itemKind
+    ) {
+      setConversationItemDropTarget(null);
+      return;
+    }
+    setConversationItemDropTarget({
+      ...target,
+      position: dragPositionFromEvent(event),
+    });
+  }
+
+  function dragLeaveConversationItem(
+    event: DragEvent<HTMLElement>,
+    target: DraggingConversationItem,
+  ) {
+    if (
+      event.currentTarget.contains(event.relatedTarget as Node | null)
+    ) {
+      return;
+    }
+    setConversationItemDropTarget((current) =>
+      current?.itemId === target.itemId && current.itemKind === target.itemKind
+        ? null
+        : current,
+    );
   }
 
   function dropConversationItem(
@@ -6665,7 +6832,13 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       ) ??
       parseConversationItemDrag(event.dataTransfer.getData("text/plain")) ??
       draggingConversationItem;
+    const position =
+      conversationItemDropTarget?.itemId === target.itemId &&
+      conversationItemDropTarget.itemKind === target.itemKind
+        ? conversationItemDropTarget.position
+        : dragPositionFromEvent(event);
     setDraggingConversationItem(null);
+    setConversationItemDropTarget(null);
     if (
       !source ||
       source.itemId === target.itemId ||
@@ -6675,16 +6848,16 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
 
     if (source.itemKind === "chatTool") {
-      reorderEventChatTool(source.itemId, target.itemId);
+      reorderEventChatTool(source.itemId, target.itemId, position);
       return;
     }
 
     if (source.itemKind === "conversationCheck") {
-      reorderEventConversationCheck(source.itemId, target.itemId);
+      reorderEventConversationCheck(source.itemId, target.itemId, position);
       return;
     }
 
-    reorderEventClassifierGroup(source.itemId, target.itemId);
+    reorderEventClassifierGroup(source.itemId, target.itemId, position);
   }
 
   function isDraggingConversationItem(payload: DraggingConversationItem) {
@@ -6723,16 +6896,58 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     event: DragEvent<HTMLElement>,
     payload: DraggingHandlerAction,
   ) {
+    event.stopPropagation();
+    if (shouldIgnoreActionDragStart(event)) {
+      event.preventDefault();
+      return;
+    }
     const serializedPayload = serializeHandlerActionDrag(payload);
     setDraggingHandlerAction(payload);
+    setHandlerActionDropTarget(null);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(handlerActionDragMimeType, serializedPayload);
     event.dataTransfer.setData("text/plain", serializedPayload);
   }
 
-  function dragOverHandlerAction(event: DragEvent<HTMLElement>) {
+  function dragOverHandlerAction(
+    event: DragEvent<HTMLElement>,
+    target: DraggingHandlerAction,
+  ) {
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
+    if (
+      !draggingHandlerAction ||
+      draggingHandlerAction.actionId === target.actionId ||
+      draggingHandlerAction.ownerId !== target.ownerId ||
+      draggingHandlerAction.ownerKind !== target.ownerKind
+    ) {
+      setHandlerActionDropTarget(null);
+      return;
+    }
+    setHandlerActionDropTarget({
+      ...target,
+      position: dragPositionFromEvent(event),
+    });
+  }
+
+  function dragLeaveHandlerAction(
+    event: DragEvent<HTMLElement>,
+    target: DraggingHandlerAction,
+  ) {
+    event.stopPropagation();
+    if (
+      event.currentTarget.contains(event.relatedTarget as Node | null)
+    ) {
+      return;
+    }
+    setHandlerActionDropTarget((current) =>
+      current?.actionId === target.actionId &&
+      current.ownerId === target.ownerId &&
+      current.ownerKind === target.ownerKind
+        ? null
+        : current,
+    );
   }
 
   function dropHandlerAction(
@@ -6740,13 +6955,21 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     target: DraggingHandlerAction,
   ) {
     event.preventDefault();
+    event.stopPropagation();
     const source =
       parseHandlerActionDrag(
         event.dataTransfer.getData(handlerActionDragMimeType),
       ) ??
       parseHandlerActionDrag(event.dataTransfer.getData("text/plain")) ??
       draggingHandlerAction;
+    const position =
+      handlerActionDropTarget?.actionId === target.actionId &&
+      handlerActionDropTarget.ownerId === target.ownerId &&
+      handlerActionDropTarget.ownerKind === target.ownerKind
+        ? handlerActionDropTarget.position
+        : dragPositionFromEvent(event);
     setDraggingHandlerAction(null);
+    setHandlerActionDropTarget(null);
     if (
       !source ||
       source.actionId === target.actionId ||
@@ -6757,7 +6980,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
 
     if (source.ownerKind === "chatTool") {
-      reorderEventChatToolAction(source.ownerId, source.actionId, target.actionId);
+      reorderEventChatToolAction(
+        source.ownerId,
+        source.actionId,
+        target.actionId,
+        position,
+      );
       return;
     }
 
@@ -6766,6 +6994,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         source.ownerId,
         source.actionId,
         target.actionId,
+        position,
       );
       return;
     }
@@ -6774,6 +7003,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       source.ownerId,
       source.actionId,
       target.actionId,
+      position,
     );
   }
 
@@ -7988,24 +8218,27 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         "event-step",
                         `tone-${toneClass}`,
                         draggingStepId === step.id ? "is-dragging" : "",
+                        eventStepDropTarget?.stepId === step.id
+                          ? `is-drop-${eventStepDropTarget.position}`
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !step.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
+                      draggable
                       key={step.id}
-                      onDragOver={dragOverEventStep}
+                      onDragEnd={clearActionDragState}
+                      onDragLeave={(event) => dragLeaveEventStep(event, step.id)}
+                      onDragOver={(event) => dragOverEventStep(event, step.id)}
+                      onDragStart={(event) => dragEventStep(event, step.id)}
                       onDrop={(event) => void dropEventStep(event, step.id)}
+                      title="Drag to reorder"
                     >
                       <div className="event-step-main">
                         <span
                           aria-label={`Drag step ${index + 1}`}
                           className="event-drag-handle"
-                          draggable
-                          onDragEnd={() => setDraggingStepId("")}
-                          onDragStart={(event) =>
-                            dragEventStep(event, step.id)
-                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -8629,26 +8862,36 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         isDraggingConversationItem(dragPayload)
                           ? "is-dragging"
                           : "",
+                        conversationItemDropTarget?.itemId === tool.id &&
+                        conversationItemDropTarget.itemKind === "chatTool"
+                          ? `is-drop-${conversationItemDropTarget.position}`
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !tool.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
+                      draggable
                       key={tool.id}
-                      onDragOver={dragOverConversationItem}
+                      onDragEnd={clearActionDragState}
+                      onDragLeave={(event) =>
+                        dragLeaveConversationItem(event, dragPayload)
+                      }
+                      onDragOver={(event) =>
+                        dragOverConversationItem(event, dragPayload)
+                      }
+                      onDragStart={(event) =>
+                        dragConversationItem(event, dragPayload)
+                      }
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
+                      title="Drag to reorder"
                     >
                       <div className="event-step-main">
                         <span
                           aria-label="Drag FC route"
                           className="event-drag-handle"
-                          draggable
-                          onDragEnd={() => setDraggingConversationItem(null)}
-                          onDragStart={(event) =>
-                            dragConversationItem(event, dragPayload)
-                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -8905,28 +9148,40 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         isDraggingHandlerAction(dragPayload)
                                           ? "is-dragging"
                                           : "",
+                                        handlerActionDropTarget?.actionId ===
+                                          step.id &&
+                                        handlerActionDropTarget.ownerId ===
+                                          tool.id &&
+                                        handlerActionDropTarget.ownerKind ===
+                                          "chatTool"
+                                          ? `is-drop-${handlerActionDropTarget.position}`
+                                          : "",
                                         isActionExpanded ? "is-expanded" : "",
                                         !step.enabled ? "is-disabled" : "",
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
+                                      draggable
                                       key={step.id}
-                                      onDragOver={dragOverHandlerAction}
+                                      onDragEnd={clearActionDragState}
+                                      onDragLeave={(event) =>
+                                        dragLeaveHandlerAction(event, dragPayload)
+                                      }
+                                      onDragOver={(event) =>
+                                        dragOverHandlerAction(event, dragPayload)
+                                      }
+                                      onDragStart={(event) =>
+                                        dragHandlerAction(event, dragPayload)
+                                      }
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
+                                      title="Drag to reorder"
                                     >
                                       <div className="event-step-main">
                                         <span
                                           aria-label="Drag route action"
                                           className="event-drag-handle"
-                                          draggable
-                                          onDragEnd={() =>
-                                            setDraggingHandlerAction(null)
-                                          }
-                                          onDragStart={(event) =>
-                                            dragHandlerAction(event, dragPayload)
-                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
@@ -9071,26 +9326,37 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         isDraggingConversationItem(dragPayload)
                           ? "is-dragging"
                           : "",
+                        conversationItemDropTarget?.itemId === check.id &&
+                        conversationItemDropTarget.itemKind ===
+                          "conversationCheck"
+                          ? `is-drop-${conversationItemDropTarget.position}`
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !check.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
+                      draggable
                       key={check.id}
-                      onDragOver={dragOverConversationItem}
+                      onDragEnd={clearActionDragState}
+                      onDragLeave={(event) =>
+                        dragLeaveConversationItem(event, dragPayload)
+                      }
+                      onDragOver={(event) =>
+                        dragOverConversationItem(event, dragPayload)
+                      }
+                      onDragStart={(event) =>
+                        dragConversationItem(event, dragPayload)
+                      }
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
+                      title="Drag to reorder"
                     >
                       <div className="event-step-main">
                         <span
                           aria-label="Drag conversation check"
                           className="event-drag-handle"
-                          draggable
-                          onDragEnd={() => setDraggingConversationItem(null)}
-                          onDragStart={(event) =>
-                            dragConversationItem(event, dragPayload)
-                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -9305,28 +9571,40 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         isDraggingHandlerAction(dragPayload)
                                           ? "is-dragging"
                                           : "",
+                                        handlerActionDropTarget?.actionId ===
+                                          step.id &&
+                                        handlerActionDropTarget.ownerId ===
+                                          check.id &&
+                                        handlerActionDropTarget.ownerKind ===
+                                          "conversationCheck"
+                                          ? `is-drop-${handlerActionDropTarget.position}`
+                                          : "",
                                         isActionExpanded ? "is-expanded" : "",
                                         !step.enabled ? "is-disabled" : "",
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
+                                      draggable
                                       key={step.id}
-                                      onDragOver={dragOverHandlerAction}
+                                      onDragEnd={clearActionDragState}
+                                      onDragLeave={(event) =>
+                                        dragLeaveHandlerAction(event, dragPayload)
+                                      }
+                                      onDragOver={(event) =>
+                                        dragOverHandlerAction(event, dragPayload)
+                                      }
+                                      onDragStart={(event) =>
+                                        dragHandlerAction(event, dragPayload)
+                                      }
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
+                                      title="Drag to reorder"
                                     >
                                       <div className="event-step-main">
                                         <span
                                           aria-label="Drag check action"
                                           className="event-drag-handle"
-                                          draggable
-                                          onDragEnd={() =>
-                                            setDraggingHandlerAction(null)
-                                          }
-                                          onDragStart={(event) =>
-                                            dragHandlerAction(event, dragPayload)
-                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
@@ -9471,26 +9749,36 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                         isDraggingConversationItem(dragPayload)
                           ? "is-dragging"
                           : "",
+                        conversationItemDropTarget?.itemId === group.id &&
+                        conversationItemDropTarget.itemKind === "classifierGroup"
+                          ? `is-drop-${conversationItemDropTarget.position}`
+                          : "",
                         isExpanded ? "is-expanded" : "",
                         !group.enabled ? "is-disabled" : "",
                       ]
                         .filter(Boolean)
                         .join(" ")}
+                      draggable
                       key={group.id}
-                      onDragOver={dragOverConversationItem}
+                      onDragEnd={clearActionDragState}
+                      onDragLeave={(event) =>
+                        dragLeaveConversationItem(event, dragPayload)
+                      }
+                      onDragOver={(event) =>
+                        dragOverConversationItem(event, dragPayload)
+                      }
+                      onDragStart={(event) =>
+                        dragConversationItem(event, dragPayload)
+                      }
                       onDrop={(event) =>
                         dropConversationItem(event, dragPayload)
                       }
+                      title="Drag to reorder"
                     >
                       <div className="event-step-main">
                         <span
                           aria-label="Drag classifier group"
                           className="event-drag-handle"
-                          draggable
-                          onDragEnd={() => setDraggingConversationItem(null)}
-                          onDragStart={(event) =>
-                            dragConversationItem(event, dragPayload)
-                          }
                           title="Drag to reorder"
                         >
                           <GripIcon />
@@ -9814,28 +10102,40 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                                         isDraggingHandlerAction(dragPayload)
                                           ? "is-dragging"
                                           : "",
+                                        handlerActionDropTarget?.actionId ===
+                                          step.id &&
+                                        handlerActionDropTarget.ownerId ===
+                                          group.id &&
+                                        handlerActionDropTarget.ownerKind ===
+                                          "classifierGroup"
+                                          ? `is-drop-${handlerActionDropTarget.position}`
+                                          : "",
                                         isActionExpanded ? "is-expanded" : "",
                                         !step.enabled ? "is-disabled" : "",
                                       ]
                                         .filter(Boolean)
                                         .join(" ")}
+                                      draggable
                                       key={step.id}
-                                      onDragOver={dragOverHandlerAction}
+                                      onDragEnd={clearActionDragState}
+                                      onDragLeave={(event) =>
+                                        dragLeaveHandlerAction(event, dragPayload)
+                                      }
+                                      onDragOver={(event) =>
+                                        dragOverHandlerAction(event, dragPayload)
+                                      }
+                                      onDragStart={(event) =>
+                                        dragHandlerAction(event, dragPayload)
+                                      }
                                       onDrop={(event) =>
                                         dropHandlerAction(event, dragPayload)
                                       }
+                                      title="Drag to reorder"
                                     >
                                       <div className="event-step-main">
                                         <span
                                           aria-label="Drag classifier action"
                                           className="event-drag-handle"
-                                          draggable
-                                          onDragEnd={() =>
-                                            setDraggingHandlerAction(null)
-                                          }
-                                          onDragStart={(event) =>
-                                            dragHandlerAction(event, dragPayload)
-                                          }
                                           title="Drag to reorder"
                                         >
                                           <GripIcon />
