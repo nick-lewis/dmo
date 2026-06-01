@@ -2710,7 +2710,6 @@ class ExperienceContentMaturityTests(TestCase):
             avatar_path="test-images/dLU-right.png",
             classification_model="gpt-5.5-pro",
             realtime_model="gpt-realtime",
-            script_action_offset_ms=-125,
             system_prompt="Guide the learner.",
             voice="marin",
             voice_instructions="Warm and concise.",
@@ -2860,7 +2859,6 @@ class ExperienceContentMaturityTests(TestCase):
         tutor = experience.tutor_settings
         self.assertEqual(tutor.realtime_model, "gpt-realtime")
         self.assertEqual(tutor.classification_model, "gpt-5.5-pro")
-        self.assertEqual(tutor.script_action_offset_ms, -125)
         self.assertEqual(tutor.voice, "marin")
 
         start = experience.events.get(slug="start")

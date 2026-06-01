@@ -39,7 +39,6 @@ from .audio_cache import (
 )
 from .models import (
     DEFAULT_CLASSIFICATION_MODEL,
-    DEFAULT_SCRIPT_ACTION_OFFSET_MS,
     EventActionStep,
     EventChatTool,
     EventClassifier,
@@ -126,7 +125,6 @@ RUNTIME_ACTION_TRACE_LIMIT = 80
 RUNTIME_TRANSITION_TRACE_LIMIT = 40
 RUNTIME_DEBUG_VALUE_LIMIT = 600
 INITIAL_SCRIPT_CUE_PROGRESS = 0.001
-SCRIPT_ACTION_OFFSET_LIMIT_MS = 3000
 TOOL_CAPTURE_SAVE_MAP_KEY = "x-dluCaptureSaves"
 TOOL_DISPLAY_TITLE_KEY = "x-dluDisplayTitle"
 SCRIPT_AUDIO_MESSAGE_SOURCES = {
@@ -798,7 +796,6 @@ def serialize_tutor_settings(tutor_settings):
         "avatarPath": tutor_settings.avatar_path,
         "classificationModel": tutor_settings.classification_model,
         "realtimeModel": tutor_settings.realtime_model,
-        "scriptActionOffsetMs": tutor_settings.script_action_offset_ms,
         "systemPrompt": tutor_settings.system_prompt,
         "voice": tutor_settings.voice,
         "voiceInstructions": tutor_settings.voice_instructions,
@@ -1511,7 +1508,6 @@ def ensure_tutor_settings(experience):
             "avatar_path": "test-images/dLU-right.png",
             "classification_model": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
             "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
-            "script_action_offset_ms": DEFAULT_SCRIPT_ACTION_OFFSET_MS,
             "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
             "system_prompt": settings.DLU_REALTIME_DEFAULT_INSTRUCTIONS,
             "voice_instructions": "",
@@ -1566,7 +1562,6 @@ def duplicate_experience_for_user(source, user):
         duplicate_tutor.voice = source_tutor.voice
         duplicate_tutor.system_prompt = source_tutor.system_prompt
         duplicate_tutor.voice_instructions = source_tutor.voice_instructions
-        duplicate_tutor.script_action_offset_ms = source_tutor.script_action_offset_ms
         duplicate_tutor.save()
 
         for source_event in source.events.order_by("sort_order", "created_at"):
@@ -1680,13 +1675,6 @@ def import_int(value, fallback=0):
     except (TypeError, ValueError):
         return fallback
     return max(0, parsed)
-
-
-def import_signed_int(value, fallback=0):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback
 
 
 def import_slug(value, fallback, max_length=180):
@@ -1934,18 +1922,6 @@ def create_experience_from_export_payload(user, payload):
                 imported_realtime_model,
                 settings.DLU_REALTIME_DEFAULT_MODEL,
             ) or settings.DLU_REALTIME_DEFAULT_MODEL
-            tutor_settings.script_action_offset_ms = int(
-                max(
-                    -SCRIPT_ACTION_OFFSET_LIMIT_MS,
-                    min(
-                        SCRIPT_ACTION_OFFSET_LIMIT_MS,
-                        import_signed_int(
-                            tutor_data.get("scriptActionOffsetMs"),
-                            DEFAULT_SCRIPT_ACTION_OFFSET_MS,
-                        ),
-                    ),
-                )
-            )
             tutor_settings.system_prompt = import_string(
                 tutor_data.get("systemPrompt"),
                 "",
@@ -5433,27 +5409,6 @@ def update_experience(request, experience_id):
             if len(system_prompt) > 12000:
                 return JsonResponse({"detail": "System prompt is too long."}, status=400)
             tutor_settings.system_prompt = system_prompt
-
-        if "scriptActionOffsetMs" in tutor_data:
-            try:
-                script_action_offset_ms = int(tutor_data.get("scriptActionOffsetMs") or 0)
-            except (TypeError, ValueError):
-                return JsonResponse(
-                    {"detail": "Script action offset must be a number."},
-                    status=400,
-                )
-            if abs(script_action_offset_ms) > SCRIPT_ACTION_OFFSET_LIMIT_MS:
-                return JsonResponse(
-                    {
-                        "detail": (
-                            "Script action offset must be between "
-                            f"-{SCRIPT_ACTION_OFFSET_LIMIT_MS} and "
-                            f"{SCRIPT_ACTION_OFFSET_LIMIT_MS} ms."
-                        )
-                    },
-                    status=400,
-                )
-            tutor_settings.script_action_offset_ms = script_action_offset_ms
 
         if "voiceInstructions" in tutor_data:
             voice_instructions = str(tutor_data.get("voiceInstructions", "")).strip()

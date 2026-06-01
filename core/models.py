@@ -5,7 +5,6 @@ from django.db import models
 
 
 DEFAULT_CLASSIFICATION_MODEL = "gpt-5.4-mini"
-DEFAULT_SCRIPT_ACTION_OFFSET_MS = 800
 
 
 class Experience(models.Model):
@@ -81,9 +80,6 @@ class TutorSettings(models.Model):
     voice = models.CharField(max_length=40, default="ash")
     system_prompt = models.TextField(blank=True, default="")
     voice_instructions = models.TextField(blank=True, default="")
-    script_action_offset_ms = models.IntegerField(
-        default=DEFAULT_SCRIPT_ACTION_OFFSET_MS,
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

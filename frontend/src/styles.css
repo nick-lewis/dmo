@@ -694,8 +694,7 @@ button {
     minmax(98px, 0.5fr)
     minmax(88px, 0.46fr)
     minmax(214px, 1.36fr)
-    minmax(142px, 0.64fr)
-    minmax(82px, 0.36fr);
+    minmax(142px, 0.64fr);
   align-items: start;
 }
 
@@ -4162,10 +4161,6 @@ button {
 
 .control-field textarea.prompt-textarea.compact {
   min-height: 72px;
-}
-
-.control-field.offset-field input {
-  padding-right: 8px;
 }
 
 .control-field input::placeholder,
