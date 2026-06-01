@@ -16208,6 +16208,10 @@ function displaySlotsAreEqual(left: string[], right: string[]) {
   return left.every((slot, index) => slot.trim() === right[index]?.trim());
 }
 
+function displaySlotsKey(slots: string[]) {
+  return JSON.stringify(slots.map((slot) => slot.trim()));
+}
+
 function displaySlotWidthStyle(value: string): CSSProperties {
   const label = value.trim() || "[blank]";
   return { width: `${clamp(label.length + 2, 7, 18)}ch` };
@@ -16276,6 +16280,8 @@ function ScriptAudioPanel({
     Record<string, string[]>
   >({});
   const [savingDisplayId, setSavingDisplayId] = useState("");
+  const saveDisplayTranscriptRef = useRef(onSaveDisplayTranscript);
+  const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
   const readyCount = items.filter(scriptAudioItemIsReady).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
   const generatableCount = items.filter((item) => item.canGenerate).length;
@@ -16294,6 +16300,70 @@ function ScriptAudioPanel({
   ]
     .filter(Boolean)
     .join(" ");
+
+  useEffect(() => {
+    saveDisplayTranscriptRef.current = onSaveDisplayTranscript;
+  }, [onSaveDisplayTranscript]);
+
+  useEffect(() => {
+    if (savingDisplayId) return undefined;
+
+    const pendingDraft = Object.entries(displaySlotDrafts).find(
+      ([scriptId, draftSlots]) => {
+        const item = items.find((candidate) => candidate.id === scriptId);
+        if (!item) return false;
+        const baseSlots = scriptAudioDisplayBaseSlots(item);
+        const expectedSlotCount =
+          baseSlots.length ||
+          item.displayExpectedWordCount ||
+          item.timingWordCount ||
+          item.wordCount ||
+          0;
+        if (expectedSlotCount && draftSlots.length !== expectedSlotCount) {
+          return false;
+        }
+        const draftKey = displaySlotsKey(draftSlots);
+        if (failedDisplayAutosavesRef.current[scriptId] === draftKey) {
+          return false;
+        }
+        return !displaySlotsAreEqual(
+          draftSlots,
+          scriptAudioPersistedDisplaySlots(item),
+        );
+      },
+    );
+
+    if (!pendingDraft) return undefined;
+
+    const [scriptId, draftSlots] = pendingDraft;
+    const draftKey = displaySlotsKey(draftSlots);
+    const timeoutId = window.setTimeout(() => {
+      setSavingDisplayId(scriptId);
+      delete failedDisplayAutosavesRef.current[scriptId];
+      void saveDisplayTranscriptRef.current(scriptId, draftSlots)
+        .then((payload) => {
+          const savedSlots = scriptAudioPersistedDisplaySlots(payload);
+          setDisplaySlotDrafts((current) => {
+            const currentSlots = current[scriptId];
+            if (!currentSlots || !displaySlotsAreEqual(currentSlots, draftSlots)) {
+              return current;
+            }
+            return {
+              ...current,
+              [scriptId]: savedSlots,
+            };
+          });
+        })
+        .catch(() => {
+          failedDisplayAutosavesRef.current[scriptId] = draftKey;
+        })
+        .finally(() =>
+          setSavingDisplayId((current) => (current === scriptId ? "" : current)),
+        );
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [displaySlotDrafts, items, savingDisplayId]);
 
   return (
     <div className={panelClassName}>
@@ -16410,10 +16480,6 @@ function ScriptAudioPanel({
               displaySlotDraft.length === expectedDisplayWordCount;
             const displayHasChanges =
               !displaySlotsAreEqual(displaySlotDraft, persistedDisplaySlots);
-            const canSaveDisplay =
-              !savingDisplayId &&
-              displayHasChanges &&
-              displayWordCountMatches;
             const isSavingDisplay = savingDisplayId === item.id;
             const sourceLabel =
               sourceCount > 1
@@ -16597,34 +16663,11 @@ function ScriptAudioPanel({
                       </div>
                       <div className="script-audio-display-actions">
                         <button
-                          className="header-action"
-                          disabled={!canSaveDisplay || isSavingDisplay}
-                          onClick={() => {
-                            setSavingDisplayId(item.id);
-                            void onSaveDisplayTranscript(item.id, displaySlotDraft)
-                              .then((payload) => {
-                                setDisplaySlotDrafts((current) => ({
-                                  ...current,
-                                  [item.id]: scriptAudioPersistedDisplaySlots(payload),
-                                }));
-                              })
-                              .catch(() => null)
-                              .finally(() => setSavingDisplayId(""));
-                          }}
-                          title={
-                            displayWordCountMatches
-                              ? "Save the on-screen transcript without changing the spoken script or audio."
-                              : "The displayed transcript must keep the same word count as the timed script."
-                          }
-                          type="button"
-                        >
-                          {isSavingDisplay ? "Saving" : "Save display"}
-                        </button>
-                        <button
                           className="header-action secondary"
                           disabled={
                             isSavingDisplay ||
-                            (!item.hasDisplayTranscript &&
+                            (!displayHasChanges &&
+                              !item.hasDisplayTranscript &&
                               displaySlotsAreEqual(displaySlotDraft, displayBaseSlots))
                           }
                           onClick={() => {
@@ -16641,14 +16684,21 @@ function ScriptAudioPanel({
                                     [item.id]: scriptAudioPersistedDisplaySlots(payload),
                                   }));
                                 })
-                                .catch(() => null)
-                                .finally(() => setSavingDisplayId(""));
+                                .catch(() => {
+                                  failedDisplayAutosavesRef.current[item.id] =
+                                    displaySlotsKey(displayBaseSlots);
+                                })
+                                .finally(() =>
+                                  setSavingDisplayId((current) =>
+                                    current === item.id ? "" : current,
+                                  ),
+                                );
                             }
                           }}
-                          title="Use the aligned audio words as the on-screen text."
+                          title="Clear custom display wording and restore the generated timed transcript."
                           type="button"
                         >
-                          Use timed words
+                          Reset display text
                         </button>
                       </div>
                     </div>
