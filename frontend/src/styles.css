@@ -3231,7 +3231,7 @@ button {
 
 .script-timeline-transport {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -3248,6 +3248,43 @@ button {
   font-size: 0.66rem;
   font-weight: 790;
   white-space: nowrap;
+}
+
+.script-timeline-speed {
+  display: inline-grid;
+  grid-template-columns: auto minmax(58px, 74px);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.script-timeline-speed span {
+  color: color-mix(in srgb, var(--muted-ink) 62%, transparent);
+  font-size: 0.58rem;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.script-timeline-speed select {
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 2px 20px 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%),
+    color-mix(in srgb, var(--panel-bg-strong) 82%, transparent);
+  background-position:
+    calc(100% - 12px) 50%,
+    calc(100% - 7px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+  font-size: 0.64rem;
+  font-weight: 790;
+  appearance: none;
 }
 
 .script-timeline-rail {

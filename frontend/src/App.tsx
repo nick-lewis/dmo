@@ -14113,6 +14113,20 @@ function ScriptActionEditor({
   const [timelineDraggingTimeSeconds, setTimelineDraggingTimeSeconds] =
     useState<number | null>(null);
   const [timelineIsPlaying, setTimelineIsPlaying] = useState(false);
+  const [timelinePlaybackRate, setTimelinePlaybackRate] = useState(() => {
+    try {
+      const saved = Number(
+        window.localStorage.getItem("dlu.script-timeline-speed.v1"),
+      );
+      return scriptAudioPlaybackRateOptions.includes(
+        saved as (typeof scriptAudioPlaybackRateOptions)[number],
+      )
+        ? saved
+        : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [timelineScrubTime, setTimelineScrubTime] = useState<number | null>(null);
   const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const timelineDraggingRef = useRef(false);
@@ -14208,6 +14222,7 @@ function ScriptActionEditor({
   useEffect(() => {
     const audio = timelineAudioRef.current;
     if (!audio) return undefined;
+    audio.playbackRate = timelinePlaybackRate;
 
     const syncTime = () => {
       if (timelineScrubbingRef.current || timelineDraggingRef.current) return;
@@ -14229,7 +14244,22 @@ function ScriptActionEditor({
       audio.removeEventListener("pause", syncPlayState);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [timelineAudioUrl, viewMode]);
+  }, [timelineAudioUrl, timelinePlaybackRate, viewMode]);
+
+  useEffect(() => {
+    const audio = timelineAudioRef.current;
+    if (audio) {
+      audio.playbackRate = timelinePlaybackRate;
+    }
+    try {
+      window.localStorage.setItem(
+        "dlu.script-timeline-speed.v1",
+        String(timelinePlaybackRate),
+      );
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [timelinePlaybackRate]);
 
   useEffect(() => {
     const audio = timelineAudioRef.current;
@@ -14789,6 +14819,7 @@ function ScriptActionEditor({
   function toggleTimelinePlayback() {
     const audio = timelineAudioRef.current;
     if (!audio || !timelineAudioUrl) return;
+    audio.playbackRate = timelinePlaybackRate;
     if (audio.paused) {
       void audio.play().catch(() => setTimelineIsPlaying(false));
       return;
@@ -14931,6 +14962,23 @@ function ScriptActionEditor({
             {formatScriptAudioDuration(visibleTimelineTime)} /{" "}
             {formatScriptAudioDuration(timelineDurationSeconds)}
           </span>
+          <label className="script-timeline-speed">
+            <span>Speed</span>
+            <select
+              aria-label="Timeline playback speed"
+              disabled={!timelineAudioUrl}
+              onChange={(event) =>
+                setTimelinePlaybackRate(Number(event.target.value) || 1)
+              }
+              value={String(timelinePlaybackRate)}
+            >
+              {scriptAudioPlaybackRateOptions.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate}x
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         <div
