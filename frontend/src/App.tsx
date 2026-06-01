@@ -15008,7 +15008,7 @@ function ScriptActionEditor({
               <img alt="" src={publicAsset("test-images/dLU-right.png")} />
             </div>
             <div className="script-timeline-now">
-              <span>{formatScriptAudioDuration(visibleTimelineTime)}</span>
+              <span>{formatTimelineSeconds(visibleTimelineTime)}</span>
               <strong>{currentWord || "---"}</strong>
             </div>
           </div>
@@ -15101,8 +15101,8 @@ function ScriptActionEditor({
             />
           </div>
           <span>
-            {formatScriptAudioDuration(visibleTimelineTime)} /{" "}
-            {formatScriptAudioDuration(timelineDurationSeconds)}
+            {formatTimelineSeconds(visibleTimelineTime)} /{" "}
+            {formatTimelineSeconds(timelineDurationSeconds)}
           </span>
           <label className="script-timeline-speed">
             <span>Speed</span>
@@ -15168,7 +15168,7 @@ function ScriptActionEditor({
                 left: `${(timeSeconds / duration) * 100}%`,
                 top: `${42 + lane * 28}px`,
               }}
-              title={`${marker.label} at ${formatScriptAudioDuration(timeSeconds)}`}
+              title={`${marker.label} at ${formatTimelineSeconds(timeSeconds)}`}
               type="button"
             >
               <span>{scriptMarkerIcon(marker.type)}</span>
@@ -15178,7 +15178,7 @@ function ScriptActionEditor({
         </div>
 
         <div className="script-timeline-marker-list">
-          {timelineMarkers.map(({ index, marker, timeMs }) => (
+          {timelineMarkers.map(({ index, marker, timeSeconds }) => (
             <div
               className="script-timeline-marker-row"
               key={`${marker.id}-${index}`}
@@ -15200,19 +15200,26 @@ function ScriptActionEditor({
               </span>
               <strong>{marker.label}</strong>
               <small>{marker.detail || "---"}</small>
-              <input
-                aria-label={`${marker.label} timing in milliseconds`}
-                min="0"
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) =>
-                  replaceMarkerTimelineTime(index, Number(event.target.value) || 0)
-                }
-                onKeyDown={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-                step="10"
-                type="number"
-                value={timeMs}
-              />
+              <span className="script-timeline-time-field">
+                <input
+                  aria-label={`${marker.label} timing in seconds`}
+                  min="0"
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => {
+                    const nextSeconds = Number.parseFloat(event.target.value);
+                    replaceMarkerTimelineTime(
+                      index,
+                      Number.isFinite(nextSeconds) ? nextSeconds * 1000 : 0,
+                    );
+                  }}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  step="0.01"
+                  type="number"
+                  value={formatTimelineSecondsInput(timeSeconds)}
+                />
+                <span>s</span>
+              </span>
             </div>
           ))}
           {!timelineMarkers.length ? (
@@ -16737,6 +16744,20 @@ function formatScriptAudioDuration(durationSeconds: number | null) {
   const minutes = Math.floor(durationSeconds / 60);
   const seconds = Math.round(durationSeconds % 60);
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatTimelineSeconds(durationSeconds: number | null) {
+  if (!durationSeconds || !Number.isFinite(durationSeconds)) return "0.00s";
+  if (durationSeconds < 60) return `${durationSeconds.toFixed(2)}s`;
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = durationSeconds % 60;
+  return `${minutes}:${seconds.toFixed(2).padStart(5, "0")}`;
+}
+
+function formatTimelineSecondsInput(durationSeconds: number) {
+  return Number.isFinite(durationSeconds)
+    ? Math.max(0, durationSeconds).toFixed(2)
+    : "0.00";
 }
 
 function scriptAudioMetadataText(item: ScriptAudioItem) {

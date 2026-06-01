@@ -3489,6 +3489,20 @@ button {
   cursor: text;
 }
 
+.script-timeline-time-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-timeline-time-field span {
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  font-size: 0.62rem;
+  font-weight: 820;
+}
+
 .script-timeline-empty {
   margin: 0;
   color: color-mix(in srgb, var(--muted-ink) 76%, transparent);
