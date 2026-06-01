@@ -787,6 +787,7 @@ type ScriptAudioItem = {
   sources?: string[];
   timedMarkerCount?: number;
   timingPreview?: ScriptWord[];
+  timingWords?: ScriptWord[];
   timingWordCount?: number;
   timingModel?: string;
   ttsModel?: string;
@@ -822,7 +823,7 @@ type SlideRecachePayload = {
   totalTargets: number;
 };
 
-type ScriptEditorViewMode = "text" | "chips" | "slides";
+type ScriptEditorViewMode = "text" | "chips" | "slides" | "timeline";
 
 type ScriptSlidePreview = {
   detail?: string;
@@ -839,6 +840,7 @@ type ScriptMarkerInstance = {
   label: string;
   marker: string;
   start: number;
+  timeMs?: number;
   type: string;
   wordIndex: number;
 };
@@ -1001,6 +1003,15 @@ function countScriptWords(text: string) {
   return words?.length ?? 0;
 }
 
+function normalizeScriptAudioText(text: string) {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+function spokenTextFromMarkedScript(text: string) {
+  scriptMarkerPattern.lastIndex = 0;
+  return normalizeScriptAudioText(text.replace(scriptMarkerPattern, " "));
+}
+
 function displayTranscriptSlotsFromText(text: string) {
   return text.trim().split(/\s+/).filter(Boolean);
 }
@@ -1078,6 +1089,27 @@ function parseScriptMarkerArgs(argsText: string) {
   return args;
 }
 
+function scriptTimelineTimeFromArg(arg: string) {
+  const match = arg.trim().match(/^@\s*(\d+(?:\.\d+)?)\s*(ms|s)?$/i);
+  if (!match) return null;
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const unit = (match[2] || "ms").toLowerCase();
+  return Math.round(Math.max(0, unit === "s" ? amount * 1000 : amount));
+}
+
+function splitScriptMarkerTimelineArgs(args: string[]) {
+  if (!args.length) return { args, timeMs: undefined as number | undefined };
+  const timeMs = scriptTimelineTimeFromArg(args[args.length - 1] ?? "");
+  if (timeMs === null) return { args, timeMs: undefined as number | undefined };
+  return { args: args.slice(0, -1), timeMs };
+}
+
+function appendScriptMarkerTimelineArg(args: string[], timeMs?: number) {
+  if (!Number.isFinite(timeMs)) return args;
+  return [...args, `@${Math.max(0, Math.round(timeMs ?? 0))}ms`];
+}
+
 function scriptMarkerDetail(type: string, args: string, argList: string[]) {
   if (type === "interactive" || type === "interactive_update") {
     const appId = argList[0] ?? "";
@@ -1128,17 +1160,20 @@ function parseScriptMarkerInstances(text: string) {
     const marker = match[0];
     const type = (match[1] ?? "").toLowerCase();
     const args = (match[2] ?? "").trim();
-    const argList = parseScriptMarkerArgs(args);
+    const parsedArgs = parseScriptMarkerArgs(args);
+    const { args: argList, timeMs } = splitScriptMarkerTimelineArgs(parsedArgs);
+    const visibleArgs = argList.join(", ");
     const spokenBefore = text.slice(0, start).replace(scriptMarkerPattern, " ");
     markers.push({
-      args,
+      args: visibleArgs,
       argList,
-      detail: scriptMarkerDetail(type, args, argList),
+      detail: scriptMarkerDetail(type, visibleArgs, argList),
       end: start + marker.length,
       id: `${start}-${marker}`,
       label: scriptMarkerLabel(type),
       marker,
       start,
+      timeMs,
       type,
       wordIndex: countScriptWords(spokenBefore),
     });
@@ -7686,6 +7721,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
             deckUrl={stringConfigValue(step.config, "deckUrl")}
             onDeckUrlChange={(value) => updateConfig("deckUrl", value)}
             onTextChange={(value) => updateConfig("text", value)}
+            scriptAudioItems={scriptAudioItems}
             text={stringConfigValue(step.config, "text")}
           />
         ) : null}
@@ -8542,6 +8578,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               onTextChange={(value) =>
                                 updateEventStepConfig(step.id, "text", value)
                               }
+                              scriptAudioItems={scriptAudioItems}
                               text={stringConfigValue(step.config, "text")}
                             />
                           ) : null}
@@ -14085,22 +14122,26 @@ function ScriptActionEditor({
   deckUrl,
   onDeckUrlChange,
   onTextChange,
+  scriptAudioItems = [],
   text,
 }: {
   deckUrl: string;
   onDeckUrlChange: (value: string) => void;
   onTextChange: (value: string) => void;
+  scriptAudioItems?: ScriptAudioItem[];
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const chipViewRef = useRef<HTMLDivElement | null>(null);
   const slideTableRef = useRef<HTMLDivElement | null>(null);
+  const timelineAudioRef = useRef<HTMLAudioElement | null>(null);
+  const timelineRailRef = useRef<HTMLDivElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const actionMenuTextInputRef = useRef<HTMLInputElement | null>(null);
   const [viewMode, setViewMode] = useState<ScriptEditorViewMode>(() => {
     try {
       const saved = window.localStorage.getItem("dlu.script-editor-view.v1");
-      if (saved === "chips" || saved === "slides") {
+      if (saved === "chips" || saved === "slides" || saved === "timeline") {
         return saved;
       }
     } catch {
@@ -14123,8 +14164,26 @@ function ScriptActionEditor({
     useState<ScriptActionMenuState | null>(null);
   const [scriptActionMenuText, setScriptActionMenuText] = useState("");
   const [soundPreviewKey, setSoundPreviewKey] = useState<string | null>(null);
+  const [timelineCurrentTime, setTimelineCurrentTime] = useState(0);
+  const [timelineDraggingIndex, setTimelineDraggingIndex] = useState<number | null>(
+    null,
+  );
+  const [timelineIsPlaying, setTimelineIsPlaying] = useState(false);
   const soundPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const markers = parseScriptMarkerInstances(text);
+  const spokenTimelineText = spokenTextFromMarkedScript(text);
+  const timelineAudioItem =
+    scriptAudioItems.find(
+      (item) => normalizeScriptAudioText(item.script || "") === spokenTimelineText,
+    ) ?? null;
+  const timelineWords = timelineAudioItem?.timingWords ?? [];
+  const timelineAudioUrl = timelineAudioItem?.audioUrl ?? "";
+  const timelineDurationSeconds = Math.max(
+    0,
+    timelineAudioItem?.durationSeconds ||
+      timelineWords[timelineWords.length - 1]?.end ||
+      0,
+  );
   const editingMarker =
     editingMarkerKey === null
       ? null
@@ -14194,8 +14253,43 @@ function ScriptActionEditor({
     return () => {
       soundPreviewAudioRef.current?.pause();
       soundPreviewAudioRef.current = null;
+      timelineAudioRef.current?.pause();
     };
   }, []);
+
+  useEffect(() => {
+    const audio = timelineAudioRef.current;
+    if (!audio) return undefined;
+
+    const syncTime = () => setTimelineCurrentTime(audio.currentTime || 0);
+    const syncPlayState = () => setTimelineIsPlaying(!audio.paused);
+    const handleEnded = () => setTimelineIsPlaying(false);
+
+    audio.addEventListener("timeupdate", syncTime);
+    audio.addEventListener("loadedmetadata", syncTime);
+    audio.addEventListener("play", syncPlayState);
+    audio.addEventListener("pause", syncPlayState);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.removeEventListener("timeupdate", syncTime);
+      audio.removeEventListener("loadedmetadata", syncTime);
+      audio.removeEventListener("play", syncPlayState);
+      audio.removeEventListener("pause", syncPlayState);
+      audio.removeEventListener("ended", handleEnded);
+    };
+  }, [timelineAudioUrl, viewMode]);
+
+  useEffect(() => {
+    const audio = timelineAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    setTimelineCurrentTime(0);
+    setTimelineIsPlaying(false);
+    setTimelineDraggingIndex(null);
+  }, [timelineAudioUrl]);
 
   useEffect(() => {
     if (!scriptActionMenu) return;
@@ -14629,7 +14723,278 @@ function ScriptActionEditor({
   }
 
   function replaceMarkerArgs(marker: ScriptMarkerInstance, args: string[]) {
-    replaceMarker(marker, buildScriptMarker(marker.type, args));
+    replaceMarker(
+      marker,
+      buildScriptMarker(marker.type, appendScriptMarkerTimelineArg(args, marker.timeMs)),
+    );
+  }
+
+  function replaceMarkerTimelineTime(markerIndex: number, nextTimeMs: number) {
+    const marker = markers[markerIndex];
+    if (!marker) return;
+    const normalizedTimeMs = Math.max(0, Math.round(nextTimeMs));
+    replaceMarker(
+      marker,
+      buildScriptMarker(
+        marker.type,
+        appendScriptMarkerTimelineArg(marker.argList, normalizedTimeMs),
+      ),
+    );
+  }
+
+  function markerTimelineTimeSeconds(marker: ScriptMarkerInstance) {
+    if (typeof marker.timeMs === "number" && Number.isFinite(marker.timeMs)) {
+      return marker.timeMs / 1000;
+    }
+    if (timelineWords.length) {
+      if (marker.wordIndex <= 0) return 0;
+      if (marker.wordIndex >= timelineWords.length) {
+        return timelineWords[timelineWords.length - 1]?.end ?? 0;
+      }
+      return timelineWords[marker.wordIndex]?.start ?? 0;
+    }
+    return timelineDurationSeconds * clamp(marker.wordIndex / Math.max(1, countScriptWords(spokenTimelineText)), 0, 1);
+  }
+
+  function timelineTimeFromClientX(clientX: number) {
+    const rect = timelineRailRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || !timelineDurationSeconds) return 0;
+    return clamp((clientX - rect.left) / rect.width, 0, 1) * timelineDurationSeconds;
+  }
+
+  function seekTimeline(seconds: number) {
+    const nextTime = clamp(seconds, 0, timelineDurationSeconds || 0);
+    setTimelineCurrentTime(nextTime);
+    if (timelineAudioRef.current) {
+      timelineAudioRef.current.currentTime = nextTime;
+    }
+  }
+
+  function updateTimelineMarkerFromClientX(markerIndex: number, clientX: number) {
+    const seconds = timelineTimeFromClientX(clientX);
+    seekTimeline(seconds);
+    replaceMarkerTimelineTime(markerIndex, seconds * 1000);
+  }
+
+  function toggleTimelinePlayback() {
+    const audio = timelineAudioRef.current;
+    if (!audio || !timelineAudioUrl) return;
+    if (audio.paused) {
+      void audio.play().catch(() => setTimelineIsPlaying(false));
+      return;
+    }
+    audio.pause();
+  }
+
+  function timelinePreviewState() {
+    const elapsed = timelineCurrentTime + 0.001;
+    let currentVisualMarker: ScriptMarkerInstance | null = null;
+    let agentImageVisible = true;
+    const overlays: Array<{ id: string; imagePath: string }> = [];
+    const overlayMap = new Map<string, string>();
+
+    markers.forEach((marker) => {
+      if (markerTimelineTimeSeconds(marker) > elapsed) return;
+      if (isSlideMarker(marker) || marker.type === "show_image") {
+        currentVisualMarker = marker;
+      }
+      if (marker.type === "agent_image_off") {
+        agentImageVisible = false;
+      }
+      if (marker.type === "agent_image_on") {
+        agentImageVisible = true;
+      }
+      if (marker.type === "overlay") {
+        const overlayId = marker.argList[1] ? marker.argList[0] || "default" : "default";
+        const imagePath = marker.argList[1] || marker.argList[0] || "";
+        if (imagePath) overlayMap.set(overlayId, imagePath);
+      }
+      if (marker.type === "overlay_off") {
+        const overlayId = marker.argList[0] || "";
+        if (overlayId) overlayMap.delete(overlayId);
+        else overlayMap.clear();
+      }
+    });
+
+    overlayMap.forEach((imagePath, id) => overlays.push({ id, imagePath }));
+    return { agentImageVisible, currentVisualMarker, overlays };
+  }
+
+  function renderTimelineView() {
+    const duration = timelineDurationSeconds || 1;
+    const timelineMarkers = markers.map((marker, index) => {
+      const timeSeconds = markerTimelineTimeSeconds(marker);
+      const timeMs = Math.round(timeSeconds * 1000);
+      const stackedIndex = markers
+        .slice(0, index)
+        .filter(
+          (previous) =>
+            Math.round(markerTimelineTimeSeconds(previous) * 1000) === timeMs,
+        ).length;
+      return {
+        index,
+        lane: stackedIndex,
+        marker,
+        timeMs,
+        timeSeconds,
+      };
+    });
+    const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
+    const preview = timelinePreviewState();
+    const currentWordIndex = timelineWords.findIndex(
+      (word) => timelineCurrentTime >= word.start && timelineCurrentTime <= word.end,
+    );
+    const currentWord =
+      currentWordIndex >= 0 ? timelineWords[currentWordIndex]?.word : "";
+    const waveformBars = Array.from({ length: 72 }, (_, index) => {
+      const height = 18 + Math.round(Math.abs(Math.sin(index * 1.7)) * 28);
+      return <span key={index} style={{ height: `${height}px` }} />;
+    });
+
+    return (
+      <div className="script-timeline-view">
+        <audio preload="metadata" ref={timelineAudioRef} src={timelineAudioUrl} />
+        <div className="script-timeline-stage">
+          <div className="script-timeline-main-preview">
+            {preview.currentVisualMarker ? (
+              renderSlideVisual(preview.currentVisualMarker)
+            ) : (
+              <span className="script-slide-placeholder">No visual yet</span>
+            )}
+            {preview.overlays.map((overlay) => (
+              <img
+                alt=""
+                className="script-timeline-overlay-preview"
+                key={overlay.id}
+                src={publicAsset(overlay.imagePath)}
+              />
+            ))}
+          </div>
+          <div className="script-timeline-chat-preview">
+            <div
+              className={[
+                "script-timeline-agent-preview",
+                preview.agentImageVisible ? "" : "is-hidden",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <img alt="" src={publicAsset("test-images/dLU-right.png")} />
+            </div>
+            <div className="script-timeline-now">
+              <span>{formatScriptAudioDuration(timelineCurrentTime)}</span>
+              <strong>{currentWord || "---"}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="script-timeline-transport">
+          <button
+            className="event-icon-button"
+            disabled={!timelineAudioUrl}
+            onClick={toggleTimelinePlayback}
+            title={timelineIsPlaying ? "Pause timeline audio" : "Play timeline audio"}
+            type="button"
+          >
+            {timelineIsPlaying ? <StopIcon /> : <PlayIcon />}
+          </button>
+          <input
+            aria-label="Timeline playback position"
+            disabled={!timelineAudioUrl}
+            max={Math.round(duration * 1000)}
+            min="0"
+            onChange={(event) => seekTimeline(Number(event.target.value) / 1000)}
+            step="10"
+            type="range"
+            value={Math.round(timelineCurrentTime * 1000)}
+          />
+          <span>
+            {formatScriptAudioDuration(timelineCurrentTime)} /{" "}
+            {formatScriptAudioDuration(timelineDurationSeconds)}
+          </span>
+        </div>
+
+        <div
+          className="script-timeline-rail"
+          onPointerLeave={() => setTimelineDraggingIndex(null)}
+          onPointerMove={(event) => {
+            if (timelineDraggingIndex === null) return;
+            event.preventDefault();
+            updateTimelineMarkerFromClientX(timelineDraggingIndex, event.clientX);
+          }}
+          onPointerUp={() => setTimelineDraggingIndex(null)}
+          ref={timelineRailRef}
+          style={{ minHeight: `${72 + laneCount * 28}px` }}
+        >
+          <div className="script-timeline-waveform">{waveformBars}</div>
+          <div
+            className="script-timeline-playhead"
+            style={{ left: `${(timelineCurrentTime / duration) * 100}%` }}
+          />
+          {timelineMarkers.map(({ index, lane, marker, timeSeconds }) => (
+            <button
+              className={[
+                "script-timeline-marker",
+                `marker-${marker.type}`,
+                editingMarkerKey === scriptMarkerEditKey(marker) ? "selected" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={`${marker.id}-${index}`}
+              onClick={() => {
+                editMarker(marker);
+                seekTimeline(timeSeconds);
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                setTimelineDraggingIndex(index);
+                updateTimelineMarkerFromClientX(index, event.clientX);
+              }}
+              style={{
+                left: `${(timeSeconds / duration) * 100}%`,
+                top: `${42 + lane * 28}px`,
+              }}
+              title={`${marker.label} at ${formatScriptAudioDuration(timeSeconds)}`}
+              type="button"
+            >
+              <span>{scriptMarkerIcon(marker.type)}</span>
+              <strong>{marker.detail || marker.label}</strong>
+            </button>
+          ))}
+        </div>
+
+        <div className="script-timeline-marker-list">
+          {timelineMarkers.map(({ index, marker, timeMs }) => (
+            <label className="script-timeline-marker-row" key={`${marker.id}-${index}`}>
+              <span className="script-marker-chip-icon">
+                {scriptMarkerIcon(marker.type)}
+              </span>
+              <strong>{marker.label}</strong>
+              <small>{marker.detail || "---"}</small>
+              <input
+                aria-label={`${marker.label} timing in milliseconds`}
+                min="0"
+                onChange={(event) =>
+                  replaceMarkerTimelineTime(index, Number(event.target.value) || 0)
+                }
+                step="10"
+                type="number"
+                value={timeMs}
+              />
+            </label>
+          ))}
+          {!timelineMarkers.length ? (
+            <p className="script-timeline-empty">No timed actions in this script.</p>
+          ) : null}
+        </div>
+
+        {!timelineAudioUrl ? (
+          <p className="script-timeline-empty">
+            Generate script audio first to scrub this timeline against the real track.
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   function stopSoundPreview() {
@@ -15813,7 +16178,7 @@ function ScriptActionEditor({
           Add
         </button>
         <div className="script-view-switch" role="tablist" aria-label="Script view">
-          {(["text", "chips", "slides"] as const).map((mode) => (
+          {(["text", "chips", "slides", "timeline"] as const).map((mode) => (
             <button
               aria-selected={viewMode === mode}
               className={viewMode === mode ? "selected" : ""}
@@ -15822,7 +16187,13 @@ function ScriptActionEditor({
               role="tab"
               type="button"
             >
-              {mode === "text" ? "Text" : mode === "chips" ? "Chips" : "Slides"}
+              {mode === "text"
+                ? "Text"
+                : mode === "chips"
+                  ? "Chips"
+                  : mode === "slides"
+                    ? "Slides"
+                    : "Timeline"}
             </button>
           ))}
         </div>
@@ -15871,6 +16242,8 @@ function ScriptActionEditor({
         >
           {renderInlineScriptParts(text, 0, "No script text")}
         </div>
+      ) : viewMode === "timeline" ? (
+        renderTimelineView()
       ) : (
         <div
           className="script-slide-table"

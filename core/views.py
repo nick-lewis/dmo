@@ -158,6 +158,10 @@ SCRIPT_MARKER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SCRIPT_WORD_PATTERN = re.compile(r"\S+")
+SCRIPT_MARKER_TIMING_ARG_PATTERN = re.compile(
+    r"^@\s*(\d+(?:\.\d+)?)\s*(ms|s)?$",
+    re.IGNORECASE,
+)
 
 
 def load_main_panel_app_registry():
@@ -358,6 +362,21 @@ def parse_script_marker_args(args_text):
     return args
 
 
+def split_script_marker_timing_args(args):
+    normalized_args = [str(arg).strip() for arg in args if str(arg).strip()]
+    if not normalized_args:
+        return [], None
+
+    match = SCRIPT_MARKER_TIMING_ARG_PATTERN.fullmatch(normalized_args[-1])
+    if not match:
+        return normalized_args, None
+
+    amount = float(match.group(1))
+    unit = (match.group(2) or "ms").lower()
+    seconds = amount / 1000 if unit == "ms" else amount
+    return normalized_args[:-1], round(max(0.0, seconds), 3)
+
+
 def parse_script_markers(script_text):
     parts = []
     markers = []
@@ -366,13 +385,19 @@ def parse_script_markers(script_text):
     for match in SCRIPT_MARKER_PATTERN.finditer(script_text or ""):
         parts.append(script_text[last_end : match.start()])
         spoken_so_far = normalize_script_speech("".join(parts))
+        args, explicit_time = split_script_marker_timing_args(
+            parse_script_marker_args(match.group(2))
+        )
+        marker = {
+            "args": args,
+            "charIndex": len(spoken_so_far),
+            "markerType": match.group(1).lower(),
+            "wordIndex": script_word_count(spoken_so_far),
+        }
+        if explicit_time is not None:
+            marker["time"] = explicit_time
         markers.append(
-            {
-                "args": parse_script_marker_args(match.group(2)),
-                "charIndex": len(spoken_so_far),
-                "markerType": match.group(1).lower(),
-                "wordIndex": script_word_count(spoken_so_far),
-            }
+            marker
         )
         last_end = match.end()
 
@@ -421,9 +446,16 @@ def script_cues_with_word_times(cues, words):
             continue
 
         next_cue = dict(cue)
-        cue_time = script_cue_time_from_words(next_cue, words)
-        if cue_time is not None:
-            next_cue["time"] = cue_time
+        try:
+            explicit_time = float(next_cue["time"])
+        except (KeyError, TypeError, ValueError):
+            explicit_time = None
+        if explicit_time is not None:
+            next_cue["time"] = round(max(0.0, explicit_time), 3)
+        else:
+            cue_time = script_cue_time_from_words(next_cue, words)
+            if cue_time is not None:
+                next_cue["time"] = cue_time
         timed_cues.append(next_cue)
     return timed_cues
 
@@ -2216,6 +2248,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "hasDisplayTranscript": has_display_transcript,
         "timedMarkerCount": timed_marker_count,
         "timingPreview": timing_preview,
+        "timingWords": timing_words,
         "timingWordCount": timing_word_count,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
@@ -4470,6 +4503,7 @@ def run_action_sequence(
                     {
                         "action": action,
                         "progress": marker.get("progress", 0),
+                        **({"time": marker["time"]} if "time" in marker else {}),
                         "wordIndex": marker.get("wordIndex", 0),
                     }
                 )

@@ -65,6 +65,7 @@ from .views import (
     REGISTERED_MAIN_PANEL_APP_IDS,
     realtime_voice_choices_for_model,
     run_action_sequence,
+    script_cues_with_word_times,
     serialize_experience,
 )
 
@@ -922,6 +923,53 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertTrue(cue_actions[7]["enabled"])
         self.assertTrue(cue_actions[8]["visible"])
         self.assertEqual(cue_actions[9]["overlayId"], "guide")
+
+    def test_script_markers_can_use_explicit_timeline_times(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        _, messages, _ = run_action_sequence(
+            session,
+            event,
+            [
+                {
+                    "id": "script-with-timeline-markers",
+                    "actionType": EventActionStep.ActionType.SCRIPT,
+                    "config": {
+                        "text": (
+                            "Hello [show_image: test-images/dLU-left.png, @1250ms] "
+                            "there [play_sound: sounds/chime.mp3, 0.4, @1.75s]."
+                        ),
+                    },
+                    "enabled": True,
+                    "sortOrder": 0,
+                },
+            ],
+        )
+
+        cues = messages[0].metadata["scriptCues"]
+        self.assertEqual(cues[0]["time"], 1.25)
+        self.assertEqual(cues[1]["time"], 1.75)
+        self.assertEqual(cues[0]["action"]["imagePath"], "test-images/dLU-left.png")
+        self.assertEqual(cues[1]["action"]["soundPath"], "sounds/chime.mp3")
+        self.assertEqual(cues[1]["action"]["volume"], "0.4")
+
+        aligned_cues = script_cues_with_word_times(
+            cues,
+            [
+                {"word": "Hello", "start": 0.0, "end": 0.4},
+                {"word": "there", "start": 0.4, "end": 0.9},
+            ],
+        )
+        self.assertEqual(aligned_cues[0]["time"], 1.25)
+        self.assertEqual(aligned_cues[1]["time"], 1.75)
 
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
