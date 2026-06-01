@@ -147,7 +147,8 @@ SCRIPT_MARKER_PATTERN = re.compile(
     (
         r"\[(show_image|slide|gslide|interactive|interactive_update|"
         r"interactive_clear|highlight|highlight_on|highlight_off|"
-        r"overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)"
+        r"overlay|overlay_off|agent_image_off|agent_image_on|"
+        r"pause|chat_off|chat_on|add_note|play_sound)"
         r"(?::\s*([^\]]+))?\]"
     ),
     re.IGNORECASE,
@@ -470,6 +471,12 @@ def resolve_script_marker_action(marker, config, runtime_context):
         return {
             "overlayId": overlay_id,
             "type": "overlay_off",
+        }
+
+    if marker_type in {"agent_image_off", "agent_image_on"}:
+        return {
+            "type": "agent_image_visibility",
+            "visible": marker_type == "agent_image_on",
         }
 
     if marker_type == "add_note":
@@ -2698,6 +2705,15 @@ def normalize_emitted_runtime_action(action):
             "type": "overlay_off",
         }, None
 
+    if action_type == "agent_image_visibility":
+        if not isinstance(action.get("visible"), bool):
+            return None, rejected_emitted_runtime_action(action, "invalid_visibility")
+        return {
+            "source": "interactive",
+            "type": "agent_image_visibility",
+            "visible": action.get("visible"),
+        }, None
+
     if action_type == "add_note":
         text = runtime_action_string(action.get("text"), max_length=1200)
         if not text:
@@ -3584,6 +3600,8 @@ def runtime_action_summary(action):
         return f"{action.get('overlayId', 'default') or 'default'} -> {action.get('imagePath', 'image') or 'image'}"
     if action_type == "overlay_off":
         return str(action.get("overlayId", "") or "all overlays")
+    if action_type == "agent_image_visibility":
+        return "agent image on" if action.get("visible", True) else "agent image off"
     if action_type == "add_note":
         return str(action.get("text", "note") or "note")[:180]
     if action_type == "play_sound":
@@ -3628,6 +3646,7 @@ def runtime_action_debug_details(action):
         "scriptCueCount",
         "scriptCueTypes",
         "scriptWordTiming",
+        "visible",
         "slideRef",
         "soundPath",
         "source",
@@ -3814,6 +3833,9 @@ def apply_runtime_actions_to_state(
     if not isinstance(chat_enabled, bool):
         chat_enabled = True
     avatar_path = str(ui_runtime.get("avatarPath", "") or "")
+    avatar_visible = ui_runtime.get("avatarVisible", True)
+    if not isinstance(avatar_visible, bool):
+        avatar_visible = True
     overlays_value = ui_runtime.get("overlays")
     overlays = dict(overlays_value) if isinstance(overlays_value, dict) else {}
     notes_value = ui_runtime.get("notes")
@@ -3924,6 +3946,11 @@ def apply_runtime_actions_to_state(
             image_path = str(action.get("imagePath", "") or "").strip()
             if image_path:
                 avatar_path = image_path
+                avatar_visible = True
+            continue
+
+        if action_type == "agent_image_visibility":
+            avatar_visible = bool(action.get("visible", True))
             continue
 
         if action_type == "overlay":
@@ -4012,6 +4039,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["buttons"] = buttons
     ui_runtime["chatEnabled"] = chat_enabled
     ui_runtime["avatarPath"] = avatar_path
+    ui_runtime["avatarVisible"] = avatar_visible
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
@@ -4058,6 +4086,7 @@ def hydrate_initial_script_runtime_state(session):
         or ui_runtime.get("slide")
         or ui_runtime.get("slideError")
         or ui_runtime.get("avatarPath")
+        or "avatarVisible" in ui_runtime
         or ui_runtime.get("overlays")
         or ui_runtime.get("notes")
     ):

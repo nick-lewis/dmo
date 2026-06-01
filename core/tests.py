@@ -870,12 +870,14 @@ class InteractiveRuntimeActionTests(TestCase):
                     "config": {
                         "text": (
                             "Hello [show_image: test-images/dLU-left.png] "
+                            "[agent_image_off] "
                             "there [overlay: guide, test-images/dLU-right.png] "
                             "friend [add_note: Remember the mark] "
                             "[play_sound: sounds/chime.mp3, 0.4] "
                             "[pause: 500] "
                             "[chat_off] "
                             "[chat_on] "
+                            "[agent_image_on] "
                             "[overlay_off: guide]."
                         ),
                     },
@@ -895,25 +897,29 @@ class InteractiveRuntimeActionTests(TestCase):
             [action["type"] for action in cue_actions],
             [
                 "show_image",
+                "agent_image_visibility",
                 "overlay",
                 "add_note",
                 "play_sound",
                 "pause",
                 "chat_availability",
                 "chat_availability",
+                "agent_image_visibility",
                 "overlay_off",
             ],
         )
         self.assertEqual(cue_actions[0]["imagePath"], "test-images/dLU-left.png")
-        self.assertEqual(cue_actions[1]["overlayId"], "guide")
-        self.assertEqual(cue_actions[1]["imagePath"], "test-images/dLU-right.png")
-        self.assertEqual(cue_actions[2]["text"], "Remember the mark")
-        self.assertEqual(cue_actions[3]["soundPath"], "sounds/chime.mp3")
-        self.assertEqual(cue_actions[3]["volume"], "0.4")
-        self.assertEqual(cue_actions[4]["durationMs"], "500")
-        self.assertFalse(cue_actions[5]["enabled"])
-        self.assertTrue(cue_actions[6]["enabled"])
-        self.assertEqual(cue_actions[7]["overlayId"], "guide")
+        self.assertFalse(cue_actions[1]["visible"])
+        self.assertEqual(cue_actions[2]["overlayId"], "guide")
+        self.assertEqual(cue_actions[2]["imagePath"], "test-images/dLU-right.png")
+        self.assertEqual(cue_actions[3]["text"], "Remember the mark")
+        self.assertEqual(cue_actions[4]["soundPath"], "sounds/chime.mp3")
+        self.assertEqual(cue_actions[4]["volume"], "0.4")
+        self.assertEqual(cue_actions[5]["durationMs"], "500")
+        self.assertFalse(cue_actions[6]["enabled"])
+        self.assertTrue(cue_actions[7]["enabled"])
+        self.assertTrue(cue_actions[8]["visible"])
+        self.assertEqual(cue_actions[9]["overlayId"], "guide")
 
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
@@ -922,6 +928,10 @@ class InteractiveRuntimeActionTests(TestCase):
                 {
                     "imagePath": "test-images/dLU-left.png",
                     "type": "show_image",
+                },
+                {
+                    "type": "agent_image_visibility",
+                    "visible": False,
                 },
                 {
                     "imagePath": "test-images/dLU-right.png",
@@ -938,6 +948,7 @@ class InteractiveRuntimeActionTests(TestCase):
 
         ui_runtime = state["uiRuntime"]
         self.assertEqual(ui_runtime["avatarPath"], "test-images/dLU-left.png")
+        self.assertFalse(ui_runtime["avatarVisible"])
         self.assertEqual(
             ui_runtime["overlays"]["guide"],
             {"id": "guide", "imagePath": "test-images/dLU-right.png"},
@@ -958,6 +969,10 @@ class InteractiveRuntimeActionTests(TestCase):
             [
                 {"overlayId": "guide", "type": "overlay_off"},
                 {
+                    "imagePath": "test-images/dLU-right.png",
+                    "type": "show_image",
+                },
+                {
                     "noteId": "note-1",
                     "text": "Remember the marked time.",
                     "type": "add_note",
@@ -965,6 +980,7 @@ class InteractiveRuntimeActionTests(TestCase):
             ],
         )
         self.assertEqual(state["uiRuntime"]["overlays"], {})
+        self.assertTrue(state["uiRuntime"]["avatarVisible"])
         self.assertEqual(len(state["uiRuntime"]["notes"]), 1)
 
     def test_editor_rejects_unregistered_main_panel_app_action(self):

@@ -121,13 +121,23 @@ const scriptMarkerOptions = [
   },
   {
     label: "Overlay",
-    marker: "[overlay: default, test-images/dLU-left.png]",
-    title: "Show a timed image overlay at this point in the script.",
+    marker: "[overlay: guide, test-images/dLU-left.png]",
+    title: "Show a named floating image overlay at this point in the script.",
   },
   {
     label: "Clear overlay",
-    marker: "[overlay_off: default]",
-    title: "Clear one timed overlay, or leave blank to clear all overlays.",
+    marker: "[overlay_off: guide]",
+    title: "Clear a named floating image overlay. Use [overlay_off] to clear all overlays.",
+  },
+  {
+    label: "Image off",
+    marker: "[agent_image_off]",
+    title: "Hide the main agent image next to the chat at this point in the script.",
+  },
+  {
+    label: "Image on",
+    marker: "[agent_image_on]",
+    title: "Show the main agent image next to the chat at this point in the script.",
   },
   {
     label: "Note",
@@ -184,9 +194,9 @@ const scriptMarkerOptions = [
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 const scriptMarkerPattern =
-  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
+  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
 const scriptMarkerParsePattern =
-  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
+  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
 const scriptAudioSources = new Set([
   "event-action",
   "conversation-tool-action",
@@ -509,6 +519,7 @@ type PythonNotebookPayload = SessionPayload & {
 
 type RuntimeUiState = {
   avatarPath?: string;
+  avatarVisible?: boolean;
   interactive?: Record<string, unknown>;
   leftPanels?: Record<string, unknown>;
   notes?: RuntimeNote[];
@@ -863,6 +874,8 @@ function countScriptWords(text: string) {
 function scriptMarkerLabel(type: string) {
   const labels: Record<string, string> = {
     add_note: "Note",
+    agent_image_off: "Image off",
+    agent_image_on: "Image on",
     chat_off: "Chat off",
     chat_on: "Chat on",
     gslide: "Slide",
@@ -885,6 +898,8 @@ function scriptMarkerLabel(type: string) {
 function scriptMarkerIcon(type: string) {
   const icons: Record<string, string> = {
     add_note: "N",
+    agent_image_off: "I-",
+    agent_image_on: "I+",
     chat_off: "C-",
     chat_on: "C+",
     gslide: "S",
@@ -943,6 +958,8 @@ function scriptMarkerDetail(type: string, args: string, argList: string[]) {
     return appDetail || args;
   }
 
+  if (type === "agent_image_off") return "hide main image";
+  if (type === "agent_image_on") return "show main image";
   if (type === "interactive_clear") return "";
   return args;
 }
@@ -1897,6 +1914,9 @@ function runtimeActionText(action: Record<string, unknown>) {
   }
   if (type === "overlay_off") {
     return compactRuntimeValue(action.overlayId, "all overlays");
+  }
+  if (type === "agent_image_visibility") {
+    return action.visible === false ? "main image off" : "main image on";
   }
   if (type === "add_note") {
     return compactRuntimeValue(action.text, "note");
@@ -10081,6 +10101,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   const [runtimeChatEnabled, setRuntimeChatEnabled] = useState(true);
   const [runtimeSoundCount, setRuntimeSoundCount] = useState(0);
   const [runtimeAvatarPath, setRuntimeAvatarPath] = useState("");
+  const [runtimeAvatarVisible, setRuntimeAvatarVisible] = useState(true);
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
   >({});
@@ -10118,6 +10139,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   ): RuntimeUiState {
     return {
       avatarPath: runtimeAvatarPath,
+      avatarVisible: runtimeAvatarVisible,
       interactive: runtimeInteractiveState,
       leftPanels: {
         pythonNotebook,
@@ -10494,7 +10516,12 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           typeof action.imagePath === "string" ? action.imagePath.trim() : "";
         if (imagePath) {
           setRuntimeAvatarPath(imagePath);
+          setRuntimeAvatarVisible(true);
         }
+      }
+
+      if (action.type === "agent_image_visibility") {
+        setRuntimeAvatarVisible(action.visible !== false);
       }
 
       if (action.type === "overlay") {
@@ -10638,6 +10665,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     const triggersValue = uiRuntime.triggers;
     const chatEnabledValue = uiRuntime.chatEnabled;
     const avatarPathValue = uiRuntime.avatarPath;
+    const avatarVisibleValue = uiRuntime.avatarVisible;
     const overlaysValue = uiRuntime.overlays;
     const notesValue = uiRuntime.notes;
     const leftPanelsValue =
@@ -10707,6 +10735,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setRuntimeButtons(nextButtons);
     setRuntimeAvatarPath(
       typeof avatarPathValue === "string" ? avatarPathValue.trim() : "",
+    );
+    setRuntimeAvatarVisible(
+      typeof avatarVisibleValue === "boolean" ? avatarVisibleValue : true,
     );
     setRuntimeChatEnabled(
       typeof chatEnabledValue === "boolean" ? chatEnabledValue : true,
@@ -10891,6 +10922,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     setNotesVisible(false);
     setRuntimeNotes([]);
     setRuntimeActionLog([]);
+    setRuntimeAvatarVisible(true);
     setPythonNotebook(defaultPythonNotebookState());
     setPythonNotebookError("");
     setPythonNotebookStatus("idle");
@@ -12490,6 +12522,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
               <ChatPanelContent
                 assistantName={tutorForm.assistantName}
                 avatarPath={runtimeAvatarPath || tutorForm.avatarPath}
+                avatarVisible={runtimeAvatarVisible}
                 error={chatError}
                 isChatEnabled={runtimeChatEnabled}
                 isSending={isSendingMessage}
@@ -12534,6 +12567,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           <RuntimeInspectorPanel
             actionLog={runtimeActionLog}
             avatarPath={runtimeAvatarPath}
+            avatarVisible={runtimeAvatarVisible}
             buttons={runtimeButtons}
             chatEnabled={runtimeChatEnabled}
             currentEvent={currentRuntimeEvent}
@@ -12567,6 +12601,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 function RuntimeInspectorPanel({
   actionLog,
   avatarPath,
+  avatarVisible,
   buttons,
   chatEnabled,
   currentEvent,
@@ -12593,6 +12628,7 @@ function RuntimeInspectorPanel({
 }: {
   actionLog: RuntimeActionLogEntry[];
   avatarPath: string;
+  avatarVisible: boolean;
   buttons: RuntimeButton[];
   chatEnabled: boolean;
   currentEvent: ExperienceEvent | null;
@@ -13005,6 +13041,10 @@ function RuntimeInspectorPanel({
             <div className="runtime-inspector-row">
               <span>Agent image</span>
               <code>{avatarPath || "---"}</code>
+            </div>
+            <div className="runtime-inspector-row">
+              <span>Image visible</span>
+              <code>{avatarVisible ? "yes" : "no"}</code>
             </div>
             {overlays.map((overlay) => (
               <div className="runtime-inspector-row" key={overlay.id}>
@@ -15849,6 +15889,7 @@ function InteractiveWorkspace({
 type ChatPanelContentProps = {
   assistantName: string;
   avatarPath: string;
+  avatarVisible: boolean;
   error: string;
   isChatEnabled: boolean;
   isSending: boolean;
@@ -15868,6 +15909,7 @@ type ChatPanelContentProps = {
 function ChatPanelContent({
   assistantName,
   avatarPath,
+  avatarVisible,
   error,
   isChatEnabled,
   isSending,
@@ -16035,11 +16077,13 @@ function ChatPanelContent({
         </form>
       </div>
 
-      <img
-        alt={assistantDisplayName}
-        className="chat-dlu-figure"
-        src={publicAsset(assistantAvatarPath)}
-      />
+      {avatarVisible ? (
+        <img
+          alt={assistantDisplayName}
+          className="chat-dlu-figure"
+          src={publicAsset(assistantAvatarPath)}
+        />
+      ) : null}
       {runtimeOverlays.map((overlay) => (
         <img
           alt=""
