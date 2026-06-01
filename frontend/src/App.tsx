@@ -16051,25 +16051,6 @@ function ScriptAudioPanel({
                 <span className="script-audio-meta">
                   {scriptAudioMetadataText(item)}
                 </span>
-                <span
-                  className={`script-audio-pill ${item.cached ? "ready" : ""}`}
-                  title={
-                    item.cached
-                      ? `Audio artifact cached (${item.cacheKey})`
-                      : item.canGenerate
-                        ? "Audio artifact has not been generated yet."
-                        : item.generationReason ||
-                          "This script cannot be pregenerated."
-                  }
-                >
-                  {item.cached ? "audio" : item.canGenerate ? "missing" : "dynamic"}
-                </span>
-                <span
-                  className={`script-audio-pill ${item.wordsCached ? "ready" : ""}`}
-                  title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text."
-                >
-                  {item.wordsCached ? "timing" : "no timing"}
-                </span>
                 <button
                   aria-expanded={isDetailExpanded}
                   className="script-audio-detail-toggle"

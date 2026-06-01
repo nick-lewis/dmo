@@ -894,7 +894,7 @@ button {
   display: grid;
   grid-template-columns:
     minmax(122px, 0.42fr) minmax(0, 1fr) minmax(92px, 0.28fr)
-    minmax(54px, auto) minmax(70px, auto) minmax(64px, auto) 28px 28px;
+    minmax(64px, auto) 28px 28px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -947,23 +947,6 @@ button {
   color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
   font-size: 0.64rem;
   font-weight: 720;
-}
-
-.script-audio-pill {
-  min-width: 46px;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--muted-ink) 18%, var(--panel-soft-border));
-  border-radius: 999px;
-  color: color-mix(in srgb, var(--muted-ink) 70%, transparent);
-  font-size: 0.62rem;
-  font-weight: 840;
-  text-align: center;
-}
-
-.script-audio-pill.ready {
-  border-color: color-mix(in srgb, var(--accent-4) 30%, var(--panel-soft-border));
-  color: color-mix(in srgb, var(--accent-4) 82%, var(--page-ink));
-  background: color-mix(in srgb, var(--accent-4) 10%, transparent);
 }
 
 .script-audio-detail-toggle {
