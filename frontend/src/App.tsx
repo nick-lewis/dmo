@@ -98,12 +98,12 @@ const conversationItemDragMimeType = "application/x-dlu-conversation-item";
 const handlerActionDragMimeType = "application/x-dlu-handler-action";
 const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
-const scriptTextStreamMaxMs = 16000;
 const scriptImmediateCueProgress = 0.001;
 const slideDissolveDurationMs = 720;
 const defaultScriptActionOffsetMs = 800;
 const scriptTextareaMinHeightPx = 220;
 const scriptTextareaMaxHeightPx = 680;
+const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -1059,15 +1059,7 @@ function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => left.sequence - right.sequence);
 }
 
-function scriptStreamDurationMs(text: string, audioDurationSeconds?: number) {
-  if (
-    typeof audioDurationSeconds === "number" &&
-    Number.isFinite(audioDurationSeconds) &&
-    audioDurationSeconds > 0
-  ) {
-    return clamp(audioDurationSeconds * 1000, scriptTextStreamMinMs, scriptTextStreamMaxMs);
-  }
-
+function scriptStreamDurationMs(text: string) {
   return clamp(text.length * 42, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
 }
 
@@ -1081,50 +1073,6 @@ function scriptStreamIndexAt(text: string, progress: number) {
   }
 
   return rawIndex;
-}
-
-type ScriptWordRevealPoint = {
-  index: number;
-  time: number;
-};
-
-function scriptWordRevealPoints(text: string, words: ScriptWord[]) {
-  const textWords = [...text.matchAll(/\S+/g)];
-  const pointCount = Math.min(textWords.length, words.length);
-  const points: ScriptWordRevealPoint[] = [];
-
-  for (let index = 0; index < pointCount; index += 1) {
-    const match = textWords[index];
-    const matchIndex = match.index ?? 0;
-    let revealIndex = matchIndex + match[0].length;
-    while (revealIndex < text.length && /\s/.test(text[revealIndex])) {
-      revealIndex += 1;
-    }
-    points.push({
-      index: revealIndex,
-      time: words[index].start,
-    });
-  }
-
-  if (points.length && points[points.length - 1].index < text.length) {
-    points.push({
-      index: text.length,
-      time: words[Math.min(pointCount, words.length) - 1]?.end ?? 0,
-    });
-  }
-
-  return points;
-}
-
-function scriptStreamIndexAtAudioTime(points: ScriptWordRevealPoint[], time: number) {
-  if (!points.length) return 0;
-
-  let nextIndex = 0;
-  for (const point of points) {
-    if (time + 0.015 < point.time) break;
-    nextIndex = point.index;
-  }
-  return nextIndex;
 }
 
 function spokenScriptText(text: string) {
@@ -3753,6 +3701,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   >("idle");
   const [experienceValidationError, setExperienceValidationError] = useState("");
   const [playingScriptAudioId, setPlayingScriptAudioId] = useState("");
+  const [scriptAudioPlaybackRate, setScriptAudioPlaybackRate] = useState(1);
   const overviewAutosaveTimer = useRef<number | null>(null);
   const overviewAutosaveVersion = useRef(0);
   const tutorAutosaveTimer = useRef<number | null>(null);
@@ -4398,6 +4347,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       );
     };
   }, [isConversationAddMenuOpen]);
+
+  useEffect(() => {
+    if (!scriptAudioPreviewRef.current) return;
+    scriptAudioPreviewRef.current.playbackRate = scriptAudioPlaybackRate;
+  }, [scriptAudioPlaybackRate]);
 
   useEffect(() => {
     if (!conversationAddMenuToolId) return;
@@ -7361,6 +7315,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
     stopScriptAudioPreview();
     const audio = new Audio(item.audioUrl);
+    audio.defaultPlaybackRate = scriptAudioPlaybackRate;
+    audio.playbackRate = scriptAudioPlaybackRate;
     scriptAudioPreviewRef.current = audio;
     setPlayingScriptAudioId(item.id);
     audio.onended = () => {
@@ -8147,6 +8103,8 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onRegenerateOne={(scriptId) => void generateScriptAudio(scriptId, true)}
                 onStop={stopScriptAudioPreview}
                 playingId={playingScriptAudioId}
+                playbackRate={scriptAudioPlaybackRate}
+                onPlaybackRateChange={setScriptAudioPlaybackRate}
                 status={scriptAudioStatus}
               />
             </section>
@@ -12266,13 +12224,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
   function streamScriptMessageText(
     message: ChatMessage,
     durationMs: number,
-    audio?: HTMLAudioElement,
-    words: ScriptWord[] = [],
   ) {
     const fullText = message.content;
     if (!fullText.trim()) return Promise.resolve();
-    const revealPoints =
-      audio && words.length ? scriptWordRevealPoints(fullText, words) : [];
 
     setMessages((current) =>
       current.map((currentMessage) =>
@@ -12292,7 +12246,6 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     return new Promise<void>((resolve) => {
       let timeoutId = 0;
-      let frameId = 0;
       let isDone = false;
       const startedAt = performance.now();
 
@@ -12300,7 +12253,6 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         if (isDone) return;
         isDone = true;
         window.clearTimeout(timeoutId);
-        window.cancelAnimationFrame(frameId);
         if (scriptTextSkipRef.current === finish) {
           scriptTextSkipRef.current = null;
         }
@@ -12325,17 +12277,9 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       const tick = () => {
         if (isDone) return;
 
-        let progress = 0;
-        let nextIndex = 0;
-
-        if (audio && revealPoints.length) {
-          nextIndex = scriptStreamIndexAtAudioTime(revealPoints, audio.currentTime);
-          progress = nextIndex >= fullText.length || audio.ended ? 1 : 0;
-        } else {
-          const elapsed = performance.now() - startedAt;
-          progress = Math.min(1, elapsed / durationMs);
-          nextIndex = scriptStreamIndexAt(fullText, progress);
-        }
+        const elapsed = performance.now() - startedAt;
+        const progress = Math.min(1, elapsed / durationMs);
+        const nextIndex = scriptStreamIndexAt(fullText, progress);
 
         setMessages((current) =>
           current.map((currentMessage) =>
@@ -12358,11 +12302,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           return;
         }
 
-        if (audio && revealPoints.length) {
-          frameId = window.requestAnimationFrame(tick);
-        } else {
-          timeoutId = window.setTimeout(tick, 40);
-        }
+        timeoutId = window.setTimeout(tick, 40);
       };
 
       scriptTextSkipRef.current = finish;
@@ -12489,18 +12429,13 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     audioUrl: string,
     cueValue?: unknown,
     durationSeconds?: number | null,
-    wordValue?: unknown,
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
-    const durationMs = scriptStreamDurationMs(
-      message.content,
-      durationSeconds ?? undefined,
-    );
+    const durationMs = scriptStreamDurationMs(message.content);
     const fallbackDurationSeconds = durationMs / 1000;
 
     const allCues = scriptCuesFromMessage(message, cueValue);
-    const words = scriptWordsFromValue(wordValue);
     const scriptActionOffsetMs = tutorForm.scriptActionOffsetMs;
     await Promise.all([
       waitForAudioMetadata(audio),
@@ -12515,7 +12450,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         ),
     );
     await Promise.all([
-      streamScriptMessageText(message, durationMs, audio, words),
+      streamScriptMessageText(message, durationMs),
       playPreparedScriptAudio(
         audio,
         cues,
@@ -12591,7 +12526,6 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
           payload.audioUrl,
           payload.scriptCues,
           payload.durationSeconds,
-          payload.scriptWords,
         );
       } catch (error) {
         scriptTextSkipRef.current?.();
@@ -12667,6 +12601,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       revealConversationChoiceActions(afterEntryActions);
       return;
     }
+    setTurnAnchorMessageId(scriptMessages[0].id);
     deferConversationChoiceActions(afterEntryActions);
 
     const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
@@ -14868,6 +14803,8 @@ function ScriptAudioPanel({
   onRegenerateOne,
   onStop,
   playingId,
+  playbackRate,
+  onPlaybackRateChange,
   status,
 }: {
   error: string;
@@ -14880,6 +14817,8 @@ function ScriptAudioPanel({
   onRegenerateOne: (scriptId: string) => void;
   onStop: () => void;
   playingId: string;
+  playbackRate: number;
+  onPlaybackRateChange: (rate: number) => void;
   status: "idle" | "loading" | "generating";
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -14896,14 +14835,51 @@ function ScriptAudioPanel({
       : status === "loading"
         ? "Loading"
         : `${items.length} scripts`;
+  const peekItem = items.find((item) => item.preview || item.source);
+  const panelClassName = [
+    "script-audio-panel",
+    items.length ? "has-items" : "",
+    isExpanded ? "is-expanded" : "is-collapsed",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className="script-audio-panel">
-      <div className="script-audio-header">
-        <div>
-          <span>Script audio</span>
-          <strong>{statusLabel}</strong>
-        </div>
+    <div className={panelClassName}>
+      <div className="script-audio-topline">
+        <button
+          aria-expanded={isExpanded}
+          className="script-audio-overview"
+          onClick={() => setIsExpanded((current) => !current)}
+          title={isExpanded ? "Collapse script audio list" : "Expand script audio list"}
+          type="button"
+        >
+          <div className="script-audio-header-copy">
+            <span>Script audio</span>
+            <strong>{statusLabel}</strong>
+            <em aria-hidden="true">{isExpanded ? "−" : "+"}</em>
+          </div>
+          <div className="script-audio-summary">
+            <span>{readyCount}/{items.length} ready</span>
+            {missingCount ? <span>{missingCount} missing</span> : null}
+            <span>{audioCount}/{items.length} audio</span>
+            <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
+              {timingCount}/{items.length} timed subtitles
+            </span>
+            {dynamicCount ? (
+              <span title="Dynamic scripts contain template variables and are skipped by pregeneration for now.">
+                {dynamicCount} dynamic
+              </span>
+            ) : null}
+            {playingId ? <span>playing</span> : null}
+          </div>
+          {!isExpanded && peekItem ? (
+            <div className="script-audio-peek">
+              <strong>{peekItem.source}</strong>
+              <span>{peekItem.preview || peekItem.script || "---"}</span>
+            </div>
+          ) : null}
+        </button>
         <div className="script-audio-actions">
           {playingId ? (
             <button
@@ -14915,6 +14891,22 @@ function ScriptAudioPanel({
               Stop preview
             </button>
           ) : null}
+          <label className="script-audio-speed">
+            <span>Speed</span>
+            <select
+              aria-label="Script audio preview speed"
+              onChange={(event) =>
+                onPlaybackRateChange(Number(event.target.value) || 1)
+              }
+              value={String(playbackRate)}
+            >
+              {scriptAudioPlaybackRateOptions.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate}x
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="header-action"
             disabled={isBusy || !missingCount}
@@ -14937,30 +14929,7 @@ function ScriptAudioPanel({
           >
             Regenerate all
           </button>
-          <button
-            aria-expanded={isExpanded}
-            className="header-action secondary"
-            onClick={() => setIsExpanded((current) => !current)}
-            type="button"
-          >
-            {isExpanded ? "Hide scripts" : "Show scripts"}
-          </button>
         </div>
-      </div>
-
-      <div className="script-audio-summary">
-        <span>{readyCount}/{items.length} ready</span>
-        {missingCount ? <span>{missingCount} missing</span> : null}
-        <span>{audioCount}/{items.length} audio</span>
-        <span title="Word timing drives authored-script subtitle reveal; it is not shown as Whisper's rewritten text.">
-          {timingCount}/{items.length} timed subtitles
-        </span>
-        {dynamicCount ? (
-          <span title="Dynamic scripts contain template variables and are skipped by pregeneration for now.">
-            {dynamicCount} dynamic
-          </span>
-        ) : null}
-        {playingId ? <span>playing</span> : null}
       </div>
 
       {isExpanded ? (
@@ -16802,6 +16771,12 @@ function ChatPanelContent({
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const assistantDisplayName = assistantName.trim() || "dee-lou";
   const assistantAvatarPath = avatarPath.trim() || "test-images/dLU-right.png";
+  const turnAnchorMessage = turnAnchorMessageId
+    ? messages.find((message) => message.id === turnAnchorMessageId)
+    : null;
+  const turnAnchorIsVisible = Boolean(
+    turnAnchorMessage && !turnAnchorMessage.metadata?.scriptHidden,
+  );
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -16825,7 +16800,7 @@ function ChatPanelContent({
     });
 
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [messages.length, turnAnchorMessageId]);
+  }, [messages.length, turnAnchorIsVisible, turnAnchorMessageId]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
