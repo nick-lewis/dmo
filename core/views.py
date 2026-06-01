@@ -36,6 +36,7 @@ from .audio_cache import (
 )
 from .models import (
     DEFAULT_CLASSIFICATION_MODEL,
+    DEFAULT_SCRIPT_ACTION_OFFSET_MS,
     EventActionStep,
     EventChatTool,
     EventClassifier,
@@ -1230,7 +1231,7 @@ def ensure_tutor_settings(experience):
             "avatar_path": "test-images/dLU-right.png",
             "classification_model": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
             "realtime_model": settings.DLU_REALTIME_DEFAULT_MODEL,
-            "script_action_offset_ms": 0,
+            "script_action_offset_ms": DEFAULT_SCRIPT_ACTION_OFFSET_MS,
             "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
             "system_prompt": settings.DLU_REALTIME_DEFAULT_INSTRUCTIONS,
             "voice_instructions": "",
@@ -1646,7 +1647,10 @@ def create_experience_from_export_payload(user, payload):
                     -SCRIPT_ACTION_OFFSET_LIMIT_MS,
                     min(
                         SCRIPT_ACTION_OFFSET_LIMIT_MS,
-                        import_signed_int(tutor_data.get("scriptActionOffsetMs"), 0),
+                        import_signed_int(
+                            tutor_data.get("scriptActionOffsetMs"),
+                            DEFAULT_SCRIPT_ACTION_OFFSET_MS,
+                        ),
                     ),
                 )
             )

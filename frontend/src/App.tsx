@@ -86,6 +86,7 @@ const scriptTextStreamMinMs = 1400;
 const scriptTextStreamMaxMs = 16000;
 const scriptImmediateCueProgress = 0.001;
 const slideDissolveDurationMs = 720;
+const defaultScriptActionOffsetMs = 800;
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -3570,7 +3571,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     avatarPath: "test-images/dLU-right.png",
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
-    scriptActionOffsetMs: 0,
+    scriptActionOffsetMs: defaultScriptActionOffsetMs,
     systemPrompt: "",
     voice: "ash",
     voiceInstructions: "",
@@ -10050,7 +10051,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
     avatarPath: "test-images/dLU-right.png",
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
-    scriptActionOffsetMs: 0,
+    scriptActionOffsetMs: defaultScriptActionOffsetMs,
     systemPrompt: "",
     voice: "ash",
     voiceInstructions: "",
