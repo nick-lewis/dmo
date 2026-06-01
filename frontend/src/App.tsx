@@ -1,10 +1,12 @@
 import {
   type CSSProperties,
+  type ClipboardEvent as ReactClipboardEvent,
   type DragEvent,
   type Dispatch,
   type FocusEvent,
   type FormEvent,
   Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
@@ -13997,6 +13999,7 @@ function ScriptActionEditor({
   text: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const chipViewRef = useRef<HTMLDivElement | null>(null);
   const slideTableRef = useRef<HTMLDivElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const actionMenuTextInputRef = useRef<HTMLInputElement | null>(null);
@@ -14104,6 +14107,25 @@ function ScriptActionEditor({
     if (!scriptActionMenu) return;
 
     const focusFrame = window.requestAnimationFrame(() => {
+      const menu = actionMenuRef.current;
+      if (menu) {
+        const rect = menu.getBoundingClientRect();
+        const nextViewportX = menuCoordinate(rect.x, rect.width, window.innerWidth);
+        const nextViewportY = menuCoordinate(rect.y, rect.height, window.innerHeight);
+        const nextX = Math.round(scriptActionMenu.x + nextViewportX - rect.x);
+        const nextY = Math.round(scriptActionMenu.y + nextViewportY - rect.y);
+        if (nextX !== scriptActionMenu.x || nextY !== scriptActionMenu.y) {
+          setScriptActionMenu((current) =>
+            current
+              ? {
+                  ...current,
+                  x: nextX,
+                  y: nextY,
+                }
+              : current,
+          );
+        }
+      }
       actionMenuTextInputRef.current?.focus({ preventScroll: true });
     });
 
@@ -14327,6 +14349,172 @@ function ScriptActionEditor({
     setScriptInsertionIndex(safeStart + nextValue.length);
   }
 
+  function markerContainingIndex(index: number) {
+    return markers.find((marker) => index > marker.start && index < marker.end);
+  }
+
+  function normalizeEditableScriptIndex(
+    index: number,
+    bias: "before" | "after" = "after",
+  ) {
+    const safeIndex = Math.round(clamp(index, 0, text.length));
+    const containingMarker = markerContainingIndex(safeIndex);
+    if (!containingMarker) return safeIndex;
+    return bias === "before" ? containingMarker.start : containingMarker.end;
+  }
+
+  function previousEditableScriptIndex(index: number) {
+    const safeIndex = normalizeEditableScriptIndex(index, "before");
+    if (safeIndex <= 0) return 0;
+
+    const markerBefore = markers.find((marker) => marker.end === safeIndex);
+    if (markerBefore) return markerBefore.start;
+
+    const candidate = safeIndex - 1;
+    const containingMarker = markers.find(
+      (marker) => candidate >= marker.start && candidate < marker.end,
+    );
+    return containingMarker ? containingMarker.start : candidate;
+  }
+
+  function nextEditableScriptIndex(index: number) {
+    const safeIndex = normalizeEditableScriptIndex(index, "after");
+    if (safeIndex >= text.length) return text.length;
+
+    const markerAfter = markers.find((marker) => marker.start === safeIndex);
+    if (markerAfter) return markerAfter.end;
+
+    const candidate = safeIndex + 1;
+    const containingMarker = markers.find(
+      (marker) => candidate > marker.start && candidate <= marker.end,
+    );
+    return containingMarker ? containingMarker.end : candidate;
+  }
+
+  function focusChipView() {
+    chipViewRef.current?.focus({ preventScroll: true });
+  }
+
+  function setChipInsertionIndex(index: number, bias: "before" | "after" = "after") {
+    setScriptInsertionIndex(normalizeEditableScriptIndex(index, bias));
+    setEditingMarkerKey(null);
+  }
+
+  function insertTextAtChipCursor(insertedText: string) {
+    if (!insertedText) return;
+    const insertionIndex = normalizeEditableScriptIndex(
+      scriptInsertionIndex ?? text.length,
+    );
+    const nextText = `${text.slice(0, insertionIndex)}${insertedText}${text.slice(
+      insertionIndex,
+    )}`;
+    onTextChange(nextText);
+    setScriptInsertionIndex(insertionIndex + insertedText.length);
+    setEditingMarkerKey(null);
+  }
+
+  function backspaceChipText() {
+    const cursor = normalizeEditableScriptIndex(
+      scriptInsertionIndex ?? text.length,
+      "before",
+    );
+    if (cursor <= 0) return;
+
+    const markerBefore = markers.find((marker) => marker.end === cursor);
+    if (markerBefore) {
+      setChipInsertionIndex(markerBefore.start, "before");
+      return;
+    }
+
+    const previousIndex = previousEditableScriptIndex(cursor);
+    onTextChange(`${text.slice(0, previousIndex)}${text.slice(cursor)}`);
+    setScriptInsertionIndex(previousIndex);
+    setEditingMarkerKey(null);
+  }
+
+  function deleteChipText() {
+    const cursor = normalizeEditableScriptIndex(
+      scriptInsertionIndex ?? text.length,
+    );
+    if (cursor >= text.length) return;
+
+    const markerAfter = markers.find((marker) => marker.start === cursor);
+    if (markerAfter) {
+      setChipInsertionIndex(markerAfter.end);
+      return;
+    }
+
+    const nextIndex = nextEditableScriptIndex(cursor);
+    onTextChange(`${text.slice(0, cursor)}${text.slice(nextIndex)}`);
+    setScriptInsertionIndex(cursor);
+    setEditingMarkerKey(null);
+  }
+
+  function handleChipViewKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.defaultPrevented) return;
+    if (event.target !== event.currentTarget) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setChipInsertionIndex(
+        previousEditableScriptIndex(scriptInsertionIndex ?? text.length),
+        "before",
+      );
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setChipInsertionIndex(nextEditableScriptIndex(scriptInsertionIndex ?? 0));
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      setChipInsertionIndex(0, "before");
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      setChipInsertionIndex(text.length);
+      return;
+    }
+
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      backspaceChipText();
+      return;
+    }
+
+    if (event.key === "Delete") {
+      event.preventDefault();
+      deleteChipText();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      insertTextAtChipCursor("\n");
+      return;
+    }
+
+    if (event.key.length === 1) {
+      event.preventDefault();
+      insertTextAtChipCursor(event.key);
+    }
+  }
+
+  function handleChipViewPaste(event: ReactClipboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+    const pastedText = event.clipboardData.getData("text/plain");
+    if (!pastedText) return;
+
+    event.preventDefault();
+    insertTextAtChipCursor(pastedText);
+  }
+
   function editMarker(marker: ScriptMarkerInstance) {
     setEditingMarkerKey(scriptMarkerEditKey(marker));
   }
@@ -14475,7 +14663,8 @@ function ScriptActionEditor({
         key={key}
         onClick={(event) => {
           event.stopPropagation();
-          placeScriptInsertionIndex(insertionIndex);
+          focusChipView();
+          setChipInsertionIndex(insertionIndex);
         }}
         onContextMenu={(event) => openScriptActionMenu(event, insertionIndex)}
         onDragEnter={(event) => {
@@ -14515,7 +14704,18 @@ function ScriptActionEditor({
     afterIndex: number,
     clientX: number,
   ) {
-    return dropIndexForTextTarget(element, beforeIndex, afterIndex, clientX);
+    const textLength = Math.max(0, afterIndex - beforeIndex);
+    if (textLength <= 1) {
+      return dropIndexForTextTarget(element, beforeIndex, afterIndex, clientX);
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return dropIndexForTextTarget(element, beforeIndex, afterIndex, clientX);
+    }
+
+    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+    return Math.round(beforeIndex + ratio * textLength);
   }
 
   function handleTextTargetDragOver(
@@ -14558,7 +14758,8 @@ function ScriptActionEditor({
     event: MouseEvent<HTMLElement>,
   ) {
     event.stopPropagation();
-    placeScriptInsertionIndex(
+    focusChipView();
+    setChipInsertionIndex(
       clickIndexForTextTarget(
         event.currentTarget,
         beforeIndex,
@@ -15556,9 +15757,11 @@ function ScriptActionEditor({
         <div
           className="script-chip-view"
           aria-label="Script with marker chips"
+          aria-multiline="true"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
-              placeScriptInsertionIndex(text.length);
+              focusChipView();
+              setChipInsertionIndex(text.length);
             }
           }}
           onContextMenu={(event) => {
@@ -15566,6 +15769,11 @@ function ScriptActionEditor({
               openScriptActionMenu(event, text.length);
             }
           }}
+          onKeyDown={handleChipViewKeyDown}
+          onPaste={handleChipViewPaste}
+          ref={chipViewRef}
+          role="textbox"
+          tabIndex={0}
         >
           {renderInlineScriptParts(text, 0, "No script text")}
         </div>

@@ -2608,6 +2608,15 @@ button {
   cursor: text;
 }
 
+.script-chip-view:focus {
+  outline: 0;
+}
+
+.script-chip-view:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 32%, var(--panel-soft-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 50%, transparent);
+}
+
 .script-marker-chip {
   display: inline-flex;
   align-items: center;
