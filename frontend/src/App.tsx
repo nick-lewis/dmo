@@ -767,9 +767,12 @@ type ScriptAudioItem = {
   cacheKey: string;
   canGenerate: boolean;
   characterCount?: number;
+  displayBaseSlots?: string[];
   displayBaseText?: string;
   durationSeconds: number | null;
   displayExpectedWordCount?: number;
+  displaySlotCount?: number;
+  displaySlots?: string[];
   displayText?: string;
   displayWordCount?: number;
   generationReason?: string;
@@ -800,8 +803,11 @@ type ScriptAudioPayload = {
 };
 
 type ScriptAudioDisplayPayload = {
+  displayBaseSlots: string[];
   displayBaseText: string;
   displayExpectedWordCount: number;
+  displaySlotCount: number;
+  displaySlots: string[];
   displayText: string;
   displayWordCount: number;
   hasDisplayTranscript: boolean;
@@ -995,8 +1001,8 @@ function countScriptWords(text: string) {
   return words?.length ?? 0;
 }
 
-function countDisplayTranscriptWords(text: string) {
-  return text.trim().split(/\s+/).filter(Boolean).length;
+function displayTranscriptSlotsFromText(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean);
 }
 
 function scriptMarkerLabel(type: string) {
@@ -7208,7 +7214,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
 
   async function saveScriptAudioDisplayTranscript(
     scriptId: string,
-    displayText: string,
+    displaySlots: string[],
   ) {
     if (!experience) {
       throw new Error("Experience is not loaded.");
@@ -7225,7 +7231,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         `/api/experiences/${experience.id}/script-audio/${scriptId}/display/`,
         {
           method: "PUT",
-          body: JSON.stringify({ displayText }),
+          body: JSON.stringify({ displaySlots }),
         },
       );
       setScriptAudioItems((current) =>
@@ -7233,8 +7239,11 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           item.id === scriptId
             ? {
                 ...item,
+                displayBaseSlots: payload.displayBaseSlots,
                 displayBaseText: payload.displayBaseText,
                 displayExpectedWordCount: payload.displayExpectedWordCount,
+                displaySlotCount: payload.displaySlotCount,
+                displaySlots: payload.displaySlots,
                 displayText: payload.displayText,
                 displayWordCount: payload.displayWordCount,
                 hasDisplayTranscript: payload.hasDisplayTranscript,
@@ -16181,12 +16190,50 @@ function scriptAudioSpokenText(item: ScriptAudioItem) {
   return item.script || item.preview || "";
 }
 
-function scriptAudioDisplayBaseText(item: ScriptAudioItem) {
-  return item.displayBaseText?.trim() || scriptAudioSpokenText(item);
+type ScriptAudioDisplayFields = {
+  displayBaseSlots?: string[];
+  displayBaseText?: string;
+  displaySlots?: string[];
+  displayText?: string;
+  preview?: string;
+  script?: string;
+};
+
+function normalizeDisplaySlot(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function scriptAudioDisplayText(item: ScriptAudioItem) {
-  return item.displayText?.trim() || scriptAudioDisplayBaseText(item);
+function displaySlotsAreEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((slot, index) => slot.trim() === right[index]?.trim());
+}
+
+function displaySlotWidthStyle(value: string): CSSProperties {
+  const label = value.trim() || "[blank]";
+  return { width: `${clamp(label.length + 2, 7, 18)}ch` };
+}
+
+function scriptAudioDisplayBaseText(item: ScriptAudioDisplayFields) {
+  return item.displayBaseText?.trim() || item.script || item.preview || "";
+}
+
+function scriptAudioDisplayBaseSlots(item: ScriptAudioDisplayFields) {
+  const slots = Array.isArray(item.displayBaseSlots)
+    ? item.displayBaseSlots.map(normalizeDisplaySlot)
+    : [];
+  if (slots.length) return slots;
+  return displayTranscriptSlotsFromText(scriptAudioDisplayBaseText(item));
+}
+
+function scriptAudioPersistedDisplaySlots(item: ScriptAudioDisplayFields) {
+  const baseSlots = scriptAudioDisplayBaseSlots(item);
+  const slots = Array.isArray(item.displaySlots)
+    ? item.displaySlots.map(normalizeDisplaySlot)
+    : [];
+  if (slots.length === baseSlots.length) return slots;
+  const displayTextSlots = displayTranscriptSlotsFromText(item.displayText || "");
+  if (displayTextSlots.length === baseSlots.length) return displayTextSlots;
+  return baseSlots;
 }
 
 function ScriptAudioPanel({
@@ -16215,7 +16262,7 @@ function ScriptAudioPanel({
   onRegenerateOne: (scriptId: string) => void;
   onSaveDisplayTranscript: (
     scriptId: string,
-    displayText: string,
+    displaySlots: string[],
   ) => Promise<ScriptAudioDisplayPayload>;
   onStop: () => void;
   playingId: string;
@@ -16225,7 +16272,9 @@ function ScriptAudioPanel({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState("");
-  const [displayDrafts, setDisplayDrafts] = useState<Record<string, string>>({});
+  const [displaySlotDrafts, setDisplaySlotDrafts] = useState<
+    Record<string, string[]>
+  >({});
   const [savingDisplayId, setSavingDisplayId] = useState("");
   const readyCount = items.filter(scriptAudioItemIsReady).length;
   const dynamicCount = items.filter((item) => !item.canGenerate).length;
@@ -16343,21 +16392,24 @@ function ScriptAudioPanel({
             const sources = scriptAudioSourceList(item);
             const sourceCount = item.sourceCount ?? sources.length;
             const spokenText = scriptAudioSpokenText(item);
-            const displayBaseText = scriptAudioDisplayBaseText(item);
-            const persistedDisplayText = scriptAudioDisplayText(item);
-            const displayDraft =
-              displayDrafts[item.id] ?? persistedDisplayText;
+            const displayBaseSlots = scriptAudioDisplayBaseSlots(item);
+            const persistedDisplaySlots = scriptAudioPersistedDisplaySlots(item);
+            const displaySlotDraft =
+              displaySlotDrafts[item.id] ?? persistedDisplaySlots;
             const expectedDisplayWordCount =
+              displayBaseSlots.length ||
               item.displayExpectedWordCount ||
               item.timingWordCount ||
               item.wordCount ||
               0;
-            const displayDraftWordCount = countDisplayTranscriptWords(displayDraft);
+            const visibleDisplayWordCount = displaySlotDraft.filter((slot) =>
+              slot.trim(),
+            ).length;
             const displayWordCountMatches =
               !expectedDisplayWordCount ||
-              displayDraftWordCount === expectedDisplayWordCount;
+              displaySlotDraft.length === expectedDisplayWordCount;
             const displayHasChanges =
-              displayDraft.trim() !== persistedDisplayText.trim();
+              !displaySlotsAreEqual(displaySlotDraft, persistedDisplaySlots);
             const canSaveDisplay =
               !savingDisplayId &&
               displayHasChanges &&
@@ -16499,35 +16551,61 @@ function ScriptAudioPanel({
                               : "script-audio-word-count-error"
                           }
                         >
-                          {displayDraftWordCount}/{expectedDisplayWordCount || "?"} words
+                          {displaySlotDraft.length}/{expectedDisplayWordCount || "?"} slots
+                          {visibleDisplayWordCount !== displaySlotDraft.length
+                            ? `, ${visibleDisplayWordCount} shown`
+                            : ""}
                         </span>
                       </div>
-                      <textarea
-                        aria-label={`Displayed transcript for ${item.source}`}
-                        onChange={(event) =>
-                          setDisplayDrafts((current) => ({
-                            ...current,
-                            [item.id]: event.target.value,
-                          }))
-                        }
-                        rows={3}
-                        value={displayDraft}
-                      />
+                      <div
+                        aria-label={`Displayed transcript slots for ${item.source}`}
+                        className="script-audio-display-slots"
+                        role="group"
+                      >
+                        {displaySlotDraft.map((slot, index) => (
+                          <label
+                            className={[
+                              "script-audio-display-slot",
+                              slot.trim() ? "" : "is-blank",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            key={`${item.id}-${index}`}
+                          >
+                            <span>{index + 1}</span>
+                            <input
+                              aria-label={`Displayed word slot ${index + 1}`}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setDisplaySlotDrafts((current) => {
+                                  const nextSlots = [
+                                    ...(current[item.id] ?? displaySlotDraft),
+                                  ];
+                                  nextSlots[index] = nextValue;
+                                  return {
+                                    ...current,
+                                    [item.id]: nextSlots,
+                                  };
+                                });
+                              }}
+                              placeholder="[blank]"
+                              style={displaySlotWidthStyle(slot)}
+                              value={slot}
+                            />
+                          </label>
+                        ))}
+                      </div>
                       <div className="script-audio-display-actions">
                         <button
                           className="header-action"
                           disabled={!canSaveDisplay || isSavingDisplay}
                           onClick={() => {
                             setSavingDisplayId(item.id);
-                            void onSaveDisplayTranscript(item.id, displayDraft)
+                            void onSaveDisplayTranscript(item.id, displaySlotDraft)
                               .then((payload) => {
-                                setDisplayDrafts((current) => ({
+                                setDisplaySlotDrafts((current) => ({
                                   ...current,
-                                  [item.id]:
-                                    payload.displayText ||
-                                    payload.displayBaseText ||
-                                    displayBaseText ||
-                                    preview,
+                                  [item.id]: scriptAudioPersistedDisplaySlots(payload),
                                 }));
                               })
                               .catch(() => null)
@@ -16547,25 +16625,20 @@ function ScriptAudioPanel({
                           disabled={
                             isSavingDisplay ||
                             (!item.hasDisplayTranscript &&
-                              displayDraft.trim() === displayBaseText.trim())
+                              displaySlotsAreEqual(displaySlotDraft, displayBaseSlots))
                           }
                           onClick={() => {
-                            const nextText = displayBaseText || preview;
-                            setDisplayDrafts((current) => ({
+                            setDisplaySlotDrafts((current) => ({
                               ...current,
-                              [item.id]: nextText,
+                              [item.id]: displayBaseSlots,
                             }));
                             if (item.hasDisplayTranscript) {
                               setSavingDisplayId(item.id);
-                              void onSaveDisplayTranscript(item.id, "")
+                              void onSaveDisplayTranscript(item.id, displayBaseSlots)
                                 .then((payload) => {
-                                  setDisplayDrafts((current) => ({
+                                  setDisplaySlotDrafts((current) => ({
                                     ...current,
-                                    [item.id]:
-                                      payload.displayText ||
-                                      payload.displayBaseText ||
-                                      displayBaseText ||
-                                      preview,
+                                    [item.id]: scriptAudioPersistedDisplaySlots(payload),
                                   }));
                                 })
                                 .catch(() => null)

@@ -1911,6 +1911,7 @@ class ScriptAudioCachePayloadTests(TestCase):
     def test_script_audio_inventory_exposes_display_transcript_override(self):
         raw_script = "My name is D-lou."
         display_text = "My name is dLU."
+        display_slots = ["My", "name", "is", "dLU."]
 
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
@@ -1918,7 +1919,7 @@ class ScriptAudioCachePayloadTests(TestCase):
                 display_path = script_audio_display_path(display_key)
                 display_path.parent.mkdir(parents=True, exist_ok=True)
                 display_path.write_text(
-                    json.dumps({"displayText": display_text}),
+                    json.dumps({"displaySlots": display_slots}),
                     encoding="utf-8",
                 )
                 event = ExperienceEvent.objects.create(
@@ -1937,14 +1938,17 @@ class ScriptAudioCachePayloadTests(TestCase):
                 items = collect_experience_script_audio_items(self.experience)
 
         self.assertEqual(items[0]["displayText"], display_text)
+        self.assertEqual(items[0]["displaySlots"], display_slots)
         self.assertEqual(items[0]["displayBaseText"], raw_script)
         self.assertTrue(items[0]["hasDisplayTranscript"])
         self.assertEqual(items[0]["displayExpectedWordCount"], 4)
+        self.assertEqual(items[0]["displaySlotCount"], 4)
         self.assertEqual(items[0]["displayWordCount"], 4)
 
     def test_cached_payload_includes_display_transcript_override(self):
         script = "My name is D-lou."
         display_text = "My name is dLU."
+        display_slots = ["My", "name", "is", "dLU."]
 
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
@@ -1970,7 +1974,7 @@ class ScriptAudioCachePayloadTests(TestCase):
                     audio_file.writeframes(b"\x00\x00" * 2400)
                 metadata_path.write_text("{}", encoding="utf-8")
                 display_path.write_text(
-                    json.dumps({"displayText": display_text}),
+                    json.dumps({"displaySlots": display_slots}),
                     encoding="utf-8",
                 )
                 session = TutoringSession.objects.create(
@@ -2003,19 +2007,81 @@ class ScriptAudioCachePayloadTests(TestCase):
 
                 good_response = self.client.put(
                     f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
-                    data=json.dumps({"displayText": "My name is dLU."}),
+                    data=json.dumps({"displaySlots": ["My", "name", "is", "dLU."]}),
                     content_type="application/json",
                 )
                 bad_response = self.client.put(
                     f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
-                    data=json.dumps({"displayText": "My name is definitely dLU."}),
+                    data=json.dumps({"displaySlots": ["My", "name", "definitely", "is", "dLU."]}),
                     content_type="application/json",
                 )
 
         self.assertEqual(good_response.status_code, 200)
         self.assertTrue(good_response.json()["hasDisplayTranscript"])
         self.assertEqual(good_response.json()["displayText"], "My name is dLU.")
+        self.assertEqual(good_response.json()["displaySlots"], ["My", "name", "is", "dLU."])
         self.assertEqual(bad_response.status_code, 400)
+
+    def test_display_transcript_slots_can_keep_blank_timed_words(self):
+        script = "My name is D-lou."
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                tutor = self.experience.tutor_settings
+                cache_key = compute_script_audio_cache_key(
+                    assistant_name=tutor.assistant_name,
+                    realtime_model=tutor.realtime_model,
+                    script=script,
+                    tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
+                    voice=tutor.voice,
+                    voice_instructions=tutor.voice_instructions,
+                )
+                words_path = script_audio_words_path(
+                    cache_key,
+                    settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+                )
+                words_path.parent.mkdir(parents=True, exist_ok=True)
+                words_path.write_text(
+                    json.dumps(
+                        [
+                            {"word": "My", "start": 0, "end": 0.1},
+                            {"word": "name", "start": 0.1, "end": 0.2},
+                            {"word": "is", "start": 0.2, "end": 0.3},
+                            {"word": "D", "start": 0.3, "end": 0.4},
+                            {"word": "lou.", "start": 0.4, "end": 0.5},
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+                self.client.force_login(self.user)
+                item = collect_experience_script_audio_items(self.experience)[0]
+
+                response = self.client.put(
+                    f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
+                    data=json.dumps({"displaySlots": ["My", "name", "is", "dLU", ""]}),
+                    content_type="application/json",
+                )
+
+                items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["displayText"], "My name is dLU")
+        self.assertEqual(response.json()["displaySlots"], ["My", "name", "is", "dLU", ""])
+        self.assertEqual(items[0]["displayBaseSlots"], ["My", "name", "is", "D", "lou."])
+        self.assertEqual(items[0]["displaySlots"], ["My", "name", "is", "dLU", ""])
+        self.assertEqual(items[0]["displayText"], "My name is dLU")
 
     def test_script_audio_inventory_groups_duplicate_sources(self):
         event = ExperienceEvent.objects.create(

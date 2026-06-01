@@ -224,67 +224,105 @@ def script_word_count(text):
     return len(SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text)))
 
 
-def load_script_audio_display_text(script):
+def script_audio_display_slots_from_text(text):
+    return SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text))
+
+
+def normalize_script_audio_display_slots(value):
+    if not isinstance(value, list):
+        return []
+    return ["" if slot is None else str(slot).strip() for slot in value]
+
+
+def script_audio_display_text_from_slots(slots):
+    return " ".join(str(slot).strip() for slot in slots if str(slot).strip())
+
+
+def load_script_audio_display_payload(script):
     display_key = compute_script_audio_display_key(script)
     display_path = script_audio_display_path(display_key)
     if not display_path.exists():
-        return ""
+        return {}
 
     try:
         payload = json.loads(display_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return ""
+        return {}
     if not isinstance(payload, dict):
-        return ""
+        return {}
+    return payload
+
+
+def load_script_audio_display_slots(script):
+    payload = load_script_audio_display_payload(script)
+    display_slots = normalize_script_audio_display_slots(payload.get("displaySlots"))
+    if display_slots:
+        return display_slots
 
     display_text = payload.get("displayText")
     if not isinstance(display_text, str):
-        return ""
-    return display_text.strip()
+        return []
+    return script_audio_display_slots_from_text(display_text)
+
+
+def load_script_audio_display_text(script):
+    return script_audio_display_text_from_slots(load_script_audio_display_slots(script))
 
 
 def runtime_script_audio_display_text(script, expected_word_count=0):
-    display_text = load_script_audio_display_text(script)
-    if not display_text:
+    display_slots = load_script_audio_display_slots(script)
+    if not display_slots:
         return ""
 
     expected_count = expected_word_count or script_word_count(script)
-    if expected_count and script_word_count(display_text) != expected_count:
+    if expected_count and len(display_slots) != expected_count:
         return ""
-    return display_text
+    return script_audio_display_text_from_slots(display_slots)
 
 
-def save_script_audio_display_text(script, display_text):
+def save_script_audio_display_slots(script, display_slots, base_slots=None):
     display_key = compute_script_audio_display_key(script)
     display_path = script_audio_display_path(display_key)
-    normalized_script = str(script or "").strip()
-    normalized_display = str(display_text or "").strip()
+    normalized_slots = normalize_script_audio_display_slots(display_slots)
+    normalized_base_slots = normalize_script_audio_display_slots(base_slots)
+    if not normalized_base_slots:
+        normalized_base_slots = script_audio_display_slots_from_text(script)
 
-    if not normalized_display or normalized_display == normalized_script:
+    if not normalized_slots or normalized_slots == normalized_base_slots:
         try:
             display_path.unlink()
         except FileNotFoundError:
             pass
-        return ""
+        return []
 
     display_path.parent.mkdir(parents=True, exist_ok=True)
     display_path.write_text(
         json.dumps(
             {
-                "displayText": normalized_display,
-                "version": "script-audio-display-v1",
+                "displaySlots": normalized_slots,
+                "displayText": script_audio_display_text_from_slots(normalized_slots),
+                "version": "script-audio-display-slots-v1",
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    return normalized_display
+    return normalized_slots
+
+
+def save_script_audio_display_text(script, display_text):
+    display_slots = script_audio_display_slots_from_text(display_text)
+    saved_slots = save_script_audio_display_slots(script, display_slots)
+    return script_audio_display_text_from_slots(saved_slots)
 
 
 def script_audio_display_payload(item):
     return {
+        "displayBaseSlots": item.get("displayBaseSlots", []),
         "displayBaseText": item.get("displayBaseText", ""),
         "displayExpectedWordCount": item.get("displayExpectedWordCount", 0),
+        "displaySlotCount": item.get("displaySlotCount", 0),
+        "displaySlots": item.get("displaySlots", []),
         "displayText": item.get("displayText", ""),
         "displayWordCount": item.get("displayWordCount", 0),
         "hasDisplayTranscript": bool(item.get("hasDisplayTranscript")),
@@ -2117,8 +2155,8 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     words_cached = words_path.exists()
     can_generate = script_is_static_for_audio(raw_text)
     display_key = compute_script_audio_display_key(script)
-    display_text = load_script_audio_display_text(script)
     display_base_text = script
+    display_base_slots = script_audio_display_slots_from_text(script)
     timing_preview = []
     timing_word_count = 0
     timing_words = []
@@ -2134,12 +2172,18 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         timing_word_count = len(words)
         timing_preview = words[:12]
         if words:
-            display_base_text = " ".join(word["word"] for word in words)
+            display_base_slots = [str(word["word"]) for word in words]
+            display_base_text = " ".join(display_base_slots)
         timed_marker_count = sum(
             1
             for marker in script_cues_with_word_times(markers, words)
             if isinstance(marker.get("time"), (int, float))
         )
+    display_slots = load_script_audio_display_slots(script)
+    if display_base_slots and len(display_slots) != len(display_base_slots):
+        display_slots = []
+    display_text = script_audio_display_text_from_slots(display_slots)
+    has_display_transcript = bool(display_slots and display_slots != display_base_slots)
     return {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
         "cacheKey": cache_key,
@@ -2147,9 +2191,12 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "characterCount": len(script),
         "cached": cached,
         "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
+        "displayBaseSlots": display_base_slots,
         "displayBaseText": display_base_text,
         "displayExpectedWordCount": len(timing_words) or script_word_count(script),
         "displayKey": display_key,
+        "displaySlotCount": len(display_slots) if display_slots else 0,
+        "displaySlots": display_slots,
         "displayText": display_text,
         "displayWordCount": script_word_count(display_text) if display_text else 0,
         "experienceId": str(experience.id),
@@ -2166,7 +2213,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "source": source,
         "sourceCount": 1,
         "sources": [source],
-        "hasDisplayTranscript": bool(display_text),
+        "hasDisplayTranscript": has_display_transcript,
         "timedMarkerCount": timed_marker_count,
         "timingPreview": timing_preview,
         "timingWordCount": timing_word_count,
@@ -5678,23 +5725,29 @@ def script_audio_display_transcript(request, experience_id, script_id):
     if data is None:
         return JsonResponse({"detail": "Invalid JSON."}, status=400)
 
-    display_text = str(data.get("displayText", "")).strip()
-    expected_word_count = int(item.get("displayExpectedWordCount") or 0)
-    display_word_count = script_word_count(display_text)
-    if display_text and expected_word_count and display_word_count != expected_word_count:
+    base_slots = normalize_script_audio_display_slots(item.get("displayBaseSlots"))
+    if not base_slots:
+        base_slots = script_audio_display_slots_from_text(item.get("displayBaseText", ""))
+    if "displaySlots" in data:
+        display_slots = normalize_script_audio_display_slots(data.get("displaySlots"))
+    else:
+        display_slots = script_audio_display_slots_from_text(data.get("displayText", ""))
+    expected_slot_count = len(base_slots)
+    display_slot_count = len(display_slots)
+    if display_slots and expected_slot_count and display_slot_count != expected_slot_count:
         return JsonResponse(
             {
                 "detail": (
                     "Display transcript must keep the same number of timed word slots "
-                    f"({expected_word_count}); found {display_word_count}."
+                    f"({expected_slot_count}); found {display_slot_count}."
                 ),
-                "displayExpectedWordCount": expected_word_count,
-                "displayWordCount": display_word_count,
+                "displayExpectedWordCount": expected_slot_count,
+                "displaySlotCount": display_slot_count,
             },
             status=400,
         )
 
-    save_script_audio_display_text(item.get("script", ""), display_text)
+    save_script_audio_display_slots(item.get("script", ""), display_slots, base_slots)
     refreshed_item = next(
         (
             candidate
