@@ -3237,10 +3237,57 @@ button {
   min-width: 0;
 }
 
-.script-timeline-transport input[type="range"] {
+.script-timeline-scrubber {
+  position: relative;
   width: 100%;
   min-width: 0;
-  accent-color: color-mix(in srgb, var(--accent-2) 76%, var(--page-ink));
+  height: 22px;
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.script-timeline-scrubber.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.script-timeline-scrubber-track {
+  position: absolute;
+  right: 0;
+  left: 0;
+  top: 50%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-ink) 24%, transparent);
+  transform: translateY(-50%);
+}
+
+.script-timeline-scrubber-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent-2) 76%, var(--page-ink));
+}
+
+.script-timeline-scrubber-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--panel-bg);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--page-ink) 18%, transparent);
+  transform: translate(-50%, -50%);
+}
+
+.script-timeline-scrubber:focus-visible .script-timeline-scrubber-thumb {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent-soft) 78%, transparent),
+    0 1px 4px color-mix(in srgb, var(--page-ink) 18%, transparent);
 }
 
 .script-timeline-transport span {
@@ -3391,7 +3438,7 @@ button {
 
 .script-timeline-marker-row {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) minmax(78px, 96px);
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(78px, 96px) auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -3432,6 +3479,23 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 80%, transparent);
   font-size: 0.64rem;
   font-weight: 760;
+}
+
+.script-timeline-here-button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 78%, transparent);
+  font-size: 0.62rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.script-timeline-here-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-soft-border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel-bg-strong));
 }
 
 .script-timeline-empty {

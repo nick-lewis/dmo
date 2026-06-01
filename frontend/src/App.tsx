@@ -14790,10 +14790,21 @@ function ScriptActionEditor({
     setTimelineDraggingTimeSeconds(null);
   }
 
-  function beginTimelineScrub() {
+  function timelinePointerTime(element: HTMLElement, clientX: number) {
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !timelineDurationSeconds) return timelineCurrentTime;
+    return (
+      clamp((clientX - rect.left) / rect.width, 0, 1) *
+      timelineDurationSeconds
+    );
+  }
+
+  function beginTimelineScrub(nextTime = timelineCurrentTime) {
+    const normalizedTime = clamp(nextTime, 0, timelineDurationSeconds || 0);
     timelineScrubbingRef.current = true;
-    timelineScrubTimeRef.current = timelineCurrentTime;
-    setTimelineScrubTime(timelineCurrentTime);
+    timelineScrubTimeRef.current = normalizedTime;
+    setTimelineScrubTime(normalizedTime);
+    setTimelineCurrentTime(normalizedTime);
   }
 
   function updateTimelineScrub(nextTime: number) {
@@ -14807,13 +14818,39 @@ function ScriptActionEditor({
     seekTimeline(normalizedTime);
   }
 
-  function finishTimelineScrub() {
-    const nextTime = timelineScrubbingRef.current
-      ? timelineScrubTimeRef.current
-      : timelineScrubTime ?? timelineCurrentTime;
+  function finishTimelineScrub(nextTimeOverride?: number) {
+    if (typeof nextTimeOverride === "number" && Number.isFinite(nextTimeOverride)) {
+      timelineScrubTimeRef.current = clamp(
+        nextTimeOverride,
+        0,
+        timelineDurationSeconds || 0,
+      );
+    } else if (!timelineScrubbingRef.current && timelineScrubTime === null) {
+      return;
+    }
+    const nextTime = timelineScrubTimeRef.current;
     timelineScrubbingRef.current = false;
     setTimelineScrubTime(null);
     seekTimeline(nextTime);
+  }
+
+  function moveTimelineByKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!timelineAudioUrl) return;
+    const baseTime = timelineScrubTime ?? timelineCurrentTime;
+    const step = event.shiftKey ? 5 : 1;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      seekTimeline(baseTime - step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      seekTimeline(baseTime + step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      seekTimeline(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      seekTimeline(timelineDurationSeconds);
+    }
   }
 
   function toggleTimelinePlayback() {
@@ -14885,6 +14922,8 @@ function ScriptActionEditor({
     });
     const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
     const preview = timelinePreviewState(visibleTimelineTime);
+    const timelineProgressPercent =
+      duration > 0 ? clamp((visibleTimelineTime / duration) * 100, 0, 100) : 0;
     const currentWordIndex = timelineWords.findIndex(
       (word) => visibleTimelineTime >= word.start && visibleTimelineTime <= word.end,
     );
@@ -14942,22 +14981,82 @@ function ScriptActionEditor({
           >
             {timelineIsPlaying ? <StopIcon /> : <PlayIcon />}
           </button>
-          <input
+          <div
             aria-label="Timeline playback position"
-            disabled={!timelineAudioUrl}
-            max={Math.round(duration * 1000)}
-            min="0"
-            onBlur={finishTimelineScrub}
-            onChange={(event) =>
-              updateTimelineScrub(Number(event.target.value) / 1000)
+            aria-disabled={!timelineAudioUrl}
+            aria-valuemax={Math.round(duration * 1000)}
+            aria-valuemin={0}
+            aria-valuenow={Math.round(visibleTimelineTime * 1000)}
+            className={[
+              "script-timeline-scrubber",
+              timelineAudioUrl ? "" : "is-disabled",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onClick={(event) => {
+              if (!timelineAudioUrl) return;
+              seekTimeline(timelinePointerTime(event.currentTarget, event.clientX));
+            }}
+            onKeyDown={moveTimelineByKeyboard}
+            onMouseDown={(event) => {
+              if (!timelineAudioUrl) return;
+              beginTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            onMouseMove={(event) => {
+              if (!timelineScrubbingRef.current) return;
+              updateTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            onMouseUp={(event) => {
+              if (!timelineAudioUrl) return;
+              finishTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            onPointerCancel={(event) =>
+              finishTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              )
             }
-            onPointerCancel={finishTimelineScrub}
-            onPointerDown={beginTimelineScrub}
-            onPointerUp={finishTimelineScrub}
-            step="10"
-            type="range"
-            value={Math.round(visibleTimelineTime * 1000)}
-          />
+            onPointerDown={(event) => {
+              if (!timelineAudioUrl) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              beginTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            onPointerMove={(event) => {
+              if (!timelineScrubbingRef.current) return;
+              updateTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            onPointerUp={(event) => {
+              if (!timelineAudioUrl) return;
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              finishTimelineScrub(
+                timelinePointerTime(event.currentTarget, event.clientX),
+              );
+            }}
+            role="slider"
+            tabIndex={timelineAudioUrl ? 0 : -1}
+          >
+            <span className="script-timeline-scrubber-track">
+              <span
+                className="script-timeline-scrubber-fill"
+                style={{ width: `${timelineProgressPercent}%` }}
+              />
+            </span>
+            <span
+              className="script-timeline-scrubber-thumb"
+              style={{ left: `${timelineProgressPercent}%` }}
+            />
+          </div>
           <span>
             {formatScriptAudioDuration(visibleTimelineTime)} /{" "}
             {formatScriptAudioDuration(timelineDurationSeconds)}
@@ -15033,7 +15132,7 @@ function ScriptActionEditor({
 
         <div className="script-timeline-marker-list">
           {timelineMarkers.map(({ index, marker, timeMs }) => (
-            <label className="script-timeline-marker-row" key={`${marker.id}-${index}`}>
+            <div className="script-timeline-marker-row" key={`${marker.id}-${index}`}>
               <span className="script-marker-chip-icon">
                 {scriptMarkerIcon(marker.type)}
               </span>
@@ -15049,7 +15148,17 @@ function ScriptActionEditor({
                 type="number"
                 value={timeMs}
               />
-            </label>
+              <button
+                className="script-timeline-here-button"
+                onClick={() =>
+                  replaceMarkerTimelineTime(index, Math.round(visibleTimelineTime * 1000))
+                }
+                title={`Place ${marker.label} at the current playhead time.`}
+                type="button"
+              >
+                Here
+              </button>
+            </div>
           ))}
           {!timelineMarkers.length ? (
             <p className="script-timeline-empty">No timed actions in this script.</p>
