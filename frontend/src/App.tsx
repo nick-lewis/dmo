@@ -8385,19 +8385,6 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 </div>
               ) : null}
 
-              <div className="event-context-line single-value event-chat-instructions-line">
-                <span className="event-detail-label">CHAT INSTRUCTIONS</span>
-                <input
-                  aria-label="Event chat instructions"
-                  onChange={(event) =>
-                    updateEventDraft("chatInstructions", event.target.value)
-                  }
-                  placeholder="Optional context-aware instructions for chat in this event."
-                  type="text"
-                  value={eventDraft.chatInstructions}
-                />
-              </div>
-
               <div className="event-sequence-header">
                 <span>On entry</span>
               </div>
@@ -9040,6 +9027,19 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                     ))}
                   </div>
                 ) : null}
+              </div>
+
+              <div className="event-context-line single-value event-chat-instructions-line">
+                <span className="event-detail-label">CHAT INSTRUCTIONS</span>
+                <input
+                  aria-label="Event chat instructions"
+                  onChange={(event) =>
+                    updateEventDraft("chatInstructions", event.target.value)
+                  }
+                  placeholder="Optional context-aware instructions for chat in this event."
+                  type="text"
+                  value={eventDraft.chatInstructions}
+                />
               </div>
 
               <div className="event-sequence-header chat-exits-header">
