@@ -107,7 +107,7 @@ const scriptTextareaMaxHeightPx = 680;
 const scriptSlideTextareaMinHeightPx = 82;
 const scriptSlideTextareaMaxHeightPx = 360;
 const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
-const defaultChoiceIconPath = "test-images/dLU-right.png";
+const defaultChoiceIconPath = "test-images/wrench.png";
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -10722,7 +10722,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               title={
                                 choice.iconPath
                                   ? "Icon shown with this choice"
-                                  : "Show placeholder icon with this choice"
+                                  : "Show button icon with this choice"
                               }
                               type="button"
                             >
@@ -10742,7 +10742,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               ) : null}
                             </span>
                             <span className="conversation-choice-icon-copy">
-                              {choice.iconPath ? "Placeholder icon" : "---"}
+                              {choice.iconPath ? "Button icon" : "---"}
                             </span>
                           </div>
                         </div>
