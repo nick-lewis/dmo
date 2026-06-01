@@ -359,6 +359,64 @@ class TutoringSession(models.Model):
         return f"{label} ({self.user})"
 
 
+class ExperienceEventCheckpoint(models.Model):
+    class FingerprintMode(models.TextChoices):
+        STRUCTURAL = "structural", "Structural"
+        FULL = "full", "Full"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    experience = models.ForeignKey(
+        Experience,
+        on_delete=models.CASCADE,
+        related_name="event_checkpoints",
+    )
+    event = models.ForeignKey(
+        ExperienceEvent,
+        on_delete=models.CASCADE,
+        related_name="checkpoints",
+    )
+    source_session = models.ForeignKey(
+        TutoringSession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="event_checkpoints",
+    )
+    fingerprint_mode = models.CharField(
+        max_length=20,
+        choices=FingerprintMode.choices,
+        default=FingerprintMode.STRUCTURAL,
+    )
+    fingerprint = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+    summary = models.JSONField(default=dict, blank=True)
+    run_count = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_used_at", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event", "fingerprint_mode", "fingerprint"],
+                name="unique_event_checkpoint_fingerprint",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["experience", "event", "-last_used_at"],
+                name="core_eventc_experie_36db_idx",
+            ),
+            models.Index(
+                fields=["event", "fingerprint_mode"],
+                name="core_eventc_event_i_2f3d_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event}: {self.fingerprint_mode} checkpoint"
+
+
 class SessionMessage(models.Model):
     class Role(models.TextChoices):
         USER = "user", "User"

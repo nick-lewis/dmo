@@ -8,6 +8,7 @@ from .models import (
     EventConversationCheck,
     Experience,
     ExperienceEvent,
+    ExperienceEventCheckpoint,
     ExperienceSnapshot,
     SessionMessage,
     TutoringSession,
@@ -136,6 +137,27 @@ class ExperienceSnapshotAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     search_fields = ("title", "note", "experience__title", "user__email", "user__username")
     readonly_fields = ("id", "created_at")
+
+
+@admin.register(ExperienceEventCheckpoint)
+class ExperienceEventCheckpointAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "experience",
+        "event",
+        "fingerprint_mode",
+        "run_count",
+        "last_used_at",
+        "created_at",
+    )
+    list_filter = ("fingerprint_mode", "created_at", "last_used_at")
+    search_fields = (
+        "experience__title",
+        "event__title",
+        "source_session__title",
+        "fingerprint",
+    )
+    readonly_fields = ("id", "created_at", "last_used_at")
 
 
 @admin.register(TutorSettings)

@@ -23,6 +23,7 @@ from core.views import (
     dev_login,
     delete_experience_snapshot,
     duplicate_experience,
+    event_checkpoints,
     export_experience,
     export_experience_snapshot,
     experience_events,
@@ -142,6 +143,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/",
         update_experience_event,
         name="update-experience-event",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/checkpoints/",
+        event_checkpoints,
+        name="event-checkpoints",
     ),
     path(
         "api/experiences/<uuid:experience_id>/events/<uuid:event_id>/steps/<uuid:step_id>/",

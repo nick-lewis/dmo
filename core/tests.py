@@ -35,6 +35,7 @@ from .models import (
     EventConversationCheck,
     Experience,
     ExperienceEvent,
+    ExperienceEventCheckpoint,
     ExperienceSnapshot,
     SessionMessage,
     TutorSettings,
@@ -2324,6 +2325,146 @@ class ConversationRuntimeTests(TestCase):
             str(target_event.id),
         )
         self.assertEqual(session.runtime_state["uiRuntime"]["triggers"], [])
+
+    def test_event_run_records_deduped_structural_checkpoint(self):
+        target_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Primer",
+            slug="primer",
+            sort_order=1,
+        )
+        EventActionStep.objects.create(
+            event=target_event,
+            action_type=EventActionStep.ActionType.SET_CONTEXT,
+            config={"key": "primer_started", "value": "yes"},
+            label="Mark primer",
+        )
+        self.client.force_login(self.user)
+
+        for _ in range(2):
+            session = TutoringSession.objects.create(
+                user=self.user,
+                experience=self.experience,
+                runtime_context={"notes_visible": True},
+                runtime_state={"checkpointRecordingMode": "structural"},
+            )
+            response = self.client.post(
+                f"/api/sessions/{session.id}/events/run/",
+                data=json.dumps({"eventSlug": "primer"}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+
+        checkpoint = ExperienceEventCheckpoint.objects.get(event=target_event)
+        self.assertEqual(checkpoint.fingerprint_mode, "structural")
+        self.assertEqual(checkpoint.run_count, 2)
+        self.assertEqual(
+            checkpoint.payload["runtimeContext"],
+            {"notes_visible": True},
+        )
+        self.assertEqual(checkpoint.summary["messageCount"], 0)
+
+    def test_checkpoint_can_restore_session_for_event_launch(self):
+        target_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Primer",
+            slug="primer",
+            sort_order=1,
+        )
+        checkpoint = ExperienceEventCheckpoint.objects.create(
+            experience=self.experience,
+            event=target_event,
+            fingerprint_mode="full",
+            fingerprint="restore-test",
+            payload={
+                "eventId": str(target_event.id),
+                "eventSlug": target_event.slug,
+                "messages": [
+                    {
+                        "content": "I already said yes.",
+                        "metadata": {"source": "test"},
+                        "role": SessionMessage.Role.USER,
+                        "sequence": 1,
+                    }
+                ],
+                "runtimeContext": {"choice": "yes"},
+                "runtimeState": {
+                    "currentEventId": str(target_event.id),
+                    "currentEventSlug": target_event.slug,
+                    "eventRuns": {str(self.chat_event.id): {"status": "complete"}},
+                },
+            },
+            summary={"label": "choice=yes", "messageCount": 1},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            "/api/sessions/",
+            data=json.dumps(
+                {
+                    "checkpointId": str(checkpoint.id),
+                    "experienceId": str(self.experience.id),
+                    "recordingMode": "off",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        session = TutoringSession.objects.get(id=payload["session"]["id"])
+        self.assertEqual(session.runtime_context, {"choice": "yes"})
+        self.assertEqual(session.messages.count(), 1)
+        self.assertEqual(session.messages.first().content, "I already said yes.")
+        self.assertEqual(
+            session.runtime_state["editorLaunch"]["checkpointId"],
+            str(checkpoint.id),
+        )
+        self.assertEqual(
+            session.runtime_state["editorLaunch"]["eventId"],
+            str(target_event.id),
+        )
+        self.assertEqual(session.runtime_state["checkpointRecordingMode"], "off")
+
+    def test_event_checkpoint_list_is_scoped_to_event(self):
+        target_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Primer",
+            slug="primer",
+            sort_order=1,
+        )
+        other_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Other",
+            slug="other",
+            sort_order=2,
+        )
+        checkpoint = ExperienceEventCheckpoint.objects.create(
+            experience=self.experience,
+            event=target_event,
+            fingerprint_mode="structural",
+            fingerprint="primer-state",
+            payload={},
+            summary={"label": "choice=yes", "messageCount": 2},
+        )
+        ExperienceEventCheckpoint.objects.create(
+            experience=self.experience,
+            event=other_event,
+            fingerprint_mode="structural",
+            fingerprint="other-state",
+            payload={},
+            summary={"label": "other"},
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(
+            f"/api/experiences/{self.experience.id}/events/{target_event.id}/checkpoints/"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["checkpoints"]), 1)
+        self.assertEqual(response.json()["checkpoints"][0]["id"], str(checkpoint.id))
+        self.assertEqual(response.json()["checkpoints"][0]["label"], "choice=yes")
 
     def test_classifier_handler_updates_context_without_leaving_event(self):
         group = EventClassifierGroup.objects.create(

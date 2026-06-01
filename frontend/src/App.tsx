@@ -95,6 +95,7 @@ const maxWorkspaceWidth = 1800;
 const panelLayoutStorageKey = "dlu.panel-layout.v1";
 const slideSettingsStorageKey = "dlu.slide-settings.v1";
 const experienceSelectionStorageKey = "dlu.selected-experience.v1";
+const checkpointRecordingModeStorageKey = "dlu.checkpoint-recording-mode.v1";
 const experienceAutosaveDelayMs = 700;
 const editorUndoLimit = 80;
 const conversationItemDragMimeType = "application/x-dlu-conversation-item";
@@ -275,6 +276,8 @@ const scriptAudioSources = new Set([
   "conversation-check-action",
   "classifier-group-action",
 ]);
+
+type CheckpointRecordingMode = "off" | "structural" | "full";
 
 type ChatMessage = {
   id: string;
@@ -475,8 +478,26 @@ type ExperienceSnapshot = {
   version: number | null;
 };
 
+type EventCheckpoint = {
+  context: Array<{ key: string; value: unknown }>;
+  createdAt: string;
+  eventId: string;
+  eventTitle: string;
+  fingerprintMode: "structural" | "full";
+  id: string;
+  label: string;
+  lastUsedAt: string;
+  messageCount: number;
+  runCount: number;
+  slideRef: string;
+};
+
 type ExperienceSnapshotsPayload = {
   snapshots: ExperienceSnapshot[];
+};
+
+type EventCheckpointsPayload = {
+  checkpoints: EventCheckpoint[];
 };
 
 type ExperiencesPayload = {
@@ -2180,6 +2201,24 @@ function runtimeTraceTime(value: string) {
   });
 }
 
+function checkpointTimeLabel(value: string) {
+  if (!value) return "---";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+  });
+}
+
+function checkpointRecordingModeLabel(mode: CheckpointRecordingMode) {
+  if (mode === "off") return "Off";
+  if (mode === "full") return "Full";
+  return "Structural";
+}
+
 function runtimeSlideFromRecord(value: unknown): (ResolvedSlide & { deckUrl: string }) | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
@@ -3106,6 +3145,37 @@ function writeSelectedExperienceId(experienceId: string) {
   }
 }
 
+function normalizeCheckpointRecordingMode(
+  value: unknown,
+  fallback: CheckpointRecordingMode = "structural",
+): CheckpointRecordingMode {
+  return value === "off" || value === "structural" || value === "full"
+    ? value
+    : fallback;
+}
+
+function readCheckpointRecordingMode(): CheckpointRecordingMode {
+  if (typeof window === "undefined") return "structural";
+
+  try {
+    return normalizeCheckpointRecordingMode(
+      window.localStorage.getItem(checkpointRecordingModeStorageKey),
+    );
+  } catch {
+    return "structural";
+  }
+}
+
+function writeCheckpointRecordingMode(mode: CheckpointRecordingMode) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(checkpointRecordingModeStorageKey, mode);
+  } catch {
+    // Ignore storage failures; the run request still carries the current choice.
+  }
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}) {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
@@ -3635,6 +3705,15 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   >([]);
   const [isEventAddMenuOpen, setIsEventAddMenuOpen] = useState(false);
   const [isEventGraphOpen, setIsEventGraphOpen] = useState(false);
+  const [isEventRunMenuOpen, setIsEventRunMenuOpen] = useState(false);
+  const [checkpointRecordingMode, setCheckpointRecordingMode] =
+    useState<CheckpointRecordingMode>(() => readCheckpointRecordingMode());
+  const [eventCheckpoints, setEventCheckpoints] = useState<EventCheckpoint[]>([]);
+  const [eventCheckpointStatus, setEventCheckpointStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [eventCheckpointError, setEventCheckpointError] = useState("");
+  const [runningEventId, setRunningEventId] = useState("");
   const [deletingEventId, setDeletingEventId] = useState("");
   const [isConversationAddMenuOpen, setIsConversationAddMenuOpen] =
     useState(false);
@@ -3685,6 +3764,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   const scriptAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const eventAddBlockRef = useRef<HTMLDivElement | null>(null);
+  const eventRunControlRef = useRef<HTMLDivElement | null>(null);
   const conversationItemAddBlockRef = useRef<HTMLDivElement | null>(null);
   const conversationAddBlockRef = useRef<HTMLDivElement | null>(null);
   const conversationCheckAddBlockRef = useRef<HTMLDivElement | null>(null);
@@ -4018,6 +4098,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     setExperienceValidationError("");
     setExperienceValidationStatus("idle");
     setExperienceSnapshots([]);
+    setEventCheckpoints([]);
+    setEventCheckpointError("");
+    setEventCheckpointStatus("idle");
+    setIsEventRunMenuOpen(false);
     setSnapshotError("");
     clearEventUndoHistory();
   }
@@ -4110,6 +4194,33 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     }
   }
 
+  async function loadEventCheckpoints(
+    targetEventId = selectedEventId,
+    showLoading = true,
+  ) {
+    if (!experience?.id || !targetEventId) return;
+
+    if (showLoading) {
+      setEventCheckpointStatus("loading");
+    }
+    setEventCheckpointError("");
+    try {
+      const payload = await apiFetch<EventCheckpointsPayload>(
+        `/api/experiences/${experience.id}/events/${targetEventId}/checkpoints/`,
+      );
+      setEventCheckpoints(payload.checkpoints);
+      setEventCheckpointStatus("idle");
+    } catch (loadError) {
+      setEventCheckpoints([]);
+      setEventCheckpointStatus("error");
+      setEventCheckpointError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load saved event states.",
+      );
+    }
+  }
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -4156,6 +4267,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   }, [experienceId]);
 
   useEffect(() => {
+    writeCheckpointRecordingMode(checkpointRecordingMode);
+  }, [checkpointRecordingMode]);
+
+  useEffect(() => {
     if (!experience?.id || !isEventGraphOpen || status !== "ready") return;
 
     const timer = window.setTimeout(() => {
@@ -4166,6 +4281,12 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       window.clearTimeout(timer);
     };
   }, [experience?.id, experience?.events, isEventGraphOpen, status]);
+
+  useEffect(() => {
+    if (!experience?.id || !selectedEventId || status !== "ready") return;
+    setIsEventRunMenuOpen(false);
+    void loadEventCheckpoints(selectedEventId, false);
+  }, [experience?.id, selectedEventId, status]);
 
   useEffect(() => {
     return () => {
@@ -4273,6 +4394,36 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
       document.removeEventListener("keydown", closeEventAddMenuOnKeyDown);
     };
   }, [isEventAddMenuOpen]);
+
+  useEffect(() => {
+    if (!isEventRunMenuOpen) return;
+
+    function closeEventRunMenuOnPointerDown(event: globalThis.MouseEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        eventRunControlRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setIsEventRunMenuOpen(false);
+    }
+
+    function closeEventRunMenuOnKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsEventRunMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeEventRunMenuOnPointerDown);
+    document.addEventListener("keydown", closeEventRunMenuOnKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", closeEventRunMenuOnPointerDown);
+      document.removeEventListener("keydown", closeEventRunMenuOnKeyDown);
+    };
+  }, [isEventRunMenuOpen]);
 
   useEffect(() => {
     if (!isConversationAddMenuOpen) return;
@@ -7476,7 +7627,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     try {
       await apiFetch<SessionPayload>("/api/sessions/", {
         method: "POST",
-        body: JSON.stringify({ experienceId: experience.id }),
+        body: JSON.stringify({
+          experienceId: experience.id,
+          recordingMode: checkpointRecordingMode,
+        }),
       });
     } catch (runError) {
       setError(
@@ -7484,6 +7638,38 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           ? runError.message
           : "Could not start a fresh run.",
       );
+      return;
+    }
+
+    writeSelectedExperienceId(experience.id);
+    window.location.assign(experienceRunPath(experience.id));
+  }
+
+  async function runSelectedEvent(checkpointId = "") {
+    if (!experience || !selectedEvent) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    setRunningEventId(selectedEvent.id);
+    setError("");
+    try {
+      await apiFetch<SessionPayload>("/api/sessions/", {
+        method: "POST",
+        body: JSON.stringify({
+          checkpointId,
+          eventId: selectedEvent.id,
+          experienceId: experience.id,
+          recordingMode: checkpointRecordingMode,
+        }),
+      });
+    } catch (runError) {
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : "Could not start from this event.",
+      );
+      setRunningEventId("");
       return;
     }
 
@@ -7572,6 +7758,10 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
           "Choose event",
       })),
     );
+  const latestEventCheckpoint = eventCheckpoints[0] ?? null;
+  const eventRunPrimaryTitle = latestEventCheckpoint
+    ? `Run ${selectedEvent?.title || "this event"} from the latest saved state.`
+    : `Run ${selectedEvent?.title || "this event"} from a cold state.`;
   const nextStructuralUndo = eventStructuralUndoStack[0];
   const nextStructuralRedo = eventStructuralRedoStack[0];
   const structuralHistoryEventLabel = (item: EventStructuralHistoryItem) => {
@@ -8253,6 +8443,152 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                       </div>
                     </div>
                     <div className="event-history-tools">
+                      <div className="event-run-control" ref={eventRunControlRef}>
+                        <button
+                          className="event-run-primary"
+                          disabled={!selectedEvent || Boolean(runningEventId)}
+                          onClick={() =>
+                            void runSelectedEvent(latestEventCheckpoint?.id ?? "")
+                          }
+                          title={eventRunPrimaryTitle}
+                          type="button"
+                        >
+                          Run from here
+                        </button>
+                        <button
+                          aria-expanded={isEventRunMenuOpen}
+                          aria-label="Run from here options"
+                          className="event-run-menu-toggle"
+                          disabled={!selectedEvent || Boolean(runningEventId)}
+                          onClick={() => {
+                            setIsEventRunMenuOpen((current) => !current);
+                            if (selectedEvent) {
+                              void loadEventCheckpoints(selectedEvent.id);
+                            }
+                          }}
+                          title="Choose a saved state and checkpoint recording mode."
+                          type="button"
+                        >
+                          ▾
+                        </button>
+                        {isEventRunMenuOpen ? (
+                          <div className="event-run-menu">
+                            <label className="event-run-recording-row">
+                              <span>Recording</span>
+                              <select
+                                aria-label="Checkpoint recording mode"
+                                onChange={(event) =>
+                                  setCheckpointRecordingMode(
+                                    normalizeCheckpointRecordingMode(
+                                      event.target.value,
+                                    ),
+                                  )
+                                }
+                                value={checkpointRecordingMode}
+                              >
+                                <option value="structural">Structural</option>
+                                <option value="full">Full</option>
+                                <option value="off">Off</option>
+                              </select>
+                            </label>
+                            <button
+                              className="event-run-menu-option"
+                              onClick={() => void runSelectedEvent("")}
+                              type="button"
+                            >
+                              <span>Start cold</span>
+                              <small>
+                                Run this event with no restored context.
+                              </small>
+                            </button>
+                            <button
+                              className="event-run-menu-option"
+                              disabled={!latestEventCheckpoint}
+                              onClick={() =>
+                                void runSelectedEvent(latestEventCheckpoint?.id ?? "")
+                              }
+                              type="button"
+                            >
+                              <span>Latest saved state</span>
+                              <small>
+                                {latestEventCheckpoint
+                                  ? latestEventCheckpoint.label
+                                  : "No saved state yet"}
+                              </small>
+                            </button>
+                            <div className="event-run-saved-states">
+                              <div className="event-run-saved-heading">
+                                <span>Saved states</span>
+                                <button
+                                  className="event-text-button"
+                                  onClick={() =>
+                                    selectedEvent &&
+                                    void loadEventCheckpoints(selectedEvent.id)
+                                  }
+                                  type="button"
+                                >
+                                  Refresh
+                                </button>
+                              </div>
+                              {eventCheckpointStatus === "loading" ? (
+                                <p className="event-run-empty">Loading...</p>
+                              ) : null}
+                              {eventCheckpointStatus === "error" ? (
+                                <p className="event-run-empty error">
+                                  {eventCheckpointError}
+                                </p>
+                              ) : null}
+                              {eventCheckpointStatus !== "loading" &&
+                              !eventCheckpoints.length ? (
+                                <p className="event-run-empty">
+                                  No saved states for this event yet.
+                                </p>
+                              ) : null}
+                              {eventCheckpoints.map((checkpoint) => (
+                                <button
+                                  className="event-run-checkpoint"
+                                  key={checkpoint.id}
+                                  onClick={() => void runSelectedEvent(checkpoint.id)}
+                                  type="button"
+                                >
+                                  <span>
+                                    {checkpointTimeLabel(checkpoint.lastUsedAt)}
+                                  </span>
+                                  <strong>{checkpoint.label}</strong>
+                                  <small>
+                                    {checkpoint.fingerprintMode} ·{" "}
+                                    {checkpoint.messageCount} messages · used{" "}
+                                    {checkpoint.runCount}x
+                                  </small>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <label className="event-recording-compact">
+                        <span>Recording</span>
+                        <select
+                          aria-label="Checkpoint recording mode"
+                          onChange={(event) =>
+                            setCheckpointRecordingMode(
+                              normalizeCheckpointRecordingMode(event.target.value),
+                            )
+                          }
+                          title="Controls whether editor runs save reusable event-entry states."
+                          value={checkpointRecordingMode}
+                        >
+                          <option value="structural">
+                            {checkpointRecordingModeLabel("structural")}
+                          </option>
+                          <option value="full">
+                            {checkpointRecordingModeLabel("full")}
+                          </option>
+                          <option value="off">
+                            {checkpointRecordingModeLabel("off")}
+                          </option>
+                        </select>
+                      </label>
                       <button
                         aria-label="Undo event edit or reordered action"
                         className="event-icon-button"
@@ -11836,13 +12172,27 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
 
     async function runStartEventForSession() {
       try {
-        const payload = await apiFetch<StartEventPayload>(
-          `/api/sessions/${activeSession.id}/start-event/`,
-          {
-            method: "POST",
-            body: JSON.stringify({ uiState: currentRuntimeUiState() }),
-          },
-        );
+        const launch = recordFromUnknown(activeSession.runtimeState?.editorLaunch);
+        const launchEventId =
+          typeof launch.eventId === "string" ? launch.eventId.trim() : "";
+        const payload = launchEventId
+          ? await apiFetch<StartEventPayload>(
+              `/api/sessions/${activeSession.id}/events/run/`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  eventId: launchEventId,
+                  uiState: currentRuntimeUiState(),
+                }),
+              },
+            )
+          : await apiFetch<StartEventPayload>(
+              `/api/sessions/${activeSession.id}/start-event/`,
+              {
+                method: "POST",
+                body: JSON.stringify({ uiState: currentRuntimeUiState() }),
+              },
+            );
 
         if (isCancelled) return;
 

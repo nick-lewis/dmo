@@ -2097,6 +2097,176 @@ button {
   gap: 4px;
 }
 
+.event-run-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.event-run-primary,
+.event-run-menu-toggle,
+.event-recording-compact select,
+.event-run-recording-row select {
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--page-ink) 82%, transparent);
+  background: color-mix(in srgb, var(--page-bg) 62%, var(--panel-bg-strong));
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 820;
+}
+
+.event-run-primary {
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px 0 0 999px;
+  cursor: pointer;
+}
+
+.event-run-menu-toggle {
+  width: 26px;
+  min-height: 28px;
+  padding: 0;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  cursor: pointer;
+}
+
+.event-run-primary:hover,
+.event-run-menu-toggle:hover,
+.event-run-primary:focus-visible,
+.event-run-menu-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 36%, var(--panel-soft-border));
+  color: var(--page-ink);
+  outline: 0;
+}
+
+.event-run-primary:disabled,
+.event-run-menu-toggle:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.event-run-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 150px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--page-bg) 88%, var(--panel-bg-strong));
+  box-shadow: 0 18px 34px rgba(24, 31, 45, 0.14);
+}
+
+.event-run-recording-row,
+.event-recording-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
+  font-size: 0.58rem;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.event-recording-compact select,
+.event-run-recording-row select {
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--page-ink);
+  text-transform: none;
+}
+
+.event-run-recording-row {
+  justify-content: space-between;
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-soft-border) 64%, transparent);
+}
+
+.event-run-menu-option,
+.event-run-checkpoint {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 10%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--page-bg) 62%, transparent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.event-run-menu-option:hover,
+.event-run-checkpoint:hover,
+.event-run-menu-option:focus-visible,
+.event-run-checkpoint:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 34%, var(--panel-soft-border));
+  outline: 0;
+}
+
+.event-run-menu-option:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.event-run-menu-option span,
+.event-run-checkpoint span {
+  color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
+  font-size: 0.58rem;
+  font-weight: 880;
+  text-transform: uppercase;
+}
+
+.event-run-menu-option small,
+.event-run-checkpoint small {
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 720;
+}
+
+.event-run-checkpoint strong {
+  color: var(--page-ink);
+  font-size: 0.7rem;
+  font-weight: 820;
+}
+
+.event-run-saved-states {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.event-run-saved-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
+  font-size: 0.58rem;
+  font-weight: 880;
+  text-transform: uppercase;
+}
+
+.event-run-empty {
+  margin: 0;
+  padding: 8px;
+  border-radius: 7px;
+  color: var(--muted-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 44%, transparent);
+  font-size: 0.64rem;
+  font-weight: 720;
+}
+
+.event-run-empty.error {
+  color: #b45435;
+}
+
 .event-route-strip {
   display: flex;
   align-items: center;
