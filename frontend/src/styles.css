@@ -6174,8 +6174,20 @@ button {
   scrollbar-width: thin;
 }
 
-.chat-message-list.turn-anchored {
-  padding-bottom: var(--turn-blank-space);
+.chat-message-list::after {
+  content: "";
+  display: block;
+  grid-column: 1;
+  height: 0;
+  transition: height 180ms ease;
+}
+
+.chat-message-list.turn-anchored::after {
+  height: var(--turn-blank-space);
+}
+
+.chat-message-list.has-runtime-choices:not(.turn-anchored)::after {
+  height: 12px;
 }
 
 .chat-message-list::-webkit-scrollbar {

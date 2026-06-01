@@ -19619,6 +19619,12 @@ function ChatPanelContent({
   const turnAnchorScrollKey = turnAnchorMessage
     ? `${turnAnchorMessage.id}:${turnAnchorMessage.metadata?.scriptHidden ? "hidden" : "visible"}:${turnAnchorMessage.content.length}`
     : "";
+  const runtimeButtonsLayoutKey = runtimeButtons
+    .map(
+      (button) =>
+        `${button.stepId || button.label}:${button.triggersEvent}:${button.label}`,
+    )
+    .join("|");
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -19653,7 +19659,13 @@ function ChatPanelContent({
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [messages.length, turnAnchorIsVisible, turnAnchorMessageId, turnAnchorScrollKey]);
+  }, [
+    messages.length,
+    runtimeButtonsLayoutKey,
+    turnAnchorIsVisible,
+    turnAnchorMessageId,
+    turnAnchorScrollKey,
+  ]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -19699,7 +19711,13 @@ function ChatPanelContent({
     <div className="chat-stage">
       <div className="chat-thread">
         <div
-          className={`chat-message-list ${turnAnchorMessageId ? "turn-anchored" : ""}`}
+          className={[
+            "chat-message-list",
+            turnAnchorMessageId ? "turn-anchored" : "",
+            runtimeButtons.length ? "has-runtime-choices" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           aria-live="polite"
           ref={messageListRef}
         >
