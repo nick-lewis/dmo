@@ -2808,6 +2808,39 @@ button {
   justify-content: start;
 }
 
+.conversation-choice-icon-line {
+  grid-template-columns: auto 24px 28px minmax(90px, auto);
+  justify-content: start;
+}
+
+.conversation-choice-icon-preview {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 64%, transparent);
+}
+
+.conversation-choice-icon-preview.is-empty {
+  opacity: 0.55;
+}
+
+.conversation-choice-icon-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.conversation-choice-icon-copy {
+  color: color-mix(in srgb, var(--muted-ink) 74%, transparent);
+  font-size: 0.68rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
 .conversation-check-core-line {
   grid-template-columns: auto minmax(130px, 220px) auto minmax(180px, 260px);
   justify-content: start;
@@ -5044,8 +5077,12 @@ button {
 }
 
 .runtime-choice-button {
+  display: inline-grid;
+  grid-template-columns: 20px minmax(0, auto);
+  align-items: center;
+  gap: 7px;
   min-height: 30px;
-  padding: 4px 10px;
+  padding: 4px 12px 4px 8px;
   border: 1px solid color-mix(in srgb, var(--accent-2) 24%, var(--panel-soft-border));
   border-radius: 999px;
   color: color-mix(in srgb, var(--page-ink) 84%, var(--accent-2));
@@ -5053,6 +5090,26 @@ button {
   font-size: 0.74rem;
   font-weight: 820;
   cursor: pointer;
+}
+
+.runtime-choice-icon-slot {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.runtime-choice-icon-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.runtime-choice-label {
+  min-width: 0;
+  text-align: left;
 }
 
 .runtime-choice-button:hover,

@@ -1182,6 +1182,7 @@ class EventEditorApiTests(TestCase):
                     "conversationChoices": [
                         {
                             "enabled": True,
+                            "iconPath": "test-images/dLU-right.png",
                             "id": "quick-primer",
                             "label": "Yes, quick primer",
                             "sortOrder": 0,
@@ -1197,6 +1198,10 @@ class EventEditorApiTests(TestCase):
         start.refresh_from_db()
         self.assertEqual(start.conversation_choices[0]["label"], "Yes, quick primer")
         self.assertEqual(
+            start.conversation_choices[0]["iconPath"],
+            "test-images/dLU-right.png",
+        )
+        self.assertEqual(
             response.json()["event"]["conversationChoices"][0]["triggersEvent"],
             "primer",
         )
@@ -1211,6 +1216,7 @@ class EventEditorApiTests(TestCase):
             conversation_choices=[
                 {
                     "enabled": True,
+                    "iconPath": "test-images/dLU-right.png",
                     "id": "continue-choice",
                     "label": "Continue",
                     "sortOrder": 0,
@@ -1250,6 +1256,7 @@ class EventEditorApiTests(TestCase):
         buttons = payload["session"]["runtimeState"]["uiRuntime"]["buttons"]
         self.assertEqual(buttons[0]["source"], "conversation-choice")
         self.assertEqual(buttons[0]["label"], "Continue")
+        self.assertEqual(buttons[0]["iconPath"], "test-images/dLU-right.png")
 
     def test_restore_event_from_serialized_payload_preserves_nested_shape(self):
         ExperienceEvent.objects.create(

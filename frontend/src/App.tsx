@@ -104,6 +104,7 @@ const defaultScriptActionOffsetMs = 800;
 const scriptTextareaMinHeightPx = 220;
 const scriptTextareaMaxHeightPx = 680;
 const scriptAudioPlaybackRateOptions = [0.75, 1, 1.25, 1.5, 2] as const;
+const defaultChoiceIconPath = "test-images/dLU-right.png";
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
 const tutorAvatarOptions = [
@@ -366,6 +367,7 @@ type EventClassifierGroup = {
 
 type EventConversationChoice = {
   id: string;
+  iconPath: string;
   label: string;
   triggersEvent: string;
   enabled: boolean;
@@ -507,6 +509,7 @@ type EventClassifierGroupDraft = {
 
 type EventConversationChoiceDraft = {
   enabled: boolean;
+  iconPath: string;
   id: string;
   label: string;
   sortOrder: number;
@@ -588,6 +591,7 @@ type RuntimeUiTrigger = {
 
 type RuntimeButton = {
   eventId: string;
+  iconPath?: string;
   label: string;
   source?: string;
   stepId: string;
@@ -1374,6 +1378,7 @@ function conversationChoiceDraftFromChoice(
 ): EventConversationChoiceDraft {
   return {
     enabled: choice.enabled,
+    iconPath: choice.iconPath ?? "",
     id: choice.id,
     label: choice.label,
     sortOrder: choice.sortOrder,
@@ -2628,6 +2633,7 @@ function comparableClassifierGroup(group: EventClassifierGroup) {
 function comparableConversationChoiceDraft(choice: EventConversationChoiceDraft) {
   return {
     enabled: choice.enabled,
+    iconPath: choice.iconPath,
     label: choice.label,
     sortOrder: choice.sortOrder,
     triggersEvent: choice.triggersEvent,
@@ -2641,6 +2647,7 @@ function comparableConversationChoice(choice: EventConversationChoice) {
 function conversationChoicePayloadFromDraft(choice: EventConversationChoiceDraft) {
   return {
     enabled: choice.enabled,
+    iconPath: choice.iconPath,
     id: choice.id,
     label: choice.label,
     sortOrder: choice.sortOrder,
@@ -5687,6 +5694,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const destination = editorEvents.find((event) => event.id !== selectedEventId);
     const nextChoice: EventConversationChoiceDraft = {
       enabled: true,
+      iconPath: "",
       id: choiceId,
       label: "Continue",
       sortOrder: eventDraft.conversationChoices.length,
@@ -10635,6 +10643,50 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                               ))}
                             </select>
                           </div>
+                          <div className="event-context-line conversation-choice-icon-line">
+                            <span className="event-detail-label">ICON</span>
+                            <button
+                              aria-label={
+                                choice.iconPath
+                                  ? "Remove choice icon"
+                                  : "Include choice icon"
+                              }
+                              className={`event-enable-button${
+                                choice.iconPath ? "" : " is-off"
+                              }`}
+                              onClick={() =>
+                                updateEventConversationChoiceDraftField(
+                                  choice.id,
+                                  "iconPath",
+                                  choice.iconPath ? "" : defaultChoiceIconPath,
+                                )
+                              }
+                              title={
+                                choice.iconPath
+                                  ? "Icon shown with this choice"
+                                  : "Show placeholder icon with this choice"
+                              }
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                            <span
+                              aria-hidden="true"
+                              className={`conversation-choice-icon-preview${
+                                choice.iconPath ? "" : " is-empty"
+                              }`}
+                            >
+                              {choice.iconPath ? (
+                                <img
+                                  alt=""
+                                  src={publicAsset(choice.iconPath)}
+                                />
+                              ) : null}
+                            </span>
+                            <span className="conversation-choice-icon-copy">
+                              {choice.iconPath ? "Placeholder icon" : "---"}
+                            </span>
+                          </div>
                         </div>
                       ) : null}
                     </article>
@@ -11304,6 +11356,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         next = next.filter((button) => button.stepId !== stepId);
         next.push({
           eventId: typeof action.eventId === "string" ? action.eventId : "",
+          iconPath: typeof action.iconPath === "string" ? action.iconPath : "",
           label,
           source: typeof action.source === "string" ? action.source : "",
           stepId,
@@ -11428,6 +11481,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
         }
         nextButtons.push({
           eventId: typeof button.eventId === "string" ? button.eventId : "",
+          iconPath: typeof button.iconPath === "string" ? button.iconPath : "",
           label,
           source,
           stepId,
@@ -12553,6 +12607,7 @@ function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string
       )
       .map((choice) => ({
         eventId: event.id,
+        iconPath: choice.iconPath?.trim() ?? "",
         label: choice.label.trim(),
         source: "conversation-choice",
         stepId: `conversation-choice:${choice.id}`,
@@ -16898,7 +16953,12 @@ function ChatPanelContent({
                 onClick={() => onChooseRuntimeButton(button)}
                 type="button"
               >
-                {button.label}
+                <span className="runtime-choice-icon-slot" aria-hidden="true">
+                  {button.iconPath ? (
+                    <img alt="" src={publicAsset(button.iconPath)} />
+                  ) : null}
+                </span>
+                <span className="runtime-choice-label">{button.label}</span>
               </button>
             ))}
           </div>

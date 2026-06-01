@@ -784,6 +784,7 @@ def normalize_conversation_choice(choice, index=0):
 
     label = str(choice.get("label", "") or "").strip()[:120]
     triggers_event = str(choice.get("triggersEvent", "") or "").strip()[:180]
+    icon_path = str(choice.get("iconPath", "") or "").strip()[:220]
     enabled = choice.get("enabled")
     sort_order = choice.get("sortOrder", index)
     try:
@@ -797,6 +798,7 @@ def normalize_conversation_choice(choice, index=0):
         "id": choice_id[:80],
         "label": label,
         "triggersEvent": triggers_event,
+        "iconPath": icon_path,
         "enabled": enabled is not False,
         "sortOrder": sort_order,
     }
@@ -837,6 +839,9 @@ def validate_conversation_choices(value):
         label = str(raw_choice.get("label", "") or "").strip()
         if len(label) > 120:
             return None, "Conversation choice label is too long."
+        icon_path = str(raw_choice.get("iconPath", "") or "").strip()
+        if len(icon_path) > 220:
+            return None, "Conversation choice icon path is too long."
 
         triggers_event, event_error = validate_event_slug(
             raw_choice.get("triggersEvent"),
@@ -849,6 +854,7 @@ def validate_conversation_choices(value):
         choice = normalize_conversation_choice(
             {
                 **raw_choice,
+                "iconPath": icon_path,
                 "label": label,
                 "triggersEvent": triggers_event,
             },
@@ -871,6 +877,7 @@ def conversation_choice_actions(event):
             {
                 "type": "button_choice",
                 "eventId": str(event.id),
+                "iconPath": str(choice.get("iconPath", "") or "").strip(),
                 "label": label,
                 "source": "conversation-choice",
                 "stepId": f"conversation-choice:{choice.get('id')}",
@@ -2707,9 +2714,11 @@ def normalize_emitted_runtime_action(action):
     if action_type == "button_choice":
         label = runtime_action_string(action.get("label"), max_length=120)
         triggers_event, error = validate_event_slug(action.get("triggersEvent"))
+        icon_path = runtime_action_string(action.get("iconPath"), max_length=220)
         if not label or error:
             return None, rejected_emitted_runtime_action(action, "invalid_button")
         return {
+            "iconPath": icon_path,
             "label": label,
             "source": "interactive",
             "triggersEvent": triggers_event,
@@ -4158,6 +4167,7 @@ def apply_runtime_actions_to_state(
             buttons.append(
                 {
                     "eventId": str(action.get("eventId", "")),
+                    "iconPath": str(action.get("iconPath", "")),
                     "label": str(action.get("label", "")),
                     "source": str(action.get("source", "")),
                     "stepId": step_id,
@@ -4594,6 +4604,7 @@ def run_action_sequence(
                 {
                     "type": "button_choice",
                     "eventId": str(event.id),
+                    "iconPath": str(config.get("iconPath", "")).strip(),
                     "label": label,
                     "stepId": step_id,
                     "triggersEvent": triggers_event,
