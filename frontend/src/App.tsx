@@ -100,7 +100,7 @@ const handlerActionDragMimeType = "application/x-dlu-handler-action";
 const scriptTextStreamFallbackMs = 7000;
 const scriptTextStreamMinMs = 1400;
 const scriptImmediateCueProgress = 0.001;
-const slideDissolveDurationMs = 720;
+const slideDissolveDurationMs = 320;
 const defaultScriptActionOffsetMs = 800;
 const scriptTextareaMinHeightPx = 220;
 const scriptTextareaMaxHeightPx = 680;
@@ -17865,12 +17865,14 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
           } as CSSProperties
         }
       >
+        {/* Google slide exports are opaque, so keeping the current layer fully
+            visible while the next layer fades in preserves unchanged pixels. */}
         {currentSlide ? (
           <div
             className={[
               "slide-dissolve-layer",
               "current",
-              currentVisible && !(incomingSlide && isDissolving) ? "visible" : "",
+              currentVisible ? "visible" : "",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -17887,7 +17889,6 @@ function DissolveSlideWorkspace({ slide }: { slide: ResolvedSlide }) {
             className={[
               "slide-dissolve-layer",
               "incoming",
-              "dissolve-in",
               isDissolving ? "visible" : "",
             ]
               .filter(Boolean)

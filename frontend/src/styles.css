@@ -4935,10 +4935,6 @@ button {
   opacity: 1;
 }
 
-.slide-dissolve-layer.dissolve-in {
-  mix-blend-mode: plus-lighter;
-}
-
 .google-slide-image {
   display: block;
   width: auto;
