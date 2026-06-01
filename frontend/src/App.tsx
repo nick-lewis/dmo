@@ -767,6 +767,7 @@ type ScriptAudioItem = {
   characterCount?: number;
   displayBaseSlots?: string[];
   displayBaseText?: string;
+  displayBreaks?: number[];
   durationSeconds: number | null;
   displayExpectedWordCount?: number;
   displaySlotCount?: number;
@@ -804,6 +805,7 @@ type ScriptAudioPayload = {
 type ScriptAudioDisplayPayload = {
   displayBaseSlots: string[];
   displayBaseText: string;
+  displayBreaks: number[];
   displayExpectedWordCount: number;
   displaySlotCount: number;
   displaySlots: string[];
@@ -7232,6 +7234,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
   async function saveScriptAudioDisplayTranscript(
     scriptId: string,
     displaySlots: string[],
+    displayBreaks: number[],
   ) {
     if (!experience) {
       throw new Error("Experience is not loaded.");
@@ -7248,7 +7251,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
         `/api/experiences/${experience.id}/script-audio/${scriptId}/display/`,
         {
           method: "PUT",
-          body: JSON.stringify({ displaySlots }),
+          body: JSON.stringify({ displayBreaks, displaySlots }),
         },
       );
       setScriptAudioItems((current) =>
@@ -7261,6 +7264,7 @@ function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 displayExpectedWordCount: payload.displayExpectedWordCount,
                 displaySlotCount: payload.displaySlotCount,
                 displaySlots: payload.displaySlots,
+                displayBreaks: payload.displayBreaks,
                 displayText: payload.displayText,
                 displayWordCount: payload.displayWordCount,
                 hasDisplayTranscript: payload.hasDisplayTranscript,
@@ -16818,6 +16822,7 @@ function scriptAudioSpokenText(item: ScriptAudioItem) {
 type ScriptAudioDisplayFields = {
   displayBaseSlots?: string[];
   displayBaseText?: string;
+  displayBreaks?: number[];
   displaySlots?: string[];
   displayText?: string;
   preview?: string;
@@ -16833,8 +16838,28 @@ function displaySlotsAreEqual(left: string[], right: string[]) {
   return left.every((slot, index) => slot.trim() === right[index]?.trim());
 }
 
-function displaySlotsKey(slots: string[]) {
-  return JSON.stringify(slots.map((slot) => slot.trim()));
+function normalizeDisplayBreaks(value: unknown, slotCount = 0) {
+  if (!Array.isArray(value)) return [];
+  const breaks = new Set<number>();
+  value.forEach((item) => {
+    const index = Number(item);
+    if (!Number.isInteger(index) || index < 0) return;
+    if (slotCount && index >= slotCount - 1) return;
+    breaks.add(index);
+  });
+  return [...breaks].sort((left, right) => left - right);
+}
+
+function displayBreaksAreEqual(left: number[], right: number[]) {
+  if (left.length !== right.length) return false;
+  return left.every((breakIndex, index) => breakIndex === right[index]);
+}
+
+function displayDraftKey(slots: string[], breaks: number[]) {
+  return JSON.stringify({
+    breaks,
+    slots: slots.map((slot) => slot.trim()),
+  });
 }
 
 function displaySlotWidthStyle(value: string): CSSProperties {
@@ -16865,6 +16890,13 @@ function scriptAudioPersistedDisplaySlots(item: ScriptAudioDisplayFields) {
   return baseSlots;
 }
 
+function scriptAudioPersistedDisplayBreaks(item: ScriptAudioDisplayFields) {
+  return normalizeDisplayBreaks(
+    item.displayBreaks,
+    scriptAudioDisplayBaseSlots(item).length,
+  );
+}
+
 function ScriptAudioPanel({
   error,
   isBusy,
@@ -16892,6 +16924,7 @@ function ScriptAudioPanel({
   onSaveDisplayTranscript: (
     scriptId: string,
     displaySlots: string[],
+    displayBreaks: number[],
   ) => Promise<ScriptAudioDisplayPayload>;
   onStop: () => void;
   playingId: string;
@@ -16903,6 +16936,9 @@ function ScriptAudioPanel({
   const [expandedItemId, setExpandedItemId] = useState("");
   const [displaySlotDrafts, setDisplaySlotDrafts] = useState<
     Record<string, string[]>
+  >({});
+  const [displayBreakDrafts, setDisplayBreakDrafts] = useState<
+    Record<string, number[]>
   >({});
   const [savingDisplayId, setSavingDisplayId] = useState("");
   const saveDisplayTranscriptRef = useRef(onSaveDisplayTranscript);
@@ -16933,41 +16969,52 @@ function ScriptAudioPanel({
   useEffect(() => {
     if (savingDisplayId) return undefined;
 
-    const pendingDraft = Object.entries(displaySlotDrafts).find(
-      ([scriptId, draftSlots]) => {
-        const item = items.find((candidate) => candidate.id === scriptId);
-        if (!item) return false;
-        const baseSlots = scriptAudioDisplayBaseSlots(item);
-        const expectedSlotCount =
-          baseSlots.length ||
-          item.displayExpectedWordCount ||
-          item.timingWordCount ||
-          item.wordCount ||
-          0;
-        if (expectedSlotCount && draftSlots.length !== expectedSlotCount) {
-          return false;
-        }
-        const draftKey = displaySlotsKey(draftSlots);
-        if (failedDisplayAutosavesRef.current[scriptId] === draftKey) {
-          return false;
-        }
-        return !displaySlotsAreEqual(
-          draftSlots,
-          scriptAudioPersistedDisplaySlots(item),
-        );
-      },
+    const pendingItem = items.find((item) => {
+      const baseSlots = scriptAudioDisplayBaseSlots(item);
+      const expectedSlotCount =
+        baseSlots.length ||
+        item.displayExpectedWordCount ||
+        item.timingWordCount ||
+        item.wordCount ||
+        0;
+      const persistedSlots = scriptAudioPersistedDisplaySlots(item);
+      const persistedBreaks = scriptAudioPersistedDisplayBreaks(item);
+      const draftSlots = displaySlotDrafts[item.id] ?? persistedSlots;
+      const draftBreaks = normalizeDisplayBreaks(
+        displayBreakDrafts[item.id] ?? persistedBreaks,
+        draftSlots.length,
+      );
+      if (expectedSlotCount && draftSlots.length !== expectedSlotCount) {
+        return false;
+      }
+      const draftKey = displayDraftKey(draftSlots, draftBreaks);
+      if (failedDisplayAutosavesRef.current[item.id] === draftKey) {
+        return false;
+      }
+      return (
+        !displaySlotsAreEqual(draftSlots, persistedSlots) ||
+        !displayBreaksAreEqual(draftBreaks, persistedBreaks)
+      );
+    });
+
+    if (!pendingItem) return undefined;
+
+    const scriptId = pendingItem.id;
+    const persistedSlots = scriptAudioPersistedDisplaySlots(pendingItem);
+    const persistedBreaks = scriptAudioPersistedDisplayBreaks(pendingItem);
+    const draftSlots = displaySlotDrafts[scriptId] ?? persistedSlots;
+    const draftBreaks = normalizeDisplayBreaks(
+      displayBreakDrafts[scriptId] ?? persistedBreaks,
+      draftSlots.length,
     );
-
-    if (!pendingDraft) return undefined;
-
-    const [scriptId, draftSlots] = pendingDraft;
-    const draftKey = displaySlotsKey(draftSlots);
+    const draftKey = displayDraftKey(draftSlots, draftBreaks);
     const timeoutId = window.setTimeout(() => {
       setSavingDisplayId(scriptId);
       delete failedDisplayAutosavesRef.current[scriptId];
-      void saveDisplayTranscriptRef.current(scriptId, draftSlots)
+      void saveDisplayTranscriptRef.current(scriptId, draftSlots, draftBreaks)
         .then((payload) => {
           const savedSlots = scriptAudioPersistedDisplaySlots(payload);
+          const savedBreaks = scriptAudioPersistedDisplayBreaks(payload);
           setDisplaySlotDrafts((current) => {
             const currentSlots = current[scriptId];
             if (!currentSlots || !displaySlotsAreEqual(currentSlots, draftSlots)) {
@@ -16976,6 +17023,19 @@ function ScriptAudioPanel({
             return {
               ...current,
               [scriptId]: savedSlots,
+            };
+          });
+          setDisplayBreakDrafts((current) => {
+            const currentBreaks = normalizeDisplayBreaks(
+              current[scriptId] ?? draftBreaks,
+              savedSlots.length,
+            );
+            if (!displayBreaksAreEqual(currentBreaks, draftBreaks)) {
+              return current;
+            }
+            return {
+              ...current,
+              [scriptId]: savedBreaks,
             };
           });
         })
@@ -16988,7 +17048,7 @@ function ScriptAudioPanel({
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
-  }, [displaySlotDrafts, items, savingDisplayId]);
+  }, [displayBreakDrafts, displaySlotDrafts, items, savingDisplayId]);
 
   return (
     <div className={panelClassName}>
@@ -17089,8 +17149,14 @@ function ScriptAudioPanel({
             const spokenText = scriptAudioSpokenText(item);
             const displayBaseSlots = scriptAudioDisplayBaseSlots(item);
             const persistedDisplaySlots = scriptAudioPersistedDisplaySlots(item);
+            const persistedDisplayBreaks = scriptAudioPersistedDisplayBreaks(item);
             const displaySlotDraft =
               displaySlotDrafts[item.id] ?? persistedDisplaySlots;
+            const displayBreakDraft = normalizeDisplayBreaks(
+              displayBreakDrafts[item.id] ?? persistedDisplayBreaks,
+              displaySlotDraft.length,
+            );
+            const displayBreakSet = new Set(displayBreakDraft);
             const expectedDisplayWordCount =
               displayBaseSlots.length ||
               item.displayExpectedWordCount ||
@@ -17104,12 +17170,28 @@ function ScriptAudioPanel({
               !expectedDisplayWordCount ||
               displaySlotDraft.length === expectedDisplayWordCount;
             const displayHasChanges =
-              !displaySlotsAreEqual(displaySlotDraft, persistedDisplaySlots);
+              !displaySlotsAreEqual(displaySlotDraft, persistedDisplaySlots) ||
+              !displayBreaksAreEqual(displayBreakDraft, persistedDisplayBreaks);
             const isSavingDisplay = savingDisplayId === item.id;
             const sourceLabel =
               sourceCount > 1
                 ? `${item.source} +${sourceCount - 1}`
                 : item.source;
+            const toggleDisplayBreak = (slotIndex: number) => {
+              setDisplayBreakDrafts((current) => {
+                const currentBreaks = normalizeDisplayBreaks(
+                  current[item.id] ?? displayBreakDraft,
+                  displaySlotDraft.length,
+                );
+                const nextBreaks = currentBreaks.includes(slotIndex)
+                  ? currentBreaks.filter((breakIndex) => breakIndex !== slotIndex)
+                  : [...currentBreaks, slotIndex].sort((left, right) => left - right);
+                return {
+                  ...current,
+                  [item.id]: nextBreaks,
+                };
+              });
+            };
             return (
               <div
                 className={[
@@ -17254,36 +17336,71 @@ function ScriptAudioPanel({
                         role="group"
                       >
                         {displaySlotDraft.map((slot, index) => (
-                          <label
-                            className={[
-                              "script-audio-display-slot",
-                              slot.trim() ? "" : "is-blank",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
-                            key={`${item.id}-${index}`}
-                          >
-                            <span>{index + 1}</span>
-                            <input
-                              aria-label={`Displayed word slot ${index + 1}`}
-                              onChange={(event) => {
-                                const nextValue = event.target.value;
-                                setDisplaySlotDrafts((current) => {
-                                  const nextSlots = [
-                                    ...(current[item.id] ?? displaySlotDraft),
-                                  ];
-                                  nextSlots[index] = nextValue;
-                                  return {
-                                    ...current,
-                                    [item.id]: nextSlots,
-                                  };
-                                });
-                              }}
-                              placeholder="[blank]"
-                              style={displaySlotWidthStyle(slot)}
-                              value={slot}
-                            />
-                          </label>
+                          <Fragment key={`${item.id}-${index}`}>
+                            <label
+                              className={[
+                                "script-audio-display-slot",
+                                slot.trim() ? "" : "is-blank",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              <span>{index + 1}</span>
+                              <input
+                                aria-label={`Displayed word slot ${index + 1}`}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setDisplaySlotDrafts((current) => {
+                                    const nextSlots = [
+                                      ...(current[item.id] ?? displaySlotDraft),
+                                    ];
+                                    nextSlots[index] = nextValue;
+                                    return {
+                                      ...current,
+                                      [item.id]: nextSlots,
+                                    };
+                                  });
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  event.preventDefault();
+                                  if (index < displaySlotDraft.length - 1) {
+                                    toggleDisplayBreak(index);
+                                  }
+                                }}
+                                placeholder="[blank]"
+                                style={displaySlotWidthStyle(slot)}
+                                value={slot}
+                              />
+                            </label>
+                            {index < displaySlotDraft.length - 1 ? (
+                              <button
+                                aria-label={`Toggle line break after displayed word ${index + 1}`}
+                                aria-pressed={displayBreakSet.has(index)}
+                                className={[
+                                  "script-audio-line-break-toggle",
+                                  displayBreakSet.has(index) ? "is-active" : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                                onClick={() => toggleDisplayBreak(index)}
+                                title={
+                                  displayBreakSet.has(index)
+                                    ? "Remove line break after this word."
+                                    : "Add line break after this word."
+                                }
+                                type="button"
+                              >
+                                ↵
+                              </button>
+                            ) : null}
+                            {displayBreakSet.has(index) ? (
+                              <span
+                                aria-hidden="true"
+                                className="script-audio-display-line-break"
+                              />
+                            ) : null}
+                          </Fragment>
                         ))}
                       </div>
                       <div className="script-audio-display-actions">
@@ -17300,18 +17417,26 @@ function ScriptAudioPanel({
                               ...current,
                               [item.id]: displayBaseSlots,
                             }));
+                            setDisplayBreakDrafts((current) => ({
+                              ...current,
+                              [item.id]: [],
+                            }));
                             if (item.hasDisplayTranscript) {
                               setSavingDisplayId(item.id);
-                              void onSaveDisplayTranscript(item.id, displayBaseSlots)
+                              void onSaveDisplayTranscript(item.id, displayBaseSlots, [])
                                 .then((payload) => {
                                   setDisplaySlotDrafts((current) => ({
                                     ...current,
                                     [item.id]: scriptAudioPersistedDisplaySlots(payload),
                                   }));
+                                  setDisplayBreakDrafts((current) => ({
+                                    ...current,
+                                    [item.id]: scriptAudioPersistedDisplayBreaks(payload),
+                                  }));
                                 })
                                 .catch(() => {
                                   failedDisplayAutosavesRef.current[item.id] =
-                                    displaySlotsKey(displayBaseSlots);
+                                    displayDraftKey(displayBaseSlots, []);
                                 })
                                 .finally(() =>
                                   setSavingDisplayId((current) =>
@@ -19027,12 +19152,18 @@ function ChatPanelContent({
   const turnAnchorIsVisible = Boolean(
     turnAnchorMessage && !turnAnchorMessage.metadata?.scriptHidden,
   );
+  const turnAnchorScrollKey = turnAnchorMessage
+    ? `${turnAnchorMessage.id}:${turnAnchorMessage.metadata?.scriptHidden ? "hidden" : "visible"}:${turnAnchorMessage.content.length}`
+    : "";
 
   useEffect(() => {
     const messageList = messageListRef.current;
     if (!messageList) return;
 
-    const animationFrame = window.requestAnimationFrame(() => {
+    let firstFrame = 0;
+    let secondFrame = 0;
+
+    const scrollToAnchor = () => {
       if (turnAnchorMessageId) {
         const target = messageRefs.current.get(turnAnchorMessageId);
         if (target) {
@@ -19047,10 +19178,18 @@ function ChatPanelContent({
       messageList.scrollTo({
         top: messageList.scrollHeight,
       });
+    };
+
+    firstFrame = window.requestAnimationFrame(() => {
+      scrollToAnchor();
+      secondFrame = window.requestAnimationFrame(scrollToAnchor);
     });
 
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [messages.length, turnAnchorIsVisible, turnAnchorMessageId]);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [messages.length, turnAnchorIsVisible, turnAnchorMessageId, turnAnchorScrollKey]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

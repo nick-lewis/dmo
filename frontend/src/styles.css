@@ -1167,6 +1167,38 @@ button {
   background: color-mix(in srgb, var(--page-bg) 68%, var(--panel-bg-strong));
 }
 
+.script-audio-line-break-toggle {
+  align-self: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted-ink) 62%, transparent);
+  background: color-mix(in srgb, var(--page-bg) 48%, transparent);
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.script-audio-line-break-toggle:hover,
+.script-audio-line-break-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 36%, var(--panel-soft-border));
+  color: var(--page-ink);
+  outline: 0;
+}
+
+.script-audio-line-break-toggle.is-active {
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+}
+
+.script-audio-display-line-break {
+  flex-basis: 100%;
+  height: 0;
+}
+
 .script-audio-timing-preview,
 .script-audio-no-timing {
   display: block;
@@ -4890,6 +4922,7 @@ button {
   color: var(--page-ink);
   font-size: 0.8rem;
   line-height: 1.48;
+  white-space: pre-wrap;
 }
 
 .muted-copy {

@@ -236,8 +236,33 @@ def normalize_script_audio_display_slots(value):
     return ["" if slot is None else str(slot).strip() for slot in value]
 
 
-def script_audio_display_text_from_slots(slots):
-    return " ".join(str(slot).strip() for slot in slots if str(slot).strip())
+def normalize_script_audio_display_breaks(value, slot_count=0):
+    if not isinstance(value, list):
+        return []
+    breaks = set()
+    for item in value:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if index < 0:
+            continue
+        if slot_count and index >= slot_count - 1:
+            continue
+        breaks.add(index)
+    return sorted(breaks)
+
+
+def script_audio_display_text_from_slots(slots, breaks=None):
+    normalized_breaks = set(normalize_script_audio_display_breaks(breaks, len(slots)))
+    pieces = []
+    for index, slot in enumerate(slots):
+        text = str(slot).strip()
+        if text:
+            pieces.append(text)
+        if index in normalized_breaks:
+            pieces.append("\n")
+    return " ".join(pieces).replace(" \n ", "\n").replace("\n ", "\n").replace(" \n", "\n")
 
 
 def load_script_audio_display_payload(script):
@@ -267,8 +292,17 @@ def load_script_audio_display_slots(script):
     return script_audio_display_slots_from_text(display_text)
 
 
+def load_script_audio_display_breaks(script, slot_count=0):
+    payload = load_script_audio_display_payload(script)
+    return normalize_script_audio_display_breaks(payload.get("displayBreaks"), slot_count)
+
+
 def load_script_audio_display_text(script):
-    return script_audio_display_text_from_slots(load_script_audio_display_slots(script))
+    display_slots = load_script_audio_display_slots(script)
+    return script_audio_display_text_from_slots(
+        display_slots,
+        load_script_audio_display_breaks(script, len(display_slots)),
+    )
 
 
 def runtime_script_audio_display_text(script, expected_word_count=0):
@@ -279,43 +313,57 @@ def runtime_script_audio_display_text(script, expected_word_count=0):
     expected_count = expected_word_count or script_word_count(script)
     if expected_count and len(display_slots) != expected_count:
         return ""
-    return script_audio_display_text_from_slots(display_slots)
+    return script_audio_display_text_from_slots(
+        display_slots,
+        load_script_audio_display_breaks(script, len(display_slots)),
+    )
 
 
-def save_script_audio_display_slots(script, display_slots, base_slots=None):
+def save_script_audio_display_slots(script, display_slots, base_slots=None, display_breaks=None):
     display_key = compute_script_audio_display_key(script)
     display_path = script_audio_display_path(display_key)
     normalized_slots = normalize_script_audio_display_slots(display_slots)
     normalized_base_slots = normalize_script_audio_display_slots(base_slots)
     if not normalized_base_slots:
         normalized_base_slots = script_audio_display_slots_from_text(script)
+    normalized_breaks = normalize_script_audio_display_breaks(
+        display_breaks,
+        len(normalized_base_slots) or len(normalized_slots),
+    )
 
-    if not normalized_slots or normalized_slots == normalized_base_slots:
+    if (
+        not normalized_slots
+        or (normalized_slots == normalized_base_slots and not normalized_breaks)
+    ):
         try:
             display_path.unlink()
         except FileNotFoundError:
             pass
-        return []
+        return [], []
 
     display_path.parent.mkdir(parents=True, exist_ok=True)
     display_path.write_text(
         json.dumps(
             {
+                "displayBreaks": normalized_breaks,
                 "displaySlots": normalized_slots,
-                "displayText": script_audio_display_text_from_slots(normalized_slots),
+                "displayText": script_audio_display_text_from_slots(
+                    normalized_slots,
+                    normalized_breaks,
+                ),
                 "version": "script-audio-display-slots-v1",
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    return normalized_slots
+    return normalized_slots, normalized_breaks
 
 
 def save_script_audio_display_text(script, display_text):
     display_slots = script_audio_display_slots_from_text(display_text)
-    saved_slots = save_script_audio_display_slots(script, display_slots)
-    return script_audio_display_text_from_slots(saved_slots)
+    saved_slots, saved_breaks = save_script_audio_display_slots(script, display_slots)
+    return script_audio_display_text_from_slots(saved_slots, saved_breaks)
 
 
 def script_audio_display_payload(item):
@@ -323,6 +371,7 @@ def script_audio_display_payload(item):
         "displayBaseSlots": item.get("displayBaseSlots", []),
         "displayBaseText": item.get("displayBaseText", ""),
         "displayExpectedWordCount": item.get("displayExpectedWordCount", 0),
+        "displayBreaks": item.get("displayBreaks", []),
         "displaySlotCount": item.get("displaySlotCount", 0),
         "displaySlots": item.get("displaySlots", []),
         "displayText": item.get("displayText", ""),
@@ -2190,8 +2239,13 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     display_slots = load_script_audio_display_slots(script)
     if display_base_slots and len(display_slots) != len(display_base_slots):
         display_slots = []
-    display_text = script_audio_display_text_from_slots(display_slots)
-    has_display_transcript = bool(display_slots and display_slots != display_base_slots)
+    display_breaks = load_script_audio_display_breaks(script, len(display_base_slots))
+    if not display_slots:
+        display_breaks = []
+    display_text = script_audio_display_text_from_slots(display_slots, display_breaks)
+    has_display_transcript = bool(
+        display_slots and (display_slots != display_base_slots or display_breaks)
+    )
     return {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
         "cacheKey": cache_key,
@@ -2201,6 +2255,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
         "displayBaseSlots": display_base_slots,
         "displayBaseText": display_base_text,
+        "displayBreaks": display_breaks,
         "displayExpectedWordCount": len(timing_words) or script_word_count(script),
         "displayKey": display_key,
         "displaySlotCount": len(display_slots) if display_slots else 0,
@@ -5721,6 +5776,10 @@ def script_audio_display_transcript(request, experience_id, script_id):
         display_slots = normalize_script_audio_display_slots(data.get("displaySlots"))
     else:
         display_slots = script_audio_display_slots_from_text(data.get("displayText", ""))
+    display_breaks = normalize_script_audio_display_breaks(
+        data.get("displayBreaks"),
+        len(base_slots),
+    )
     expected_slot_count = len(base_slots)
     display_slot_count = len(display_slots)
     if display_slots and expected_slot_count and display_slot_count != expected_slot_count:
@@ -5736,7 +5795,12 @@ def script_audio_display_transcript(request, experience_id, script_id):
             status=400,
         )
 
-    save_script_audio_display_slots(item.get("script", ""), display_slots, base_slots)
+    save_script_audio_display_slots(
+        item.get("script", ""),
+        display_slots,
+        base_slots,
+        display_breaks,
+    )
     refreshed_item = next(
         (
             candidate
