@@ -2414,6 +2414,7 @@ button {
   font-size: 0.67rem;
   font-weight: 820;
   vertical-align: baseline;
+  cursor: grab;
 }
 
 .script-marker-chip:hover {
@@ -2426,8 +2427,58 @@ button {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 62%, transparent);
 }
 
+.script-marker-chip.dragging {
+  opacity: 0.46;
+  cursor: grabbing;
+}
+
 .script-marker-chip.has-thumbnail {
   padding-left: 1px;
+}
+
+.script-chip-drop-target {
+  display: inline-block;
+  width: 0;
+  height: 1.32em;
+  margin: 0;
+  border-radius: 999px;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width 120ms ease,
+    margin 120ms ease,
+    opacity 120ms ease,
+    background 120ms ease;
+  vertical-align: -0.27em;
+}
+
+.script-action-editor.dragging-marker .script-chip-drop-target.visible {
+  width: 0.38rem;
+  margin: 0 1px;
+  background: color-mix(in srgb, var(--accent-2) 40%, transparent);
+  opacity: 0.34;
+  pointer-events: auto;
+}
+
+.script-action-editor.dragging-marker .script-chip-drop-target.active {
+  width: 0.58rem;
+  background: color-mix(in srgb, var(--accent) 74%, var(--accent-2));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 66%, transparent);
+  opacity: 1;
+}
+
+.script-chip-word-drop-zone {
+  border-radius: 3px;
+}
+
+.script-action-editor.dragging-marker .script-chip-word-drop-zone {
+  outline: 1px solid transparent;
+}
+
+.script-action-editor.dragging-marker .script-chip-word-drop-zone.active {
+  background: color-mix(in srgb, var(--accent-soft) 56%, transparent);
+  outline-color: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .script-marker-chip-icon {

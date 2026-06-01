@@ -212,6 +212,7 @@ const scriptMarkerOptions = [
 ] as const;
 const scriptSoundOptions = [{ label: "Thud", path: "sounds/thud.mp3" }] as const;
 const customSoundOptionValue = "__custom__";
+const scriptMarkerDragDataType = "application/x-dlu-script-marker";
 const chatExitCaptureSaveMapKey = "x-dluCaptureSaves";
 const chatExitDisplayTitleKey = "x-dluDisplayTitle";
 const scriptMarkerPattern =
@@ -14113,6 +14114,10 @@ function ScriptActionEditor({
     Record<string, ScriptSlidePreview>
   >({});
   const [editingMarkerKey, setEditingMarkerKey] = useState<string | null>(null);
+  const [draggingMarkerKey, setDraggingMarkerKey] = useState<string | null>(null);
+  const [dropInsertionIndex, setDropInsertionIndex] = useState<number | null>(
+    null,
+  );
   const markers = parseScriptMarkerInstances(text);
   const editingMarker =
     editingMarkerKey === null
@@ -14293,6 +14298,151 @@ function ScriptActionEditor({
 
   function replaceMarkerArgs(marker: ScriptMarkerInstance, args: string[]) {
     replaceMarker(marker, buildScriptMarker(marker.type, args));
+  }
+
+  function dragDataMarkerKey(event: DragEvent<HTMLElement>) {
+    return (
+      event.dataTransfer.getData(scriptMarkerDragDataType) ||
+      event.dataTransfer.getData("text/plain") ||
+      draggingMarkerKey ||
+      ""
+    );
+  }
+
+  function startMarkerDrag(
+    marker: ScriptMarkerInstance,
+    event: DragEvent<HTMLButtonElement>,
+  ) {
+    const markerKey = scriptMarkerEditKey(marker);
+    setDraggingMarkerKey(markerKey);
+    setDropInsertionIndex(null);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(scriptMarkerDragDataType, markerKey);
+    event.dataTransfer.setData("text/plain", markerKey);
+  }
+
+  function endMarkerDrag() {
+    setDraggingMarkerKey(null);
+    setDropInsertionIndex(null);
+  }
+
+  function moveMarkerToIndex(marker: ScriptMarkerInstance, insertionIndex: number) {
+    if (insertionIndex >= marker.start && insertionIndex <= marker.end) {
+      endMarkerDrag();
+      return;
+    }
+
+    const withoutMarker = `${text.slice(0, marker.start)}${text.slice(marker.end)}`;
+    const adjustedInsertionIndex =
+      insertionIndex > marker.start
+        ? insertionIndex - marker.marker.length
+        : insertionIndex;
+    const nextStart = Math.round(
+      clamp(adjustedInsertionIndex, 0, withoutMarker.length),
+    );
+    const nextText = `${withoutMarker.slice(0, nextStart)}${marker.marker}${withoutMarker.slice(
+      nextStart,
+    )}`;
+
+    onTextChange(nextText);
+    setEditingMarkerKey(
+      scriptMarkerEditKeyFrom(nextStart, nextStart + marker.marker.length, marker.marker),
+    );
+    endMarkerDrag();
+  }
+
+  function handleMarkerDrop(
+    insertionIndex: number,
+    event: DragEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const markerKey = dragDataMarkerKey(event);
+    const sourceMarker = markers.find(
+      (marker) => scriptMarkerEditKey(marker) === markerKey,
+    );
+    if (!sourceMarker) {
+      endMarkerDrag();
+      return;
+    }
+    moveMarkerToIndex(sourceMarker, insertionIndex);
+  }
+
+  function renderMarkerDropTarget(insertionIndex: number, key: string) {
+    return (
+      <span
+        aria-hidden="true"
+        className={[
+          "script-chip-drop-target",
+          draggingMarkerKey ? "visible" : "",
+          dropInsertionIndex === insertionIndex ? "active" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        key={key}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          setDropInsertionIndex(insertionIndex);
+        }}
+        onDragLeave={() => {
+          setDropInsertionIndex((current) =>
+            current === insertionIndex ? null : current,
+          );
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          if (dropInsertionIndex !== insertionIndex) {
+            setDropInsertionIndex(insertionIndex);
+          }
+        }}
+        onDrop={(event) => handleMarkerDrop(insertionIndex, event)}
+      />
+    );
+  }
+
+  function dropIndexForTextTarget(
+    element: HTMLElement,
+    beforeIndex: number,
+    afterIndex: number,
+    clientX: number,
+  ) {
+    const rect = element.getBoundingClientRect();
+    return clientX < rect.left + rect.width / 2 ? beforeIndex : afterIndex;
+  }
+
+  function handleTextTargetDragOver(
+    beforeIndex: number,
+    afterIndex: number,
+    event: DragEvent<HTMLElement>,
+  ) {
+    if (!draggingMarkerKey) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const insertionIndex = dropIndexForTextTarget(
+      event.currentTarget,
+      beforeIndex,
+      afterIndex,
+      event.clientX,
+    );
+    if (dropInsertionIndex !== insertionIndex) {
+      setDropInsertionIndex(insertionIndex);
+    }
+  }
+
+  function handleTextTargetDrop(
+    beforeIndex: number,
+    afterIndex: number,
+    event: DragEvent<HTMLElement>,
+  ) {
+    if (!draggingMarkerKey) return;
+    const insertionIndex = dropIndexForTextTarget(
+      event.currentTarget,
+      beforeIndex,
+      afterIndex,
+      event.clientX,
+    );
+    handleMarkerDrop(insertionIndex, event);
   }
 
   function focusMarker(marker: ScriptMarkerInstance) {
@@ -14690,12 +14840,16 @@ function ScriptActionEditor({
           `marker-${marker.type}`,
           imageUrl ? "has-thumbnail" : "",
           editingMarkerKey === scriptMarkerEditKey(marker) ? "selected" : "",
+          draggingMarkerKey === scriptMarkerEditKey(marker) ? "dragging" : "",
         ]
           .filter(Boolean)
           .join(" ")}
+        draggable
+        onDragEnd={endMarkerDrag}
+        onDragStart={(event) => startMarkerDrag(marker, event)}
         key={marker.id}
         onClick={() => editMarker(marker)}
-        title={`Edit ${marker.label}`}
+        title={`Drag to move. Click to edit ${marker.label}.`}
         type="button"
       >
         {imageUrl ? (
@@ -14723,19 +14877,130 @@ function ScriptActionEditor({
   ) {
     const localMarkers = parseScriptMarkerInstances(sourceText);
     if (!sourceText && !localMarkers.length) {
-      return <span className="script-empty-text">{emptyFallback}</span>;
+      return (
+        <>
+          {renderMarkerDropTarget(offset, `drop-empty-${offset}`)}
+          <span className="script-empty-text">{emptyFallback}</span>
+        </>
+      );
     }
 
     const parts: ReactNode[] = [];
+
+    function renderTextSlice(slice: string, sliceStart: number, keyPrefix: string) {
+      const textParts: ReactNode[] = [];
+      const tokenPattern = /\s+|\S+/g;
+      let cursor = 0;
+      let hasVisibleToken = false;
+
+      for (const match of slice.matchAll(tokenPattern)) {
+        const token = match[0];
+        const tokenStart = match.index ?? 0;
+        const tokenEnd = tokenStart + token.length;
+        if (tokenStart > cursor) {
+          textParts.push(
+            <Fragment key={`${keyPrefix}-gap-${cursor}`}>
+              {slice.slice(cursor, tokenStart)}
+            </Fragment>,
+          );
+        }
+
+        if (/\S/.test(token)) {
+          hasVisibleToken = true;
+          textParts.push(
+            renderMarkerDropTarget(
+              offset + sliceStart + tokenStart,
+              `${keyPrefix}-drop-before-${tokenStart}`,
+            ),
+          );
+          textParts.push(
+            <span
+              className={[
+                "script-chip-word-drop-zone",
+                dropInsertionIndex === offset + sliceStart + tokenStart ||
+                dropInsertionIndex === offset + sliceStart + tokenEnd
+                  ? "active"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={`${keyPrefix}-token-${tokenStart}`}
+              onDragOver={(event) =>
+                handleTextTargetDragOver(
+                  offset + sliceStart + tokenStart,
+                  offset + sliceStart + tokenEnd,
+                  event,
+                )
+              }
+              onDrop={(event) =>
+                handleTextTargetDrop(
+                  offset + sliceStart + tokenStart,
+                  offset + sliceStart + tokenEnd,
+                  event,
+                )
+              }
+            >
+              {token}
+            </span>,
+          );
+          textParts.push(
+            renderMarkerDropTarget(
+              offset + sliceStart + tokenEnd,
+              `${keyPrefix}-drop-after-${tokenEnd}`,
+            ),
+          );
+        } else {
+          textParts.push(
+            <Fragment key={`${keyPrefix}-space-${tokenStart}`}>{token}</Fragment>,
+          );
+        }
+        cursor = tokenEnd;
+      }
+
+      if (cursor < slice.length) {
+        textParts.push(
+          <Fragment key={`${keyPrefix}-tail-${cursor}`}>{slice.slice(cursor)}</Fragment>,
+        );
+      }
+
+      if (!hasVisibleToken && slice.length) {
+        textParts.push(
+          renderMarkerDropTarget(
+            offset + sliceStart,
+            `${keyPrefix}-blank-drop-start`,
+          ),
+        );
+        textParts.push(
+          <Fragment key={`${keyPrefix}-blank-text`}>{slice}</Fragment>,
+        );
+        textParts.push(
+          renderMarkerDropTarget(
+            offset + sliceStart + slice.length,
+            `${keyPrefix}-blank-drop-end`,
+          ),
+        );
+      }
+
+      return textParts;
+    }
+
     let cursor = 0;
     localMarkers.forEach((marker) => {
       if (marker.start > cursor) {
         parts.push(
-          <Fragment key={`text-${offset}-${cursor}`}>
-            {sourceText.slice(cursor, marker.start)}
-          </Fragment>,
+          ...renderTextSlice(
+            sourceText.slice(cursor, marker.start),
+            cursor,
+            `text-${offset}-${cursor}`,
+          ),
         );
       }
+      parts.push(
+        renderMarkerDropTarget(
+          offset + marker.start,
+          `drop-before-marker-${offset}-${marker.id}`,
+        ),
+      );
       parts.push(
         renderMarkerChip({
           ...marker,
@@ -14744,13 +15009,21 @@ function ScriptActionEditor({
           start: marker.start + offset,
         }),
       );
+      parts.push(
+        renderMarkerDropTarget(
+          offset + marker.end,
+          `drop-after-marker-${offset}-${marker.id}`,
+        ),
+      );
       cursor = marker.end;
     });
     if (cursor < sourceText.length) {
       parts.push(
-        <Fragment key={`text-${offset}-${cursor}`}>
-          {sourceText.slice(cursor)}
-        </Fragment>,
+        ...renderTextSlice(
+          sourceText.slice(cursor),
+          cursor,
+          `text-${offset}-${cursor}`,
+        ),
       );
     }
     return parts;
@@ -14839,7 +15112,9 @@ function ScriptActionEditor({
   }
 
   return (
-    <div className="script-action-editor">
+    <div
+      className={`script-action-editor${draggingMarkerKey ? " dragging-marker" : ""}`}
+    >
       <div className="script-action-toolbar">
         <div className="script-marker-bar" aria-label="Insert timed script action">
           {scriptMarkerOptions.map((option) => (
