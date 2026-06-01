@@ -93,7 +93,7 @@ const tutorAvatarOptions = [
   { label: "dLU left", path: "test-images/dLU-left.png" },
 ] as const;
 const eventActionOptions = [
-  { id: "script", label: "Say" },
+  { id: "script", label: "Script" },
   { id: "set_context", label: "Set context" },
   { id: "append_context_list", label: "Append context" },
   { id: "get_ui_state", label: "Read UI" },
@@ -1470,7 +1470,7 @@ function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
-  return "Say";
+  return "Script";
 }
 
 function defaultChatToolPayload(events: ExperienceEvent[], currentEventId: string) {
@@ -1582,7 +1582,7 @@ function eventActionDescription(actionType: EventActionStep["actionType"]) {
     return "Show a runtime button that starts another event";
   }
 
-  return "Have the agent speak in the chat";
+  return "Script spoken text and timed actions";
 }
 
 function eventActionToneClass(actionType: EventActionStep["actionType"]) {
@@ -1657,7 +1657,7 @@ function actionSequenceOutgoingLinks(
           condition,
           kind: marker.type === "interactive" ? "App submit" : "App update submit",
           slug: triggersEvent,
-          source: `${sourcePrefix}: ${step.label || "Say"} / ${
+          source: `${sourcePrefix}: ${step.label || "Script"} / ${
             marker.detail || marker.marker
           }`,
           sourceItemId: step.id,
@@ -2347,7 +2347,7 @@ function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]) {
 
   return compactPreview(
     spokenScriptText(stringConfigValue(step.config, "text")),
-    "Write what the agent says",
+    "Write script text",
   );
 }
 
