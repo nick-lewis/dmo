@@ -14086,6 +14086,7 @@ function ScriptActionEditor({
   const [timelineDraggingTimeSeconds, setTimelineDraggingTimeSeconds] =
     useState<number | null>(null);
   const [timelineIsPlaying, setTimelineIsPlaying] = useState(false);
+  const [timelineSeekableAudioUrl, setTimelineSeekableAudioUrl] = useState("");
   const [timelinePlaybackRate, setTimelinePlaybackRate] = useState(() => {
     try {
       const saved = Number(
@@ -14115,6 +14116,7 @@ function ScriptActionEditor({
     ) ?? null;
   const timelineWords = timelineAudioItem?.timingWords ?? [];
   const timelineAudioUrl = timelineAudioItem?.audioUrl ?? "";
+  const timelineAudioSrc = timelineSeekableAudioUrl || timelineAudioUrl;
   const timelineDurationSeconds = Math.max(
     0,
     timelineAudioItem?.durationSeconds ||
@@ -14195,16 +14197,60 @@ function ScriptActionEditor({
   }, []);
 
   useEffect(() => {
+    let isCancelled = false;
+    let objectUrl = "";
+    setTimelineSeekableAudioUrl("");
+
+    if (!timelineAudioUrl) return undefined;
+
+    void fetch(timelineAudioUrl, { credentials: "include" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Could not load timeline audio.");
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (isCancelled) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = "";
+          return;
+        }
+        setTimelineSeekableAudioUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!isCancelled) setTimelineSeekableAudioUrl(timelineAudioUrl);
+      });
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [timelineAudioUrl]);
+
+  useEffect(() => {
     const audio = timelineAudioRef.current;
     if (!audio) return undefined;
     audio.playbackRate = timelinePlaybackRate;
 
     const syncTime = () => {
       if (timelineScrubbingRef.current || timelineDraggingRef.current) return;
+      if (audio.paused) return;
       setTimelineCurrentTime(audio.currentTime || 0);
     };
     const syncPlayState = () => setTimelineIsPlaying(!audio.paused);
-    const handleEnded = () => setTimelineIsPlaying(false);
+    const handleEnded = () => {
+      setTimelineIsPlaying(false);
+      setTimelineCurrentTime(
+        clamp(
+          audio.currentTime ||
+            (Number.isFinite(audio.duration) ? audio.duration : timelineDurationSeconds),
+          0,
+          timelineDurationSeconds || 0,
+        ),
+      );
+    };
 
     audio.addEventListener("timeupdate", syncTime);
     audio.addEventListener("loadedmetadata", syncTime);
@@ -14219,7 +14265,7 @@ function ScriptActionEditor({
       audio.removeEventListener("pause", syncPlayState);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [timelineAudioUrl, timelinePlaybackRate, viewMode]);
+  }, [timelineAudioUrl, timelineDurationSeconds, timelinePlaybackRate, viewMode]);
 
   useEffect(() => {
     const audio = timelineAudioRef.current;
@@ -14933,7 +14979,7 @@ function ScriptActionEditor({
 
     return (
       <div className="script-timeline-view">
-        <audio preload="metadata" ref={timelineAudioRef} src={timelineAudioUrl} />
+        <audio preload="auto" ref={timelineAudioRef} src={timelineAudioSrc} />
         <div className="script-timeline-stage">
           <div className="script-timeline-main-preview">
             {preview.currentVisualMarker ? (
