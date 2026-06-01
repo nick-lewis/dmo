@@ -14292,6 +14292,32 @@ function ScriptActionEditor({
     return slidePreviews[slidePreviewKeyFor(slideRef)] ?? { status: "idle" };
   }
 
+  function nextAvailableSlideRef() {
+    const usedRefs = new Set<number>();
+    markers.filter(isSlideMarker).forEach((marker) => {
+      const rawRef = marker.argList[0]?.trim() || "";
+      if (!/^\d+$/.test(rawRef)) return;
+
+      const numericRef = Number.parseInt(rawRef, 10);
+      if (Number.isFinite(numericRef) && numericRef > 0) {
+        usedRefs.add(numericRef);
+      }
+    });
+
+    let nextRef = 1;
+    while (usedRefs.has(nextRef)) {
+      nextRef += 1;
+    }
+    return String(nextRef);
+  }
+
+  function markerTextForOption(option: (typeof scriptMarkerOptions)[number]) {
+    if (option.marker === "[gslide: 1]") {
+      return `[gslide: ${nextAvailableSlideRef()}]`;
+    }
+    return option.marker;
+  }
+
   function renderMarkerChip(marker: ScriptMarkerInstance) {
     const detail = marker.detail || marker.argList.join(", ");
     const imagePath =
@@ -14470,7 +14496,7 @@ function ScriptActionEditor({
             <button
               className="event-text-button"
               key={option.marker}
-              onClick={() => insertMarker(option.marker)}
+              onClick={() => insertMarker(markerTextForOption(option))}
               title={option.title}
               type="button"
             >
