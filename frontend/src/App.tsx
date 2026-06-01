@@ -3114,7 +3114,6 @@ function ExperienceHome() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [exportingExperienceId, setExportingExperienceId] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
   const autosaveTimers = useRef<Record<string, number>>({});
   const autosaveVersions = useRef<Record<string, number>>({});
@@ -3318,55 +3317,6 @@ function ExperienceHome() {
     window.location.assign(experienceEditPath(experience.id));
   }
 
-  async function exportExperience(experience: Experience) {
-    const didSave = await flushExperienceAutosave(experience);
-    if (!didSave) return;
-
-    setExportingExperienceId(experience.id);
-    setError("");
-
-    try {
-      const response = await fetch(`/api/experiences/${experience.id}/export/`, {
-        credentials: "same-origin",
-        headers: {
-          "X-Current-Path": getCurrentPath(),
-        },
-      });
-      if (response.status === 401) {
-        window.location.assign("/accounts/login/");
-        throw new Error("Authentication required.");
-      }
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | Record<string, unknown>
-          | null;
-        throw new Error(
-          typeof payload?.detail === "string"
-            ? payload.detail
-            : "Could not export experience.",
-        );
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${experience.slug || "experience"}.dlu-experience.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (exportError) {
-      setError(
-        exportError instanceof Error
-          ? exportError.message
-          : "Could not export experience.",
-      );
-    } finally {
-      setExportingExperienceId("");
-    }
-  }
-
   async function deleteExperience(experience: Experience) {
     const didConfirm = window.confirm(`Delete "${experience.title}"?`);
     if (!didConfirm) return;
@@ -3546,18 +3496,6 @@ function ExperienceHome() {
                   />
                 </div>
                 <div className="experience-row-actions">
-                  <button
-                    aria-label={`Download ${draft.title || "experience"} as JSON`}
-                    className="header-action secondary"
-                    disabled={exportingExperienceId === experience.id}
-                    onClick={() => void exportExperience(experience)}
-                    title="Download a .dlu-experience.json file with the tutor settings, events, scripts, conversation logic, classifiers, and editor structure."
-                    type="button"
-                  >
-                    {exportingExperienceId === experience.id
-                      ? "Downloading..."
-                      : "Download JSON"}
-                  </button>
                   <button
                     className="header-action secondary"
                     onClick={() => void editExperience(experience)}
