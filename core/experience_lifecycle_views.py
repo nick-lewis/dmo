@@ -1,0 +1,128 @@
+from django.http import JsonResponse
+from django.utils.text import slugify
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
+
+from .experience_services import (
+    create_experience_for_user,
+    delete_experience_for_user,
+    duplicate_experience_for_user,
+    ensure_start_event,
+    ensure_tutor_settings,
+    get_current_experience,
+    ordered_user_experiences,
+    update_experience_from_data,
+)
+from .http_utils import auth_required_response, parse_json_body
+from .models import Experience
+from .serializers import experience_export_payload, serialize_experience
+from .validation import experience_validation_summary
+
+
+@require_http_methods(["GET", "POST"])
+def experiences(request):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if request.method == "GET":
+        current_experience = get_current_experience(request.user)
+        user_experiences = ordered_user_experiences(request.user)
+        return JsonResponse(
+            {
+                "currentExperienceId": str(current_experience.id),
+                "experiences": [
+                    serialize_experience(experience)
+                    for experience in user_experiences
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    experience, error = create_experience_for_user(request.user, data)
+    if error:
+        return JsonResponse({"detail": error}, status=400)
+    return JsonResponse({"experience": serialize_experience(experience)}, status=201)
+
+
+@require_http_methods(["DELETE", "PATCH", "POST"])
+def update_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    if request.method == "DELETE":
+        current_experience, user_experiences = delete_experience_for_user(
+            experience,
+            request.user,
+        )
+        return JsonResponse(
+            {
+                "currentExperienceId": str(current_experience.id),
+                "experiences": [
+                    serialize_experience(experience)
+                    for experience in user_experiences
+                ],
+            }
+        )
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+
+    experience, error = update_experience_from_data(experience, data)
+    if error:
+        return JsonResponse({"detail": error}, status=400)
+    return JsonResponse({"experience": serialize_experience(experience)})
+
+
+@require_GET
+def experience_validation(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    ensure_tutor_settings(experience)
+    ensure_start_event(experience)
+    return JsonResponse({"validation": experience_validation_summary(experience)})
+
+
+@require_POST
+def duplicate_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    source = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not source:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    duplicate = duplicate_experience_for_user(source, request.user)
+    return JsonResponse({"experience": serialize_experience(duplicate)}, status=201)
+
+
+@require_GET
+def export_experience(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    payload = experience_export_payload(experience)
+    filename = f"{slugify(experience.title) or 'experience'}.dlu-experience.json"
+    response = JsonResponse(payload, json_dumps_params={"indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

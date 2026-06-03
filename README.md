@@ -48,6 +48,20 @@ Useful options:
 The helper starts the Docker stack when needed, waits for Django and Vite to
 respond, and prints the local URLs plus the dev sign-in route.
 
+Run the full stabilization check with:
+
+```powershell
+.\scripts\dmo-check.ps1
+```
+
+That command uses Docker for backend checks and tests so the backend talks to
+the Compose `db` service instead of any separate host Postgres process.
+
+More detail:
+
+- [Architecture map](docs/architecture.md)
+- [Verification and Postgres notes](docs/verification.md)
+
 ## Google Sign-In
 
 DMO uses Django auth plus `django-allauth` for Google sign-in. By default, only

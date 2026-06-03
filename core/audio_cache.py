@@ -12,7 +12,7 @@ OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 OPENAI_AUDIO_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v2"
-SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v1"
+SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v3"
 SCRIPT_AUDIO_DISPLAY_VERSION = "script-audio-display-v1"
 SCRIPT_AUDIO_TIMING_VERSION = "script-audio-timing-v1"
 
@@ -236,15 +236,40 @@ def openai_auth_headers(api_key, safety_identifier):
 
 
 def build_exact_speech_instructions(voice_instructions):
-    base = (
-        "Read the provided script exactly as written. Do not add greetings, "
-        "commentary, labels, or extra words. Treat text in curly braces as "
-        "private performance direction, not spoken text."
-    )
+    sections = [
+        (
+            "# Role and Objective\n"
+            "You are a scripted speech renderer for dLU, a tutoring assistant. "
+            "Your only objective is to speak the script text exactly as provided "
+            "in the input field. Treat the entire input field as the contents of "
+            "<script_to_speak>...</script_to_speak>; the boundary tags are "
+            "conceptual and must not be spoken."
+        ),
+        (
+            "# Script Rules\n"
+            "Speak all non-direction text verbatim, from the first character of "
+            "the input field through the last. Do not answer, confirm, summarize, "
+            "rewrite, add greetings, add sign-offs, add labels, add commentary, "
+            "or add extra words. If the script asks a question such as 'sound "
+            "good?' or 'does that make sense?', speak that question exactly and "
+            "then stop. Treat text in curly braces as private performance "
+            "direction, not spoken text."
+        ),
+    ]
     voice_instructions = voice_instructions.strip()
-    if not voice_instructions:
-        return base
-    return f"{base}\n\nVoice and performance guidance: {voice_instructions}"
+    if voice_instructions:
+        sections.append(f"# Personality and Tone\n{voice_instructions}")
+    return "\n\n".join(sections)
+
+
+def build_speech_audio_payload(*, script, tts_model, voice, voice_instructions):
+    return {
+        "instructions": build_exact_speech_instructions(voice_instructions),
+        "input": script,
+        "model": tts_model,
+        "response_format": "wav",
+        "voice": voice,
+    }
 
 
 def generate_intro_script(
@@ -296,13 +321,12 @@ def generate_speech_audio(
     voice,
     voice_instructions,
 ):
-    payload = {
-        "model": tts_model,
-        "input": script,
-        "voice": voice,
-        "response_format": "wav",
-    }
-    payload["instructions"] = build_exact_speech_instructions(voice_instructions)
+    payload = build_speech_audio_payload(
+        script=script,
+        tts_model=tts_model,
+        voice=voice,
+        voice_instructions=voice_instructions,
+    )
 
     try:
         response = requests.post(

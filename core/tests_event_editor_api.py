@@ -1,0 +1,517 @@
+import json
+import tempfile
+import wave
+from io import StringIO
+from threading import Event, Lock
+from unittest.mock import patch
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.test import TestCase, override_settings
+
+from .audio_cache import (
+    compute_script_audio_cache_key,
+    compute_script_audio_display_key,
+    script_audio_audio_path,
+    script_audio_display_path,
+    script_audio_metadata_path,
+    script_audio_words_path,
+)
+from .slides import (
+    DeckReference,
+    SlideResolutionError,
+    candidate_page_ids,
+    discover_page_ids,
+    resolve_slide_image,
+    slide_cache_dir,
+    slide_filename,
+)
+from .models import (
+    EventActionStep,
+    EventChatTool,
+    EventClassifier,
+    EventClassifierGroup,
+    EventConversationCheck,
+    Experience,
+    ExperienceEvent,
+    ExperienceEventCheckpoint,
+    ExperienceSnapshot,
+    SessionMessage,
+    TutorSettings,
+    TutoringSession,
+)
+from .experience_services import (
+    EXPERIENCE_EXPORT_FORMAT,
+    EXPERIENCE_EXPORT_VERSION,
+    create_experience_from_export_payload,
+    duplicate_experience_for_user,
+)
+from .main_panel_apps import (
+    MAIN_PANEL_APP_REGISTRY,
+    REGISTERED_MAIN_PANEL_APP_IDS,
+)
+from .realtime_services import (
+    CLASSIFICATION_MODELS,
+    MODEL_OPTIONS,
+    REALTIME_MODEL_OPTIONS,
+    REALTIME_MODELS,
+    REALTIME_VOICE_ORDER,
+    REALTIME_VOICES,
+    REALTIME_VOICES_BY_MODEL,
+    build_realtime_instructions,
+    classification_model_choices,
+    conversation_check_transcript,
+    evaluate_classifier_group,
+    normalize_realtime_voice_choice,
+    realtime_voice_choices_for_model,
+)
+from .runtime import apply_runtime_actions_to_state
+from .runtime_execution import run_action_sequence
+from .script_audio_services import (
+    cached_script_audio_payload,
+    collect_experience_script_audio_items,
+)
+from .script_markers import script_cues_with_word_times
+from .serializers import (
+    experience_export_payload,
+    serialize_experience,
+)
+
+
+class EventEditorApiTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="event-editor-api-test",
+            email="event-editor-api-test@example.com",
+            password="test-password",
+        )
+        self.experience = Experience.objects.create(
+            user=self.user,
+            title="Event editor test",
+            slug="event-editor-test",
+        )
+        self.client.force_login(self.user)
+
+    def test_delete_event_reassigns_start_event(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        next_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Next",
+            slug="next",
+            sort_order=1,
+        )
+
+        response = self.client.delete(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ExperienceEvent.objects.filter(id=start.id).exists())
+        next_event.refresh_from_db()
+        self.assertTrue(next_event.is_start)
+        self.assertEqual(response.json()["events"][0]["slug"], "next")
+
+    def test_delete_last_event_is_rejected(self):
+        only_event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Only",
+            slug="only",
+            is_start=True,
+            sort_order=0,
+        )
+
+        response = self.client.delete(
+            f"/api/experiences/{self.experience.id}/events/{only_event.id}/",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(ExperienceEvent.objects.filter(id=only_event.id).exists())
+        self.assertEqual(
+            response.json()["detail"],
+            "An experience needs at least one event.",
+        )
+
+    def test_event_patch_persists_conversation_choices(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Primer",
+            slug="primer",
+            sort_order=1,
+        )
+
+        response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/",
+            data=json.dumps(
+                {
+                    "conversationChoices": [
+                        {
+                            "enabled": True,
+                            "iconPath": "test-images/dLU-right.png",
+                            "id": "quick-primer",
+                            "label": "Yes, quick primer",
+                            "sortOrder": 0,
+                            "triggersEvent": "primer",
+                        }
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        start.refresh_from_db()
+        self.assertEqual(start.conversation_choices[0]["label"], "Yes, quick primer")
+        self.assertEqual(
+            start.conversation_choices[0]["iconPath"],
+            "test-images/dLU-right.png",
+        )
+        self.assertEqual(
+            response.json()["event"]["conversationChoices"][0]["triggersEvent"],
+            "primer",
+        )
+
+    def test_experience_patch_persists_choice_icon_background(self):
+        response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/",
+            data=json.dumps(
+                {
+                    "tutor": {
+                        "assistantName": "dee-lou",
+                        "avatarPath": "test-images/dLU-right.png",
+                        "choiceIconBackground": "#fde2dc",
+                        "classificationModel": settings.DLU_CLASSIFICATION_DEFAULT_MODEL,
+                        "realtimeModel": settings.DLU_REALTIME_DEFAULT_MODEL,
+                        "systemPrompt": "",
+                        "voice": settings.DLU_REALTIME_DEFAULT_VOICE,
+                        "voiceInstructions": "",
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.experience.tutor_settings.refresh_from_db()
+        self.assertEqual(self.experience.tutor_settings.choice_icon_background, "#fde2dc")
+        self.assertEqual(
+            response.json()["experience"]["tutor"]["choiceIconBackground"],
+            "#fde2dc",
+        )
+
+    def test_start_event_persists_conversation_choices_without_immediate_action(self):
+        TutorSettings.objects.create(
+            experience=self.experience,
+            choice_icon_background="#fde2dc",
+        )
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+            conversation_choices=[
+                {
+                    "enabled": True,
+                    "iconPath": "test-images/dLU-right.png",
+                    "id": "continue-choice",
+                    "label": "Continue",
+                    "sortOrder": 0,
+                    "triggersEvent": "next",
+                }
+            ],
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Next",
+            slug="next",
+            sort_order=1,
+        )
+        EventActionStep.objects.create(
+            event=start,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Intro",
+            config={"text": "Hello."},
+            sort_order=0,
+        )
+        session = TutoringSession.objects.create(
+            user=self.user,
+            experience=self.experience,
+        )
+
+        response = self.client.post(
+            f"/api/sessions/{session.id}/start-event/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(
+            any(action["type"] == "button_choice" for action in payload["actions"])
+        )
+        buttons = payload["session"]["runtimeState"]["uiRuntime"]["buttons"]
+        self.assertEqual(buttons[0]["source"], "conversation-choice")
+        self.assertEqual(buttons[0]["label"], "Continue")
+        self.assertEqual(buttons[0]["iconBackground"], "#fde2dc")
+        self.assertEqual(buttons[0]["iconPath"], "test-images/dLU-right.png")
+
+    def test_restore_event_from_serialized_payload_preserves_nested_shape(self):
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        event_payload = {
+            "chatInstructions": "Stay focused on the restored event.",
+            "chatTools": [
+                {
+                    "description": "Learner is done.",
+                    "enabled": True,
+                    "handlerActions": [
+                        {
+                            "actionType": "set_context",
+                            "condition": {},
+                            "config": {"key": "done", "value": "yes"},
+                            "enabled": True,
+                            "id": "save-done",
+                            "label": "Save done",
+                            "sortOrder": 0,
+                        }
+                    ],
+                    "name": "student_done",
+                    "parameters": {"type": "object", "properties": {}},
+                    "saveArgument": "",
+                    "saveContextKey": "",
+                    "sortOrder": 0,
+                    "triggersEvent": "start",
+                }
+            ],
+            "classifierGroups": [],
+            "conversationChecks": [],
+            "description": "Restored from undo.",
+            "isStart": False,
+            "slug": "restored-event",
+            "sortOrder": 3,
+            "steps": [
+                {
+                    "actionType": "script",
+                    "condition": {},
+                    "config": {"text": "Restored line."},
+                    "enabled": True,
+                    "id": "script-step",
+                    "label": "Restored script",
+                    "sortOrder": 0,
+                }
+            ],
+            "title": "Restored event",
+        }
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/",
+            data=json.dumps({"event": event_payload}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        event = self.experience.events.get(slug="restored-event")
+        self.assertEqual(event.title, "Restored event")
+        self.assertEqual(event.chat_instructions, "Stay focused on the restored event.")
+        self.assertEqual(event.steps.get().config["text"], "Restored line.")
+        tool = event.chat_tools.get(name="student_done")
+        self.assertEqual(tool.handler_actions[0]["config"]["key"], "done")
+
+    def test_reorder_events_updates_sort_order(self):
+        first = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="First",
+            slug="first",
+            is_start=True,
+            sort_order=0,
+        )
+        second = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Second",
+            slug="second",
+            sort_order=1,
+        )
+        third = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Third",
+            slug="third",
+            sort_order=2,
+        )
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/reorder/",
+            data=json.dumps(
+                {
+                    "eventIds": [
+                        str(third.id),
+                        str(first.id),
+                        str(second.id),
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [event["slug"] for event in response.json()["events"]],
+            ["third", "first", "second"],
+        )
+        self.assertEqual(
+            list(
+                self.experience.events.order_by("sort_order").values_list(
+                    "slug",
+                    "sort_order",
+                )
+            ),
+            [("third", 0), ("first", 1), ("second", 2)],
+        )
+
+    def test_reorder_events_requires_every_event_once(self):
+        first = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="First",
+            slug="first",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Second",
+            slug="second",
+            sort_order=1,
+        )
+
+        response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/reorder/",
+            data=json.dumps({"eventIds": [str(first.id), str(first.id)]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["detail"],
+            "Event order must include every event exactly once.",
+        )
+
+    def test_recache_slides_endpoint_refreshes_static_script_markers_once(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Intro",
+            config={
+                "deckUrl": "https://docs.google.com/presentation/d/test-deck/",
+                "text": "One [gslide: 2] two [gslide: 2] three [slide: 3].",
+            },
+            sort_order=0,
+        )
+        EventChatTool.objects.create(
+            event=event,
+            name="student_done",
+            handler_actions=[
+                {
+                    "actionType": "script",
+                    "config": {
+                        "deckUrl": "https://docs.google.com/presentation/d/other-deck/",
+                        "text": "Done [gslide: 1].",
+                    },
+                    "label": "Tool script",
+                }
+            ],
+        )
+
+        class ResolvedSlide:
+            cache_hit = False
+            filename = "slide.png"
+            page_id = "p"
+            presentation_id = "presentation"
+
+        with patch("core.slides.resolve_slide_image", return_value=ResolvedSlide()) as resolve:
+            response = self.client.post(
+                f"/api/experiences/{self.experience.id}/slides/recache/",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["recachedCount"], 3)
+        self.assertEqual(payload["skippedCount"], 0)
+        self.assertEqual(payload["errorCount"], 0)
+        self.assertEqual(
+            [
+                (call.args[0], call.args[1], call.args[2])
+                for call in resolve.call_args_list
+            ],
+            [
+                ("https://docs.google.com/presentation/d/test-deck/", "2", True),
+                ("https://docs.google.com/presentation/d/test-deck/", "3", True),
+                ("https://docs.google.com/presentation/d/other-deck/", "1", True),
+            ],
+        )
+
+    def test_recache_slides_endpoint_skips_missing_or_dynamic_slide_targets(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Dynamic",
+            config={
+                "deckUrl": "{{ deck_url }}",
+                "text": "One [gslide: 2].",
+            },
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            label="Missing deck",
+            config={
+                "deckUrl": "",
+                "text": "Two [gslide: 3].",
+            },
+            sort_order=1,
+        )
+
+        with patch("core.slides.resolve_slide_image") as resolve:
+            response = self.client.post(
+                f"/api/experiences/{self.experience.id}/slides/recache/",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["recachedCount"], 0)
+        self.assertEqual(payload["skippedCount"], 2)
+        self.assertEqual(payload["errorCount"], 0)
+        resolve.assert_not_called()

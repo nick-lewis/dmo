@@ -10,7 +10,7 @@ from core.models import (
     TutoringSession,
     TutorSettings,
 )
-from core.views import ensure_tutor_settings
+from core.experience_services import ensure_tutor_settings
 
 
 FRUIT_SCHEMA = {

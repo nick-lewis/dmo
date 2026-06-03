@@ -7,58 +7,79 @@ The `urlpatterns` list routes URLs to views. For more information please see:
 from django.contrib import admin
 from django.urls import include, path, re_path
 
-from core.views import (
-    create_event_chat_tool,
-    create_event_classifier,
-    create_event_classifier_group,
-    create_event_conversation_check,
-    create_message,
-    create_message_audio,
-    create_event_action_step,
-    create_realtime_client_secret,
-    create_session,
-    create_voice_sample,
-    current_session,
+from core.basic_views import (
     current_user,
     dev_login,
-    delete_experience_snapshot,
-    duplicate_experience,
-    event_checkpoints,
-    export_experience,
-    export_experience_snapshot,
-    experience_events,
-    experience_snapshots,
-    experience_validation,
-    experience_script_audio,
-    experiences,
     frontend_index,
     health,
-    import_experience,
     logout_user,
     main_panel_apps,
-    recache_experience_slides,
-    resolve_google_slide,
-    reorder_experience_events,
-    reorder_event_action_steps,
+)
+from core.experience_import_views import import_experience
+from core.experience_lifecycle_views import (
+    duplicate_experience,
+    export_experience,
+    experience_validation,
+    experiences,
+    update_experience,
+)
+from core.experience_snapshot_views import (
+    delete_experience_snapshot,
+    export_experience_snapshot,
+    experience_snapshots,
     restore_experience_snapshot,
-    run_session_chat_tool,
-    run_session_conversation_checks,
-    run_session_event,
-    run_start_event,
+)
+from core.event_action_step_views import (
+    create_event_action_step,
+    reorder_event_action_steps,
+    update_event_action_step,
+)
+from core.event_chat_tool_views import (
+    create_event_chat_tool,
+    update_event_chat_tool,
+)
+from core.event_classifier_group_views import (
+    create_event_classifier_group,
+    update_event_classifier_group,
+)
+from core.event_classifier_item_views import (
+    create_event_classifier,
+    update_event_classifier,
+)
+from core.event_conversation_check_views import (
+    create_event_conversation_check,
+    update_event_conversation_check,
+)
+from core.event_views import (
+    event_checkpoints,
+    experience_events,
+    reorder_experience_events,
+    update_experience_event,
+)
+from core.message_audio_views import create_message_audio
+from core.script_audio_views import (
+    experience_script_audio,
     script_audio_display_transcript,
     serve_script_audio,
-    serve_google_slide_image,
-    serve_voice_sample_audio,
-    update_event_action_step,
-    update_event_chat_tool,
-    update_event_classifier,
-    update_event_classifier_group,
-    update_event_conversation_check,
-    update_experience,
-    update_experience_event,
-    update_session_interactive,
-    update_session_notebook,
 )
+from core.slide_views import (
+    recache_experience_slides,
+    resolve_google_slide,
+    serve_google_slide_image,
+)
+from core.voice_sample_views import (
+    create_voice_sample,
+    serve_voice_sample_audio,
+)
+from core.realtime_views import create_realtime_client_secret
+from core.runtime_chat_tool_views import run_session_chat_tool
+from core.runtime_check_views import run_session_conversation_checks
+from core.runtime_interactive_views import update_session_interactive
+from core.runtime_message_views import create_message
+from core.runtime_notebook_views import update_session_notebook
+from core.runtime_session_event_views import run_session_event
+from core.runtime_start_event_views import run_start_event
+from core.session_views import create_session, current_session
 
 urlpatterns = [
     path("admin/", admin.site.urls),
