@@ -71,6 +71,11 @@ from core.voice_sample_views import (
     create_voice_sample,
     serve_voice_sample_audio,
 )
+from core.voice_personality_lab_views import (
+    voice_personality_lab,
+    voice_personality_lab_group,
+    voice_personality_lab_group_generate,
+)
 from core.realtime_views import create_realtime_client_secret
 from core.runtime_chat_tool_views import run_session_chat_tool
 from core.runtime_check_views import run_session_conversation_checks
@@ -236,6 +241,21 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/voice-sample/",
         create_voice_sample,
         name="voice-sample",
+    ),
+    path(
+        "api/voice-personality-lab/",
+        voice_personality_lab,
+        name="voice-personality-lab",
+    ),
+    path(
+        "api/voice-personality-lab/<str:group_id>/",
+        voice_personality_lab_group,
+        name="voice-personality-lab-group",
+    ),
+    path(
+        "api/voice-personality-lab/<str:group_id>/generate/",
+        voice_personality_lab_group_generate,
+        name="voice-personality-lab-group-generate",
     ),
     path(
         "api/voice-samples/<str:filename>/",

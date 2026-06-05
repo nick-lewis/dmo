@@ -315,6 +315,13 @@ export function ExperienceHome() {
           {user ? <span className="study-user">{user.displayName}</span> : null}
           <button
             className="header-action secondary"
+            onClick={() => window.location.assign("/voice-personality-lab")}
+            type="button"
+          >
+            Voice lab
+          </button>
+          <button
+            className="header-action secondary"
             disabled={isSigningOut}
             onClick={signOut}
             type="button"

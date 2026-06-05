@@ -8,6 +8,7 @@ from django.conf import settings
 from .audio_cache import (
     AudioGenerationError,
     AudioTimingError,
+    SCRIPT_AUDIO_ENGINE,
     audio_duration_seconds,
     compute_script_audio_cache_key,
     compute_script_audio_display_key,
@@ -41,6 +42,10 @@ SCRIPT_AUDIO_MESSAGE_SOURCES = {
     "classifier-group-action",
 }
 SCRIPT_WORD_PATTERN = re.compile(r"\S+")
+
+
+def script_audio_model_for_tutor(tutor_settings):
+    return str(tutor_settings.realtime_model or "").strip()
 
 
 def normalize_script_speech(text):
@@ -224,9 +229,9 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
 
     cache_key = compute_script_audio_cache_key(
         assistant_name=tutor_settings.assistant_name,
+        audio_model=script_audio_model_for_tutor(tutor_settings),
         realtime_model=tutor_settings.realtime_model,
         script=script,
-        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         voice=tutor_settings.voice,
         voice_instructions=tutor_settings.voice_instructions,
     )
@@ -298,6 +303,8 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         ).hexdigest()[:16],
         "markerCount": len(markers),
         "preview": script[:240],
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": script_audio_model_for_tutor(tutor_settings),
         "realtimeModel": tutor_settings.realtime_model,
         "script": script,
         "source": source,
@@ -309,7 +316,6 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "timingWords": timing_words,
         "timingWordCount": timing_word_count,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
-        "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         "voice": tutor_settings.voice,
         "wordCount": script_word_count(script),
         "wordsCached": words_cached,
@@ -568,10 +574,10 @@ def generate_script_audio_item(tutor_settings, item, force=False, safety_identif
     recording = get_or_create_script_audio(
         api_key=settings.OPENAI_API_KEY,
         assistant_name=tutor_settings.assistant_name,
+        audio_model=script_audio_model_for_tutor(tutor_settings),
         realtime_model=tutor_settings.realtime_model,
         safety_identifier=safety_identifier,
         script=item["script"],
-        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         voice=tutor_settings.voice,
         voice_instructions=tutor_settings.voice_instructions,
     )
@@ -703,9 +709,9 @@ def cached_script_audio_payload(session, script, script_cues=None):
     tutor_settings = ensure_tutor_settings(session.experience)
     cache_key = compute_script_audio_cache_key(
         assistant_name=tutor_settings.assistant_name,
+        audio_model=script_audio_model_for_tutor(tutor_settings),
         realtime_model=tutor_settings.realtime_model,
         script=script,
-        tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         voice=tutor_settings.voice,
         voice_instructions=tutor_settings.voice_instructions,
     )
@@ -734,9 +740,10 @@ def cached_script_audio_payload(session, script, script_cues=None):
         "durationSeconds": audio_duration_seconds(audio_path),
         "displayText": display_text,
         "messageId": "",
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": script_audio_model_for_tutor(tutor_settings),
         "realtimeModel": tutor_settings.realtime_model,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
-        "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         "voice": tutor_settings.voice,
     }
     if script_words:
@@ -798,10 +805,10 @@ def generate_message_script_audio_payload(
         recording = get_or_create_script_audio(
             api_key=settings.OPENAI_API_KEY,
             assistant_name=tutor_settings.assistant_name,
+            audio_model=realtime_model,
             realtime_model=realtime_model,
             safety_identifier=safety_identifier,
             script=script,
-            tts_model=settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
             voice=voice,
             voice_instructions=tutor_settings.voice_instructions,
         )
@@ -834,10 +841,11 @@ def generate_message_script_audio_payload(
                 "displayText": display_text,
                 "durationSeconds": duration_seconds,
                 "messageId": str(message.id),
+                "audioEngine": SCRIPT_AUDIO_ENGINE,
+                "audioModel": realtime_model,
                 "realtimeModel": realtime_model,
                 "scriptWords": script_words,
                 "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
-                "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
                 "voice": voice,
             }
         )
@@ -853,12 +861,13 @@ def generate_message_script_audio_payload(
         "displayText": display_text,
         "durationSeconds": duration_seconds,
         "messageId": str(message.id),
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": realtime_model,
         "realtimeModel": realtime_model,
         "scriptCues": script_cues,
         "scriptWords": script_words,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "timingWarning": timing_warning,
-        "ttsModel": settings.DLU_SCRIPT_AUDIO_TTS_MODEL,
         "voice": voice,
     }, "", 200
 
@@ -913,10 +922,10 @@ def generate_voice_sample_payload(experience, data, safety_identifier):
         sample = get_or_create_voice_sample(
             api_key=settings.OPENAI_API_KEY,
             assistant_name=assistant_name,
+            audio_model=realtime_model,
             realtime_model=realtime_model,
             safety_identifier=safety_identifier,
             script_model=settings.DLU_VOICE_SAMPLE_SCRIPT_MODEL,
-            tts_model=settings.DLU_VOICE_SAMPLE_TTS_MODEL,
             voice=voice,
             voice_instructions=voice_instructions,
         )
@@ -925,10 +934,11 @@ def generate_voice_sample_payload(experience, data, safety_identifier):
 
     return {
         "audioUrl": f"/api/voice-samples/{sample.cache_key}.wav/",
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": realtime_model,
         "cached": sample.cached,
         "realtimeModel": realtime_model,
         "script": sample.script,
         "scriptModel": settings.DLU_VOICE_SAMPLE_SCRIPT_MODEL,
-        "ttsModel": settings.DLU_VOICE_SAMPLE_TTS_MODEL,
         "voice": voice,
     }, "", 200

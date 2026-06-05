@@ -2,6 +2,7 @@ import { routeExperience } from "./api";
 import { ExperienceEditor } from "./features/ExperienceEditor";
 import { ExperienceHome } from "./features/ExperienceHome";
 import { PanelStudy } from "./features/PanelStudy";
+import { VoicePersonalityLab } from "./features/VoicePersonalityLab";
 
 function App() {
   const pathname = window.location.pathname;
@@ -10,6 +11,10 @@ function App() {
 
   if (normalizedPath === "/" || normalizedPath === "/experiences") {
     return <ExperienceHome />;
+  }
+
+  if (normalizedPath === "/voice-personality-lab") {
+    return <VoicePersonalityLab />;
   }
 
   if (experienceRoute.experienceId && experienceRoute.mode === "run") {

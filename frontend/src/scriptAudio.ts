@@ -113,6 +113,9 @@ export function cachedScriptAudioFromMessage(
 
   return {
     audioUrl,
+    audioEngine:
+      typeof audio.audioEngine === "string" ? audio.audioEngine : "",
+    audioModel: typeof audio.audioModel === "string" ? audio.audioModel : "",
     cached: Boolean(audio.cached),
     displayText: typeof audio.displayText === "string" ? audio.displayText : "",
     durationSeconds:

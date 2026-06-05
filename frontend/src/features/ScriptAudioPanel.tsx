@@ -68,6 +68,8 @@ function scriptAudioItemNeedsGeneration(item: ScriptAudioItem) {
 
 function scriptAudioArtifactTags(item: ScriptAudioItem) {
   return [
+    item.audioModel ? `audio ${item.audioModel}` : "",
+    item.audioEngine ? `engine ${item.audioEngine}` : "",
     item.ttsModel ? `tts ${item.ttsModel}` : "",
     item.timingModel ? `timing ${item.timingModel}` : "",
     item.realtimeModel ? `chat ${item.realtimeModel}` : "",

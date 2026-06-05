@@ -253,7 +253,7 @@ DLU_REALTIME_DEFAULT_VOICE = (
     os.environ.get("DLU_REALTIME_DEFAULT_VOICE", "").strip() or "ash"
 )
 DLU_REALTIME_DEFAULT_INSTRUCTIONS = (
-    "You are dLU, a warm, concise tutoring collaborator. The user is typing "
+    "You are a warm, concise tutoring collaborator. The user is typing "
     "messages and you respond in spoken audio with a simultaneous transcript. "
     "Keep replies direct and conversational. Do not claim persistent memory "
     "outside the current saved session."
@@ -264,13 +264,6 @@ DLU_REALTIME_INSTRUCTIONS = (
 )
 DLU_VOICE_SAMPLE_SCRIPT_MODEL = (
     os.environ.get("DLU_VOICE_SAMPLE_SCRIPT_MODEL", "").strip() or "gpt-4o-mini"
-)
-DLU_VOICE_SAMPLE_TTS_MODEL = (
-    os.environ.get("DLU_VOICE_SAMPLE_TTS_MODEL", "").strip() or "gpt-4o-mini-tts"
-)
-DLU_SCRIPT_AUDIO_TTS_MODEL = (
-    os.environ.get("DLU_SCRIPT_AUDIO_TTS_MODEL", "").strip()
-    or DLU_VOICE_SAMPLE_TTS_MODEL
 )
 DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL = (
     os.environ.get("DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL", "").strip() or "whisper-1"

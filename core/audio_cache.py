@@ -1,5 +1,9 @@
+import base64
 import hashlib
+import io
 import json
+import time
+from urllib.parse import quote
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,10 +15,13 @@ from django.conf import settings
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 OPENAI_AUDIO_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
-VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v2"
-SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v3"
+OPENAI_REALTIME_WS_URL = "wss://api.openai.com/v1/realtime"
+VOICE_SAMPLE_CACHE_VERSION = "voice-sample-v3"
+SCRIPT_AUDIO_CACHE_VERSION = "script-audio-v4"
+SCRIPT_AUDIO_ENGINE = "realtime"
 SCRIPT_AUDIO_DISPLAY_VERSION = "script-audio-display-v1"
 SCRIPT_AUDIO_TIMING_VERSION = "script-audio-timing-v1"
+REALTIME_SCRIPT_AUDIO_SAMPLE_RATE = 24000
 
 
 class AudioGenerationError(Exception):
@@ -132,36 +139,51 @@ def build_intro_script_prompt(assistant_name, voice_personality):
     assistant_name = assistant_name.strip()
     voice_personality = voice_personality.strip()
 
-    if assistant_name and voice_personality:
-        return f"""You are {assistant_name}. Your personality: {voice_personality}
-
-Write a brief (1-2 sentences) introduction message where you introduce yourself by name. Just return the script text, nothing else."""
+    role = (
+        "# Role and Objective\n"
+        "Write a brief voice sample script for a tutoring assistant. "
+        "The script should let someone quickly hear the selected voice, "
+        "personality, and tone."
+    )
     if assistant_name:
-        return f"""You are {assistant_name}.
-
-Write a brief (1-2 sentences) introduction message where you introduce yourself by name. Just return the script text, nothing else."""
+        role = (
+            "# Role and Objective\n"
+            f"Write a brief voice sample script for {assistant_name}, a "
+            "tutoring assistant. The script should introduce the tutor by "
+            "name and let someone quickly hear the selected voice, "
+            "personality, and tone."
+        )
+    sections = [
+        role,
+        (
+            "# Script Rules\n"
+            "Return only the script text to be spoken. Keep it to 1-2 short "
+            "sentences. Do not include labels, quotation marks, stage "
+            "directions, markdown, or explanation."
+        ),
+    ]
     if voice_personality:
-        return f"""Your personality: {voice_personality}
-
-Write a brief (1-2 sentences) introduction message as a tutor greeting a student. Just return the script text, nothing else."""
-
-    return "Write a brief (1-2 sentences) friendly introduction message as a tutor greeting a student. Just return the script text, nothing else."
+        sections.append(f"# Personality and Tone\n{voice_personality}")
+    return "\n\n".join(sections)
 
 
 def compute_voice_sample_cache_key(
     *,
     assistant_name,
+    audio_model=None,
     realtime_model,
     script_model,
-    tts_model,
+    tts_model=None,
     voice,
     voice_instructions,
 ):
+    audio_model = str(audio_model or realtime_model or tts_model or "").strip()
     cache_payload = {
         "assistantName": assistant_name.strip(),
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": audio_model,
         "realtimeModel": realtime_model,
         "scriptModel": script_model,
-        "ttsModel": tts_model,
         "version": VOICE_SAMPLE_CACHE_VERSION,
         "voice": voice,
         "voiceInstructions": voice_instructions.strip(),
@@ -173,17 +195,20 @@ def compute_voice_sample_cache_key(
 def compute_script_audio_cache_key(
     *,
     assistant_name,
+    audio_model=None,
     realtime_model,
     script,
-    tts_model,
+    tts_model=None,
     voice,
     voice_instructions,
 ):
+    audio_model = str(audio_model or realtime_model or tts_model or "").strip()
     cache_payload = {
         "assistantName": assistant_name.strip(),
+        "audioEngine": SCRIPT_AUDIO_ENGINE,
+        "audioModel": audio_model,
         "realtimeModel": realtime_model,
         "script": script.strip(),
-        "ttsModel": tts_model,
         "version": SCRIPT_AUDIO_CACHE_VERSION,
         "voice": voice,
         "voiceInstructions": voice_instructions.strip(),
@@ -239,7 +264,7 @@ def build_exact_speech_instructions(voice_instructions):
     sections = [
         (
             "# Role and Objective\n"
-            "You are a scripted speech renderer for dLU, a tutoring assistant. "
+            "You are a scripted speech renderer for a tutoring assistant. "
             "Your only objective is to speak the script text exactly as provided "
             "in the input field. Treat the entire input field as the contents of "
             "<script_to_speak>...</script_to_speak>; the boundary tags are "
@@ -262,6 +287,32 @@ def build_exact_speech_instructions(voice_instructions):
     return "\n\n".join(sections)
 
 
+def build_realtime_script_instructions(voice_instructions):
+    sections = [
+        (
+            "# Role and Objective\n"
+            "You are a scripted realtime speech renderer for a tutoring "
+            "assistant. Your only objective is to speak the script text exactly "
+            "as provided inside <script_to_speak>...</script_to_speak>."
+        ),
+        (
+            "# Script Rules\n"
+            "Speak all non-direction text inside <script_to_speak> verbatim, "
+            "from the first character through the last. Do not speak the "
+            "script boundary tags. Do not answer, confirm, summarize, rewrite, "
+            "add greetings, add sign-offs, add labels, add commentary, or add "
+            "extra words. If the script asks a question such as 'sound good?' "
+            "or 'does that make sense?', speak that question exactly and then "
+            "stop. Treat text in curly braces as private performance direction, "
+            "not spoken text."
+        ),
+    ]
+    voice_instructions = voice_instructions.strip()
+    if voice_instructions:
+        sections.append(f"# Personality and Tone\n{voice_instructions}")
+    return "\n\n".join(sections)
+
+
 def build_speech_audio_payload(*, script, tts_model, voice, voice_instructions):
     return {
         "instructions": build_exact_speech_instructions(voice_instructions),
@@ -270,6 +321,72 @@ def build_speech_audio_payload(*, script, tts_model, voice, voice_instructions):
         "response_format": "wav",
         "voice": voice,
     }
+
+
+def realtime_reasoning_for_script_audio(model):
+    if str(model or "").strip() == "gpt-realtime-2":
+        return {"effort": "minimal"}
+    return None
+
+
+def realtime_script_input(script):
+    return f"<script_to_speak>\n{script.strip()}\n</script_to_speak>"
+
+
+def build_realtime_script_audio_events(*, script, realtime_model, voice, voice_instructions):
+    instructions = build_realtime_script_instructions(voice_instructions)
+    output_audio = {
+        "format": {
+            "type": "audio/pcm",
+            "rate": REALTIME_SCRIPT_AUDIO_SAMPLE_RATE,
+        },
+        "voice": voice,
+    }
+    session = {
+        "type": "realtime",
+        "model": realtime_model,
+        "instructions": instructions,
+        "output_modalities": ["audio"],
+        "audio": {
+            "output": output_audio,
+        },
+    }
+    reasoning = realtime_reasoning_for_script_audio(realtime_model)
+    if reasoning:
+        session["reasoning"] = reasoning
+
+    return [
+        {
+            "type": "session.update",
+            "session": session,
+        },
+        {
+            "type": "response.create",
+            "response": {
+                "audio": {
+                    "output": output_audio,
+                },
+                "conversation": "none",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": realtime_script_input(script),
+                            }
+                        ],
+                    }
+                ],
+                "instructions": instructions,
+                "metadata": {
+                    "purpose": "dlu_script_audio",
+                },
+                "output_modalities": ["audio"],
+            },
+        },
+    ]
 
 
 def generate_intro_script(
@@ -310,6 +427,146 @@ def generate_intro_script(
     if not script:
         raise AudioGenerationError("OpenAI returned an empty voice sample script.")
     return script
+
+
+def pcm16_wav_bytes(audio_bytes, sample_rate=REALTIME_SCRIPT_AUDIO_SAMPLE_RATE):
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio_file:
+        audio_file.setnchannels(1)
+        audio_file.setsampwidth(2)
+        audio_file.setframerate(sample_rate)
+        audio_file.writeframes(audio_bytes)
+    return output.getvalue()
+
+
+def open_realtime_websocket(url, headers, timeout):
+    try:
+        import websocket
+    except ImportError as error:
+        raise AudioGenerationError(
+            "Script audio generation requires websocket-client to be installed."
+        ) from error
+
+    return websocket.create_connection(url, header=headers, timeout=timeout)
+
+
+def event_error_message(event, fallback):
+    if not isinstance(event, dict):
+        return fallback
+    error = event.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])
+    if event.get("message"):
+        return str(event["message"])
+    return fallback
+
+
+def generate_realtime_script_audio(
+    *,
+    api_key,
+    realtime_model,
+    safety_identifier,
+    script,
+    voice,
+    voice_instructions,
+):
+    timeout = 120
+    url = f"{OPENAI_REALTIME_WS_URL}?model={quote(str(realtime_model).strip())}"
+    headers = [f"Authorization: Bearer {api_key}"]
+    if safety_identifier:
+        headers.append(f"OpenAI-Safety-Identifier: {safety_identifier}")
+
+    try:
+        ws = open_realtime_websocket(url, headers, timeout=timeout)
+    except AudioGenerationError:
+        raise
+    except Exception as error:
+        raise AudioGenerationError("Could not reach OpenAI to render realtime audio.") from error
+
+    audio_chunks = []
+    done = False
+    started_at = time.monotonic()
+    try:
+        for event in build_realtime_script_audio_events(
+            script=script,
+            realtime_model=realtime_model,
+            voice=voice,
+            voice_instructions=voice_instructions,
+        ):
+            ws.send(json.dumps(event))
+
+        while time.monotonic() - started_at < timeout:
+            try:
+                message = ws.recv()
+            except Exception as error:
+                raise AudioGenerationError(
+                    "OpenAI realtime audio generation timed out."
+                ) from error
+
+            if not message:
+                continue
+            try:
+                event = json.loads(message)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+
+            event_type = str(event.get("type", ""))
+            if event_type == "error":
+                raise AudioGenerationError(
+                    event_error_message(event, "OpenAI could not render realtime audio.")
+                )
+
+            if event_type in {
+                "response.output_audio.delta",
+                "response.audio.delta",
+            }:
+                delta = str(event.get("delta") or "")
+                if delta:
+                    try:
+                        audio_chunks.append(base64.b64decode(delta))
+                    except (TypeError, ValueError) as error:
+                        raise AudioGenerationError(
+                            "OpenAI returned unreadable realtime audio."
+                        ) from error
+                continue
+
+            if event_type == "response.content_part.done" and not audio_chunks:
+                part = event.get("part")
+                if isinstance(part, dict) and part.get("audio"):
+                    try:
+                        audio_chunks.append(base64.b64decode(str(part["audio"])))
+                    except (TypeError, ValueError) as error:
+                        raise AudioGenerationError(
+                            "OpenAI returned unreadable realtime audio."
+                        ) from error
+                continue
+
+            if event_type == "response.done":
+                response = event.get("response")
+                if isinstance(response, dict):
+                    status = str(response.get("status") or "")
+                    if status and status not in {"completed", "incomplete"}:
+                        raise AudioGenerationError(
+                            event_error_message(
+                                response,
+                                "OpenAI could not render realtime audio.",
+                            )
+                        )
+                done = True
+                break
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    if not done:
+        raise AudioGenerationError("OpenAI realtime audio generation timed out.")
+    if not audio_chunks:
+        raise AudioGenerationError("OpenAI returned an empty realtime audio file.")
+    return pcm16_wav_bytes(b"".join(audio_chunks))
 
 
 def generate_speech_audio(
@@ -461,18 +718,20 @@ def get_or_create_voice_sample(
     *,
     api_key,
     assistant_name,
+    audio_model=None,
     realtime_model,
     safety_identifier,
     script_model,
-    tts_model,
+    tts_model=None,
     voice,
     voice_instructions,
 ):
+    audio_model = str(audio_model or realtime_model or tts_model or "").strip()
     cache_key = compute_voice_sample_cache_key(
         assistant_name=assistant_name,
+        audio_model=audio_model,
         realtime_model=realtime_model,
         script_model=script_model,
-        tts_model=tts_model,
         voice=voice,
         voice_instructions=voice_instructions,
     )
@@ -500,11 +759,11 @@ def get_or_create_voice_sample(
         safety_identifier=safety_identifier,
         voice_instructions=voice_instructions,
     )
-    audio_content = generate_speech_audio(
+    audio_content = generate_realtime_script_audio(
         api_key=api_key,
+        realtime_model=audio_model,
         safety_identifier=safety_identifier,
         script=script,
-        tts_model=tts_model,
         voice=voice,
         voice_instructions=voice_instructions,
     )
@@ -513,10 +772,12 @@ def get_or_create_voice_sample(
         json.dumps(
             {
                 "assistantName": assistant_name,
+                "audioEngine": SCRIPT_AUDIO_ENGINE,
+                "audioModel": audio_model,
                 "realtimeModel": realtime_model,
+                "sampleRate": REALTIME_SCRIPT_AUDIO_SAMPLE_RATE,
                 "script": script,
                 "scriptModel": script_model,
-                "ttsModel": tts_model,
                 "version": VOICE_SAMPLE_CACHE_VERSION,
                 "voice": voice,
                 "voiceInstructions": voice_instructions,
@@ -538,10 +799,11 @@ def get_or_create_script_audio(
     *,
     api_key,
     assistant_name,
+    audio_model=None,
     realtime_model,
     safety_identifier,
     script,
-    tts_model,
+    tts_model=None,
     voice,
     voice_instructions,
 ):
@@ -551,9 +813,9 @@ def get_or_create_script_audio(
 
     cache_key = compute_script_audio_cache_key(
         assistant_name=assistant_name,
+        audio_model=audio_model,
         realtime_model=realtime_model,
         script=script,
-        tts_model=tts_model,
         voice=voice,
         voice_instructions=voice_instructions,
     )
@@ -567,11 +829,12 @@ def get_or_create_script_audio(
             cached=True,
         )
 
-    audio_content = generate_speech_audio(
+    audio_model = str(audio_model or realtime_model or tts_model or "").strip()
+    audio_content = generate_realtime_script_audio(
         api_key=api_key,
+        realtime_model=audio_model,
         safety_identifier=safety_identifier,
         script=script,
-        tts_model=tts_model,
         voice=voice,
         voice_instructions=voice_instructions,
     )
@@ -580,9 +843,11 @@ def get_or_create_script_audio(
         json.dumps(
             {
                 "assistantName": assistant_name,
+                "audioEngine": SCRIPT_AUDIO_ENGINE,
+                "audioModel": audio_model,
                 "realtimeModel": realtime_model,
+                "sampleRate": REALTIME_SCRIPT_AUDIO_SAMPLE_RATE,
                 "script": script,
-                "ttsModel": tts_model,
                 "version": SCRIPT_AUDIO_CACHE_VERSION,
                 "voice": voice,
                 "voiceInstructions": voice_instructions,
