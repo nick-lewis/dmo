@@ -5,6 +5,7 @@ import type {
   RuntimeDebugTraceEntry,
   RuntimeNote,
   RuntimeOverlay,
+  RuntimeSideImage,
 } from "./types";
 
 export function compactPreview(value: string, fallback: string) {
@@ -169,6 +170,12 @@ export function runtimeActionText(action: Record<string, unknown>) {
   }
   if (type === "highlight_on" || type === "highlight_off") {
     return compactRuntimeValue(action.selector, "selector");
+  }
+  if (type === "side_image") {
+    const slot = compactRuntimeValue(action.slot, "left");
+    if (action.visible === false) return `${slot} side image off`;
+    const imagePath = compactRuntimeValue(action.imagePath, "");
+    return imagePath ? `${slot} side image -> ${imagePath}` : `${slot} side image on`;
   }
   if (type === "show_image") {
     return compactRuntimeValue(action.imagePath, "image");
@@ -350,6 +357,34 @@ export function runtimeOverlaysFromRecord(value: unknown): Record<string, Runtim
       typeof overlay.imagePath === "string" ? overlay.imagePath.trim() : "";
     if (!id || !imagePath) continue;
     next[id] = { id, imagePath };
+  }
+  return next;
+}
+
+export function runtimeSideImageSlot(value: unknown) {
+  const slot = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (["agent", "avatar", "left", "main", "tutor"].includes(slot)) return "left";
+  if (["right", "side"].includes(slot)) return "right";
+  return "";
+}
+
+export function runtimeSideImagesFromRecord(
+  value: unknown,
+): Record<string, RuntimeSideImage> {
+  const next: Record<string, RuntimeSideImage> = {};
+  const source = recordFromUnknown(value);
+  for (const [fallbackSlot, rawImage] of Object.entries(source)) {
+    const image = recordFromUnknown(rawImage);
+    const slot = runtimeSideImageSlot(image.slot ?? fallbackSlot);
+    if (!slot) continue;
+    const imagePath =
+      typeof rawImage === "string"
+        ? rawImage.trim()
+        : typeof image.imagePath === "string"
+          ? image.imagePath.trim()
+          : "";
+    const visible = typeof image.visible === "boolean" ? image.visible : true;
+    next[slot] = { imagePath, slot, visible };
   }
   return next;
 }

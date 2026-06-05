@@ -8,6 +8,7 @@ from .slides import SlideFetchError, SlideResolutionError, resolve_slide_image
 SCRIPT_MARKER_PATTERN = re.compile(
     (
         r"\[(show_image|slide|gslide|interactive|interactive_update|"
+        r"side_image|"
         r"interactive_clear|highlight|highlight_on|highlight_off|"
         r"overlay|overlay_off|agent_image_off|agent_image_on|"
         r"pause|chat_off|chat_on|add_note|play_sound)"
@@ -70,6 +71,53 @@ def split_script_marker_timing_args(args):
     unit = (match.group(2) or "ms").lower()
     seconds = amount / 1000 if unit == "ms" else amount
     return normalized_args[:-1], round(max(0.0, seconds), 3)
+
+
+def normalize_side_image_slot(value):
+    slot = str(value or "").strip().lower()
+    if slot in {"agent", "avatar", "left", "main", "tutor"}:
+        return "left"
+    if slot in {"right", "side"}:
+        return "right"
+    return ""
+
+
+def side_image_marker_action(args, runtime_context):
+    if not args:
+        return None
+
+    rendered_first = render_context_template(args[0], runtime_context).strip()
+    slot = normalize_side_image_slot(rendered_first)
+    remaining_args = args[1:] if slot else args
+    slot = slot or "left"
+
+    raw_state = (
+        render_context_template(remaining_args[0], runtime_context).strip()
+        if remaining_args
+        else "show"
+    )
+    state = raw_state.lower()
+    show_states = {"show", "on", "visible", "true", "1"}
+    hide_states = {"hide", "hidden", "off", "false", "0"}
+    if state in hide_states:
+        visible = False
+        image_arg = remaining_args[1] if len(remaining_args) > 1 else ""
+    elif state in show_states:
+        visible = True
+        image_arg = remaining_args[1] if len(remaining_args) > 1 else ""
+    else:
+        visible = True
+        image_arg = remaining_args[0] if remaining_args else ""
+
+    image_path = render_context_template(image_arg, runtime_context).strip()
+    action = {
+        "slot": slot,
+        "type": "side_image",
+        "visible": visible,
+    }
+    if image_path:
+        action["imagePath"] = image_path
+    return action
 
 
 def parse_script_markers(script_text):
@@ -268,6 +316,9 @@ def resolve_script_marker_action(marker, config, runtime_context):
 
     if marker_type == "interactive_clear":
         return {"type": "interactive_clear"}
+
+    if marker_type == "side_image":
+        return side_image_marker_action(args, runtime_context)
 
     if marker_type == "show_image":
         image_path = render_context_template(

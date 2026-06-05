@@ -29,29 +29,9 @@ export const scriptMarkerOptions = [
     title: "Insert a timed Google slide change at the cursor.",
   },
   {
-    label: "Image",
-    marker: "[show_image: test-images/dLU-right.png]",
-    title: "Change the agent image at this point in the script.",
-  },
-  {
-    label: "Overlay",
-    marker: "[overlay: guide, test-images/dLU-left.png]",
-    title: "Show a named floating image overlay at this point in the script.",
-  },
-  {
-    label: "Clear overlay",
-    marker: "[overlay_off: guide]",
-    title: "Clear a named floating image overlay. Use [overlay_off] to clear all overlays.",
-  },
-  {
-    label: "Image off",
-    marker: "[agent_image_off]",
-    title: "Hide the main agent image next to the chat at this point in the script.",
-  },
-  {
-    label: "Image on",
-    marker: "[agent_image_on]",
-    title: "Show the main agent image next to the chat at this point in the script.",
+    label: "Side image",
+    marker: "[side_image: right, show, test-images/dLU-left.png]",
+    title: "Set a left or right image beside the chat.",
   },
   {
     label: "Note",
@@ -112,12 +92,10 @@ export const scriptMarkerGroups: Array<{
   options: ScriptMarkerOption[];
 }> = [
   {
-    description: "Slides, images, and overlays.",
+    description: "Slides and side images.",
     label: "Visuals",
     options: scriptMarkerOptions.filter((option) =>
-      ["Slide", "Image", "Overlay", "Clear overlay", "Image off", "Image on"].includes(
-        option.label,
-      ),
+      ["Slide", "Side image"].includes(option.label),
     ),
   },
   {
@@ -153,9 +131,9 @@ export const scriptSoundOptions = [{ label: "Thud", path: "sounds/thud.mp3" }] a
 export const customSoundOptionValue = "__custom__";
 export const scriptMarkerDragDataType = "application/x-dlu-script-marker";
 export const scriptMarkerPattern =
-  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
+  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
 export const scriptMarkerParsePattern =
-  /\[(show_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
+  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
 
 export function countScriptWords(text: string) {
   const words = text.trim().match(/[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g);
@@ -194,6 +172,7 @@ export function scriptMarkerLabel(type: string) {
     pause: "Pause",
     play_sound: "Sound",
     show_image: "Image",
+    side_image: "Side image",
     slide: "Slide",
   };
   return labels[type] ?? type;
@@ -218,6 +197,7 @@ export function scriptMarkerIcon(type: string) {
     pause: "P",
     play_sound: "AU",
     show_image: "I",
+    side_image: "SI",
     slide: "S",
   };
   return icons[type] ?? "M";
@@ -285,6 +265,20 @@ export function scriptMarkerDetail(type: string, args: string, argList: string[]
 
   if (type === "agent_image_off") return "hide main image";
   if (type === "agent_image_on") return "show main image";
+  if (type === "side_image") {
+    const side = argList[0] || "left";
+    const mode = (argList[1] || "show").toLowerCase();
+    if (["hide", "hidden", "off", "false", "0"].includes(mode)) {
+      return `${side} hide`;
+    }
+    const imagePath =
+      argList.length > 2
+        ? argList[2]
+        : ["show", "on", "visible", "true", "1"].includes(mode)
+          ? ""
+          : argList[1] || "";
+    return [side, imagePath].filter(Boolean).join(" -> ");
+  }
   if (type === "interactive_clear") return "";
   return args;
 }

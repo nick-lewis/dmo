@@ -34,6 +34,7 @@ import type {
   RuntimeHighlight,
   RuntimeNote,
   RuntimeOverlay,
+  RuntimeSideImage,
   RuntimeUiTrigger,
   TutoringSession,
 } from "../types";
@@ -66,6 +67,7 @@ export function RuntimeInspectorPanel({
   messages,
   notes,
   overlays,
+  sideImages,
   realtimeStatus,
   runtimeDebug,
   runtimeContext,
@@ -93,6 +95,7 @@ export function RuntimeInspectorPanel({
   messages: ChatMessage[];
   notes: RuntimeNote[];
   overlays: RuntimeOverlay[];
+  sideImages: RuntimeSideImage[];
   realtimeStatus: RealtimeStatus;
   runtimeDebug: Record<string, unknown>;
   runtimeContext: Record<string, unknown>;
@@ -497,6 +500,14 @@ export function RuntimeInspectorPanel({
               <span>Image visible</span>
               <code>{avatarVisible ? "yes" : "no"}</code>
             </div>
+            {sideImages.map((image) => (
+              <div className="runtime-inspector-row" key={image.slot}>
+                <span>{image.slot} image</span>
+                <code>
+                  {image.visible ? image.imagePath || "---" : "hidden"}
+                </code>
+              </div>
+            ))}
             {overlays.map((overlay) => (
               <div className="runtime-inspector-row" key={overlay.id}>
                 <span>Overlay {overlay.id}</span>

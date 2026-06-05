@@ -14,6 +14,7 @@ import type {
   ChatMessage,
   RuntimeButton,
   RuntimeOverlay,
+  RuntimeSideImage,
   TutoringSession,
 } from "../types";
 
@@ -33,6 +34,7 @@ type ChatPanelContentProps = {
   realtimeStatus: RealtimeStatus;
   runtimeButtons: RuntimeButton[];
   runtimeOverlays: RuntimeOverlay[];
+  runtimeSideImages: RuntimeSideImage[];
   session: TutoringSession | null;
   status: "loading" | "ready" | "error";
   turnAnchorMessageId: string | null;
@@ -55,6 +57,7 @@ export function ChatPanelContent({
   realtimeStatus,
   runtimeButtons,
   runtimeOverlays,
+  runtimeSideImages,
   session,
   status,
   turnAnchorMessageId,
@@ -65,6 +68,19 @@ export function ChatPanelContent({
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const assistantDisplayName = assistantName.trim() || "dee-lou";
   const assistantAvatarPath = avatarPath.trim() || "test-images/dLU-right.png";
+  const sideImageBySlot = new Map(
+    runtimeSideImages.map((image) => [image.slot, image]),
+  );
+  const leftSideImage = sideImageBySlot.get("left");
+  const rightSideImage = sideImageBySlot.get("right");
+  const leftImagePath = leftSideImage
+    ? leftSideImage.imagePath.trim()
+    : assistantAvatarPath;
+  const leftImageVisible = leftSideImage
+    ? leftSideImage.visible && Boolean(leftImagePath)
+    : avatarVisible;
+  const rightImagePath = rightSideImage?.imagePath.trim() ?? "";
+  const rightImageVisible = Boolean(rightSideImage?.visible && rightImagePath);
   const turnAnchorMessage = turnAnchorMessageId
     ? messages.find((message) => message.id === turnAnchorMessageId)
     : null;
@@ -263,11 +279,19 @@ export function ChatPanelContent({
         </form>
       </div>
 
-      {avatarVisible ? (
+      {leftImageVisible ? (
         <img
           alt={assistantDisplayName}
-          className="chat-dlu-figure"
-          src={publicAsset(assistantAvatarPath)}
+          className="chat-side-image chat-side-image-left"
+          src={publicAsset(leftImagePath)}
+        />
+      ) : null}
+      {rightImageVisible ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="chat-side-image chat-side-image-right"
+          src={publicAsset(rightImagePath)}
         />
       ) : null}
       {runtimeOverlays.map((overlay) => (

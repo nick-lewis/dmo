@@ -768,11 +768,13 @@ class InteractiveRuntimeActionTests(TestCase):
                             "Hello [show_image: test-images/dLU-left.png] "
                             "[agent_image_off] "
                             "there [overlay: guide, test-images/dLU-right.png] "
+                            "[side_image: right, show, test-images/dLU-left.png] "
                             "friend [add_note: Remember the mark] "
                             "[play_sound: sounds/chime.mp3, 0.4] "
                             "[pause: 500] "
                             "[chat_off] "
                             "[chat_on] "
+                            "[side_image: right, hide] "
                             "[agent_image_on] "
                             "[overlay_off: guide]."
                         ),
@@ -795,11 +797,13 @@ class InteractiveRuntimeActionTests(TestCase):
                 "show_image",
                 "agent_image_visibility",
                 "overlay",
+                "side_image",
                 "add_note",
                 "play_sound",
                 "pause",
                 "chat_availability",
                 "chat_availability",
+                "side_image",
                 "agent_image_visibility",
                 "overlay_off",
             ],
@@ -808,14 +812,19 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertFalse(cue_actions[1]["visible"])
         self.assertEqual(cue_actions[2]["overlayId"], "guide")
         self.assertEqual(cue_actions[2]["imagePath"], "test-images/dLU-right.png")
-        self.assertEqual(cue_actions[3]["text"], "Remember the mark")
-        self.assertEqual(cue_actions[4]["soundPath"], "sounds/chime.mp3")
-        self.assertEqual(cue_actions[4]["volume"], "0.4")
-        self.assertEqual(cue_actions[5]["durationMs"], "500")
-        self.assertFalse(cue_actions[6]["enabled"])
-        self.assertTrue(cue_actions[7]["enabled"])
-        self.assertTrue(cue_actions[8]["visible"])
-        self.assertEqual(cue_actions[9]["overlayId"], "guide")
+        self.assertEqual(cue_actions[3]["slot"], "right")
+        self.assertTrue(cue_actions[3]["visible"])
+        self.assertEqual(cue_actions[3]["imagePath"], "test-images/dLU-left.png")
+        self.assertEqual(cue_actions[4]["text"], "Remember the mark")
+        self.assertEqual(cue_actions[5]["soundPath"], "sounds/chime.mp3")
+        self.assertEqual(cue_actions[5]["volume"], "0.4")
+        self.assertEqual(cue_actions[6]["durationMs"], "500")
+        self.assertFalse(cue_actions[7]["enabled"])
+        self.assertTrue(cue_actions[8]["enabled"])
+        self.assertEqual(cue_actions[9]["slot"], "right")
+        self.assertFalse(cue_actions[9]["visible"])
+        self.assertTrue(cue_actions[10]["visible"])
+        self.assertEqual(cue_actions[11]["overlayId"], "guide")
 
     def test_script_markers_can_use_explicit_timeline_times(self):
         event = ExperienceEvent.objects.create(
@@ -882,6 +891,12 @@ class InteractiveRuntimeActionTests(TestCase):
                     "type": "overlay",
                 },
                 {
+                    "imagePath": "test-images/dLU-right.png",
+                    "slot": "right",
+                    "type": "side_image",
+                    "visible": True,
+                },
+                {
                     "noteId": "note-1",
                     "text": "Remember the marked time.",
                     "type": "add_note",
@@ -895,6 +910,22 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(
             ui_runtime["overlays"]["guide"],
             {"id": "guide", "imagePath": "test-images/dLU-right.png"},
+        )
+        self.assertEqual(
+            ui_runtime["images"]["left"],
+            {
+                "imagePath": "test-images/dLU-left.png",
+                "slot": "left",
+                "visible": False,
+            },
+        )
+        self.assertEqual(
+            ui_runtime["images"]["right"],
+            {
+                "imagePath": "test-images/dLU-right.png",
+                "slot": "right",
+                "visible": True,
+            },
         )
         self.assertEqual(
             ui_runtime["notes"],
@@ -916,6 +947,11 @@ class InteractiveRuntimeActionTests(TestCase):
                     "type": "show_image",
                 },
                 {
+                    "slot": "right",
+                    "type": "side_image",
+                    "visible": False,
+                },
+                {
                     "noteId": "note-1",
                     "text": "Remember the marked time.",
                     "type": "add_note",
@@ -924,6 +960,7 @@ class InteractiveRuntimeActionTests(TestCase):
         )
         self.assertEqual(state["uiRuntime"]["overlays"], {})
         self.assertTrue(state["uiRuntime"]["avatarVisible"])
+        self.assertFalse(state["uiRuntime"]["images"]["right"]["visible"])
         self.assertEqual(len(state["uiRuntime"]["notes"]), 1)
 
     def test_editor_rejects_unregistered_main_panel_app_action(self):

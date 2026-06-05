@@ -15,6 +15,43 @@ DEFAULT_CHOICE_ICON_BACKGROUND = "#f8ded8"
 INITIAL_SCRIPT_CUE_PROGRESS = 0.001
 
 
+def normalize_runtime_side_image_slot(value):
+    slot = str(value or "").strip().lower()
+    if slot in {"agent", "avatar", "left", "main", "tutor"}:
+        return "left"
+    if slot in {"right", "side"}:
+        return "right"
+    return ""
+
+
+def normalize_runtime_side_images(value):
+    images = {}
+    if not isinstance(value, dict):
+        return images
+
+    for fallback_slot, raw_image in value.items():
+        if isinstance(raw_image, dict):
+            slot = normalize_runtime_side_image_slot(
+                raw_image.get("slot") or fallback_slot
+            )
+            image_path = str(raw_image.get("imagePath", "") or "").strip()
+            visible = raw_image.get("visible", True)
+        else:
+            slot = normalize_runtime_side_image_slot(fallback_slot)
+            image_path = str(raw_image or "").strip()
+            visible = True
+        if not slot:
+            continue
+        if not isinstance(visible, bool):
+            visible = True
+        images[slot] = {
+            "imagePath": image_path,
+            "slot": slot,
+            "visible": visible,
+        }
+    return images
+
+
 def normalize_choice_icon_background(value, fallback=DEFAULT_CHOICE_ICON_BACKGROUND):
     text = str(value if value is not None else fallback).strip()[:40]
     if not text:
@@ -266,6 +303,7 @@ def apply_runtime_actions_to_state(
     avatar_visible = ui_runtime.get("avatarVisible", True)
     if not isinstance(avatar_visible, bool):
         avatar_visible = True
+    images = normalize_runtime_side_images(ui_runtime.get("images"))
     overlays_value = ui_runtime.get("overlays")
     overlays = dict(overlays_value) if isinstance(overlays_value, dict) else {}
     notes_value = ui_runtime.get("notes")
@@ -377,10 +415,44 @@ def apply_runtime_actions_to_state(
             if image_path:
                 avatar_path = image_path
                 avatar_visible = True
+                images["left"] = {
+                    "imagePath": image_path,
+                    "slot": "left",
+                    "visible": True,
+                }
             continue
 
         if action_type == "agent_image_visibility":
             avatar_visible = bool(action.get("visible", True))
+            left_image = dict(images.get("left") or {})
+            images["left"] = {
+                "imagePath": str(left_image.get("imagePath") or avatar_path or ""),
+                "slot": "left",
+                "visible": avatar_visible,
+            }
+            continue
+
+        if action_type == "side_image":
+            slot = normalize_runtime_side_image_slot(
+                action.get("slot") or action.get("location")
+            )
+            if not slot:
+                continue
+            existing_image = dict(images.get(slot) or {})
+            image_path = str(
+                action.get("imagePath", existing_image.get("imagePath", "")) or ""
+            ).strip()
+            visible = action.get("visible", existing_image.get("visible", True))
+            if not isinstance(visible, bool):
+                visible = True
+            images[slot] = {
+                "imagePath": image_path,
+                "slot": slot,
+                "visible": visible,
+            }
+            if slot == "left":
+                avatar_path = image_path
+                avatar_visible = visible
             continue
 
         if action_type == "overlay":
@@ -478,6 +550,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["highlights"] = highlights
     ui_runtime["interactive"] = interactive
     ui_runtime["interactiveState"] = interactive_state
+    ui_runtime["images"] = images
     ui_runtime["leftPanels"] = left_panels
     ui_runtime["notes"] = notes[-80:]
     ui_runtime["overlays"] = overlays
@@ -528,6 +601,7 @@ def hydrate_initial_script_runtime_state(session):
         or ui_runtime.get("slideError")
         or ui_runtime.get("avatarPath")
         or "avatarVisible" in ui_runtime
+        or ui_runtime.get("images")
         or ui_runtime.get("overlays")
         or ui_runtime.get("notes")
     ):
@@ -605,6 +679,14 @@ def runtime_action_summary(action):
         return str(action.get("detail", "slide unavailable"))
     if action_type in {"highlight_on", "highlight_off"}:
         return str(action.get("selector", "selector"))
+    if action_type == "side_image":
+        slot = action.get("slot", "left") or "left"
+        if action.get("visible") is False:
+            return f"{slot} side image off"
+        image_path = action.get("imagePath")
+        if image_path:
+            return f"{slot} side image -> {image_path}"
+        return f"{slot} side image on"
     if action_type == "show_image":
         return str(action.get("imagePath", "image") or "image")
     if action_type == "overlay":
@@ -657,6 +739,7 @@ def runtime_action_debug_details(action):
         "scriptCueCount",
         "scriptCueTypes",
         "scriptWordTiming",
+        "slot",
         "visible",
         "slideRef",
         "soundPath",

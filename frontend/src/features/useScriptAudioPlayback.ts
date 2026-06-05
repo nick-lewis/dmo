@@ -97,7 +97,11 @@ function scriptCueImageUrls(cues: ScriptCue[]) {
       const imageUrl = typeof action.imageUrl === "string" ? action.imageUrl : "";
       if (imageUrl) urls.add(imageUrl);
     }
-    if (action.type === "show_image" || action.type === "overlay") {
+    if (
+      action.type === "show_image" ||
+      action.type === "overlay" ||
+      action.type === "side_image"
+    ) {
       const imagePath =
         typeof action.imagePath === "string" ? action.imagePath : "";
       if (imagePath) urls.add(publicAsset(imagePath));

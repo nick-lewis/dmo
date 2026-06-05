@@ -391,6 +391,7 @@ export type PythonNotebookPayload = SessionPayload & {
 export type RuntimeUiState = {
   avatarPath?: string;
   avatarVisible?: boolean;
+  images?: Record<string, RuntimeSideImage>;
   interactive?: Record<string, unknown>;
   leftPanels?: Record<string, unknown>;
   notes?: RuntimeNote[];
@@ -406,6 +407,12 @@ export type RuntimeHighlight = {
 export type RuntimeOverlay = {
   id: string;
   imagePath: string;
+};
+
+export type RuntimeSideImage = {
+  imagePath: string;
+  slot: string;
+  visible: boolean;
 };
 
 export type RuntimeNote = {
@@ -517,16 +524,54 @@ export type VoiceSampleStatus = "idle" | "loading" | "playing";
 
 export type VoiceSamplePayload = {
   audioUrl: string;
+  audioEngine?: string;
+  audioModel?: string;
   cached: boolean;
   realtimeModel: RealtimeModelId;
   script: string;
   scriptModel: string;
-  ttsModel: string;
+  ttsModel?: string;
   voice: RealtimeVoiceId;
+};
+
+export type VoicePersonalityLabSample = {
+  audioEngine?: string;
+  audioModel?: string;
+  audioUrl: string;
+  cacheKey: string;
+  cached: boolean;
+  durationSeconds: number | null;
+  error: string;
+  realtimeModel: RealtimeModelId;
+  script: string;
+  voice: RealtimeVoiceId;
+};
+
+export type VoicePersonalityLabGroup = {
+  cachedCount: number;
+  createdAt: string;
+  id: string;
+  realtimeModel: RealtimeModelId;
+  sampleCount: number;
+  samples: VoicePersonalityLabSample[];
+  updatedAt: string;
+  voiceInstructions: string;
+};
+
+export type VoicePersonalityLabPayload = {
+  activeGroupId?: string;
+  defaultRealtimeModel: RealtimeModelId;
+  errors?: string[];
+  generated?: number;
+  groups: VoicePersonalityLabGroup[];
+  script: string;
+  totalGroups: number;
 };
 
 export type MessageAudioPayload = {
   audioUrl: string;
+  audioEngine?: string;
+  audioModel?: string;
   cached: boolean;
   displayText?: string;
   durationSeconds?: number | null;
@@ -536,12 +581,14 @@ export type MessageAudioPayload = {
   scriptWords?: ScriptWord[];
   timingModel?: string;
   timingWarning?: string;
-  ttsModel: string;
+  ttsModel?: string;
   voice: RealtimeVoiceId;
 };
 
 export type ScriptAudioItem = {
   audioUrl: string;
+  audioEngine?: string;
+  audioModel?: string;
   cached: boolean;
   cacheKey: string;
   canGenerate: boolean;

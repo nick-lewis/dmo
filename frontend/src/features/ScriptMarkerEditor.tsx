@@ -163,6 +163,78 @@ export function ScriptMarkerEditor({
         ) : null}
       </div>
     );
+  } else if (marker.type === "side_image") {
+    const firstArg = args[0]?.trim().toLowerCase() || "";
+    const hasSideArg = [
+      "agent",
+      "avatar",
+      "left",
+      "main",
+      "right",
+      "side",
+      "tutor",
+    ].includes(firstArg);
+    const currentSide = ["right", "side"].includes(firstArg) ? "right" : "left";
+    const valueOffset = hasSideArg ? 1 : 0;
+    const rawMode = args[valueOffset]?.trim() || "show";
+    const currentMode = rawMode.toLowerCase();
+    const hideModes = ["hide", "hidden", "off", "false", "0"];
+    const showModes = ["show", "on", "visible", "true", "1"];
+    const isHidden = hideModes.includes(currentMode);
+    const currentImagePath =
+      args[valueOffset + 1]?.trim() ||
+      (showModes.includes(currentMode) || hideModes.includes(currentMode)
+        ? ""
+        : rawMode);
+    const replaceSideImageArgs = (
+      side = currentSide,
+      mode = isHidden ? "hide" : "show",
+      imagePath = currentImagePath,
+    ) => {
+      if (hideModes.includes(mode)) {
+        onReplaceArgs(marker, [side, "hide"]);
+        return;
+      }
+      onReplaceArgs(marker, [side, "show", imagePath]);
+    };
+    controls = (
+      <div className="script-marker-controls side-image-marker-controls">
+        <span className="event-detail-label">SIDE</span>
+        <select
+          aria-label="Image side"
+          onChange={(event) => replaceSideImageArgs(event.target.value)}
+          value={currentSide}
+        >
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+        </select>
+        <span className="event-detail-label">STATE</span>
+        <select
+          aria-label="Image state"
+          onChange={(event) =>
+            replaceSideImageArgs(currentSide, event.target.value)
+          }
+          value={isHidden ? "hide" : "show"}
+        >
+          <option value="show">Show</option>
+          <option value="hide">Hide</option>
+        </select>
+        {!isHidden ? (
+          <>
+            <span className="event-detail-label">IMAGE</span>
+            <input
+              aria-label="Side image path"
+              onChange={(event) =>
+                replaceSideImageArgs(currentSide, "show", event.target.value)
+              }
+              placeholder="test-images/dLU-left.png"
+              type="text"
+              value={currentImagePath}
+            />
+          </>
+        ) : null}
+      </div>
+    );
   } else if (marker.type === "show_image") {
     const currentImagePath = args[0]?.trim() || tutorAvatarOptions[0].path;
     controls = (

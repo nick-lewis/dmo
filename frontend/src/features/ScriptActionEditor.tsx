@@ -335,25 +335,6 @@ export function ScriptActionEditor({
     if (!scriptActionMenu) return;
 
     const focusFrame = window.requestAnimationFrame(() => {
-      const menu = actionMenuRef.current;
-      if (menu) {
-        const rect = menu.getBoundingClientRect();
-        const nextViewportX = menuCoordinate(rect.x, rect.width, window.innerWidth);
-        const nextViewportY = menuCoordinate(rect.y, rect.height, window.innerHeight);
-        const nextX = Math.round(scriptActionMenu.x + nextViewportX - rect.x);
-        const nextY = Math.round(scriptActionMenu.y + nextViewportY - rect.y);
-        if (nextX !== scriptActionMenu.x || nextY !== scriptActionMenu.y) {
-          setScriptActionMenu((current) =>
-            current
-              ? {
-                  ...current,
-                  x: nextX,
-                  y: nextY,
-                }
-              : current,
-          );
-        }
-      }
       actionMenuTextInputRef.current?.focus({ preventScroll: true });
     });
 
@@ -908,10 +889,52 @@ export function ScriptActionEditor({
     audio.pause();
   }
 
+  function sideImageMarkerValues(marker: ScriptMarkerInstance) {
+    const firstArg = marker.argList[0]?.trim().toLowerCase() || "";
+    const hasSideArg = [
+      "agent",
+      "avatar",
+      "left",
+      "main",
+      "right",
+      "side",
+      "tutor",
+    ].includes(firstArg);
+    const side = ["left", "agent", "avatar", "main", "tutor"].includes(firstArg)
+      ? "left"
+      : ["right", "side"].includes(firstArg)
+        ? "right"
+        : "left";
+    const remainingArgs = hasSideArg ? marker.argList.slice(1) : marker.argList;
+    const modeArg = remainingArgs[0]?.trim().toLowerCase() || "show";
+    const hideModes = ["hide", "hidden", "off", "false", "0"];
+    const showModes = ["show", "on", "visible", "true", "1"];
+    const visible = !hideModes.includes(modeArg);
+    const imagePath =
+      remainingArgs.length > 1
+        ? remainingArgs[1]
+        : showModes.includes(modeArg) || hideModes.includes(modeArg)
+          ? ""
+          : remainingArgs[0] || "";
+    return { imagePath, side, visible };
+  }
+
   function timelinePreviewState(atTime = timelineCurrentTime) {
     const elapsed = atTime + 0.001;
     let currentVisualMarker: ScriptMarkerInstance | null = null;
-    let agentImageVisible = true;
+    const sideImageMap = new Map<
+      string,
+      { imagePath: string; side: string; visible: boolean }
+    >([
+      [
+        "left",
+        {
+          imagePath: "test-images/dLU-right.png",
+          side: "left",
+          visible: true,
+        },
+      ],
+    ]);
     const overlays: Array<{ id: string; imagePath: string }> = [];
     const overlayMap = new Map<string, string>();
 
@@ -920,11 +943,40 @@ export function ScriptActionEditor({
       if (isSlideMarker(marker) || marker.type === "show_image") {
         currentVisualMarker = marker;
       }
+      if (marker.type === "show_image") {
+        const imagePath = marker.argList[0] || "";
+        if (imagePath) {
+          sideImageMap.set("left", { imagePath, side: "left", visible: true });
+        }
+      }
       if (marker.type === "agent_image_off") {
-        agentImageVisible = false;
+        const current = sideImageMap.get("left") ?? {
+          imagePath: "test-images/dLU-right.png",
+          side: "left",
+          visible: true,
+        };
+        sideImageMap.set("left", { ...current, visible: false });
       }
       if (marker.type === "agent_image_on") {
-        agentImageVisible = true;
+        const current = sideImageMap.get("left") ?? {
+          imagePath: "test-images/dLU-right.png",
+          side: "left",
+          visible: true,
+        };
+        sideImageMap.set("left", { ...current, visible: true });
+      }
+      if (marker.type === "side_image") {
+        const sideImage = sideImageMarkerValues(marker);
+        const current = sideImageMap.get(sideImage.side) ?? {
+          imagePath: "",
+          side: sideImage.side,
+          visible: true,
+        };
+        sideImageMap.set(sideImage.side, {
+          imagePath: sideImage.imagePath || current.imagePath,
+          side: sideImage.side,
+          visible: sideImage.visible,
+        });
       }
       if (marker.type === "overlay") {
         const overlayId = marker.argList[1] ? marker.argList[0] || "default" : "default";
@@ -939,7 +991,10 @@ export function ScriptActionEditor({
     });
 
     overlayMap.forEach((imagePath, id) => overlays.push({ id, imagePath }));
-    return { agentImageVisible, currentVisualMarker, overlays };
+    const sideImages = Array.from(sideImageMap.values()).filter(
+      (image) => image.imagePath,
+    );
+    return { currentVisualMarker, overlays, sideImages };
   }
 
   function renderTimelineView() {
@@ -998,15 +1053,21 @@ export function ScriptActionEditor({
             ))}
           </div>
           <div className="script-timeline-chat-preview">
-            <div
-              className={[
-                "script-timeline-agent-preview",
-                preview.agentImageVisible ? "" : "is-hidden",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <img alt="" src={publicAsset("test-images/dLU-right.png")} />
+            <div className="script-timeline-agent-preview">
+              {preview.sideImages.map((image) => (
+                <img
+                  alt=""
+                  className={[
+                    "script-timeline-side-image",
+                    `side-${image.side}`,
+                    image.visible ? "" : "is-hidden",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={image.side}
+                  src={publicAsset(image.imagePath)}
+                />
+              ))}
             </div>
             <div className="script-timeline-now">
               <span>{formatTimelineSeconds(visibleTimelineTime)}</span>
@@ -1586,6 +1647,8 @@ export function ScriptActionEditor({
     const imagePath =
       marker.type === "show_image"
         ? marker.argList[0]
+        : marker.type === "side_image"
+          ? sideImageMarkerValues(marker).imagePath
         : marker.type === "overlay"
           ? marker.argList[1]
           : "";

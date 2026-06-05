@@ -42,6 +42,8 @@ import {
   runtimeInteractiveFromRecord,
   runtimeNotesFromValue,
   runtimeOverlaysFromRecord,
+  runtimeSideImageSlot,
+  runtimeSideImagesFromRecord,
   runtimeSlideFromRecord,
 } from "../runtimeUtils";
 import type {
@@ -63,6 +65,7 @@ import type {
   RuntimeHighlight,
   RuntimeNote,
   RuntimeOverlay,
+  RuntimeSideImage,
   RuntimeUiState,
   RuntimeUiTrigger,
   SessionPayload,
@@ -205,6 +208,9 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
   const [runtimeOverlays, setRuntimeOverlays] = useState<
     Record<string, RuntimeOverlay>
   >({});
+  const [runtimeSideImages, setRuntimeSideImages] = useState<
+    Record<string, RuntimeSideImage>
+  >({});
   const [runtimeButtons, setRuntimeButtons] = useState<RuntimeButton[]>([]);
   const [runtimeTriggers, setRuntimeTriggers] = useState<RuntimeUiTrigger[]>([]);
   const [runtimeActionLog, setRuntimeActionLog] = useState<
@@ -289,6 +295,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     return {
       avatarPath: runtimeAvatarPath,
       avatarVisible: runtimeAvatarVisible,
+      images: runtimeSideImages,
       interactive: runtimeInteractiveState,
       leftPanels: {
         pythonNotebook,
@@ -335,6 +342,37 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     audio.addEventListener("ended", cleanup, { once: true });
     audio.addEventListener("error", cleanup, { once: true });
     void audio.play().catch(cleanup);
+  }
+
+  function applyRuntimeSideImage(action: Record<string, unknown>) {
+    const slot = runtimeSideImageSlot(action.slot ?? action.location);
+    if (!slot) return;
+
+    const imagePathFromAction =
+      typeof action.imagePath === "string" ? action.imagePath.trim() : "";
+    const visibleFromAction =
+      typeof action.visible === "boolean" ? action.visible : undefined;
+
+    setRuntimeSideImages((current) => {
+      const existing = current[slot] ?? {
+        imagePath: slot === "left" ? runtimeAvatarPath || tutorForm.avatarPath : "",
+        slot,
+        visible: true,
+      };
+      const imagePath = imagePathFromAction || existing.imagePath;
+      const visible = visibleFromAction ?? Boolean(imagePathFromAction || existing.visible);
+      return {
+        ...current,
+        [slot]: { imagePath, slot, visible },
+      };
+    });
+
+    if (slot === "left") {
+      if (imagePathFromAction) setRuntimeAvatarPath(imagePathFromAction);
+      if (visibleFromAction !== undefined || imagePathFromAction) {
+        setRuntimeAvatarVisible(visibleFromAction ?? true);
+      }
+    }
   }
 
   function applyRuntimeActions(actions: Array<Record<string, unknown>>) {
@@ -460,11 +498,26 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         if (imagePath) {
           setRuntimeAvatarPath(imagePath);
           setRuntimeAvatarVisible(true);
+          applyRuntimeSideImage({
+            imagePath,
+            slot: "left",
+            type: "side_image",
+            visible: true,
+          });
         }
       }
 
       if (action.type === "agent_image_visibility") {
         setRuntimeAvatarVisible(action.visible !== false);
+        applyRuntimeSideImage({
+          slot: "left",
+          type: "side_image",
+          visible: action.visible !== false,
+        });
+      }
+
+      if (action.type === "side_image") {
+        applyRuntimeSideImage(action);
       }
 
       if (action.type === "overlay") {
@@ -615,6 +668,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     const chatEnabledValue = uiRuntime.chatEnabled;
     const avatarPathValue = uiRuntime.avatarPath;
     const avatarVisibleValue = uiRuntime.avatarVisible;
+    const imagesValue = uiRuntime.images;
     const overlaysValue = uiRuntime.overlays;
     const notesValue = uiRuntime.notes;
     const leftPanelsValue =
@@ -706,6 +760,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       typeof chatEnabledValue === "boolean" ? chatEnabledValue : true,
     );
     setRuntimeHighlights(nextHighlights);
+    setRuntimeSideImages(runtimeSideImagesFromRecord(imagesValue));
     setRuntimeNotes(runtimeNotesFromValue(notesValue));
     setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
@@ -809,6 +864,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     setRuntimeNotes([]);
     setRuntimeActionLog([]);
     setRuntimeAvatarVisible(true);
+    setRuntimeSideImages({});
     setPythonNotebook(defaultPythonNotebookState());
     setPythonNotebookError("");
     setPythonNotebookStatus("idle");
@@ -1553,6 +1609,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
                 realtimeStatus={realtimeStatus}
                 runtimeButtons={runtimeButtons}
                 runtimeOverlays={Object.values(runtimeOverlays)}
+                runtimeSideImages={Object.values(runtimeSideImages)}
                 session={session}
                 status={chatStatus}
                 turnAnchorMessageId={turnAnchorMessageId}
@@ -1597,6 +1654,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
             messages={messages}
             notes={runtimeNotes}
             overlays={Object.values(runtimeOverlays)}
+            sideImages={Object.values(runtimeSideImages)}
             realtimeStatus={realtimeStatus}
             runtimeDebug={recordFromUnknown(session?.runtimeState?.runtimeDebug)}
             runtimeContext={session?.runtimeContext ?? {}}

@@ -468,6 +468,15 @@ def runtime_action_string(value, max_length=500):
     return text
 
 
+def normalize_runtime_side_image_slot(value):
+    slot = str(value or "").strip().lower()
+    if slot in {"agent", "avatar", "left", "main", "tutor"}:
+        return "left"
+    if slot in {"right", "side"}:
+        return "right"
+    return ""
+
+
 def rejected_emitted_runtime_action(action, reason):
     action_type = ""
     if isinstance(action, dict):
@@ -642,6 +651,28 @@ def normalize_emitted_runtime_action(action):
 
     if action_type == "interactive_clear":
         return {"source": "interactive", "type": "interactive_clear"}, None
+
+    if action_type == "side_image":
+        slot = normalize_runtime_side_image_slot(
+            action.get("slot") or action.get("location")
+        )
+        if not slot:
+            return None, rejected_emitted_runtime_action(action, "invalid_image_slot")
+        visible = action.get("visible")
+        if visible is None:
+            visible = bool(runtime_action_string(action.get("imagePath")))
+        if not isinstance(visible, bool):
+            return None, rejected_emitted_runtime_action(action, "invalid_visibility")
+        image_path = runtime_action_string(action.get("imagePath"))
+        normalized = {
+            "slot": slot,
+            "source": "interactive",
+            "type": "side_image",
+            "visible": visible,
+        }
+        if image_path:
+            normalized["imagePath"] = image_path
+        return normalized, None
 
     if action_type == "show_image":
         image_path = runtime_action_string(action.get("imagePath"))
