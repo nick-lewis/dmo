@@ -67,7 +67,7 @@ type FineTuningPanelProps = {
 };
 
 const defaultWaveformBucketCount = 520;
-const markerFineDragRatio = 0.18;
+const markerFineDragRatio = 0.08;
 const fineTuningSpeedStorageKey = "dlu.next-fine-tuning-speed.v1";
 
 function markerEditKey(marker: ScriptMarkerInstance) {

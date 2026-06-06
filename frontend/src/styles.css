@@ -1811,7 +1811,8 @@ button {
   align-self: end;
   min-width: 0;
   max-height: 210px;
-  overflow: visible;
+  overflow-x: clip;
+  overflow-y: visible;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
   border-radius: 7px;
   background: color-mix(in srgb, var(--page-bg) 70%, var(--panel-bg-strong));
@@ -1835,15 +1836,17 @@ button {
   left: 10px;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(1px, 1fr);
+  grid-auto-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 1px;
+  gap: 0;
   height: 56px;
+  min-width: 0;
   pointer-events: none;
 }
 
 .next-fine-wave-bars span {
   display: block;
+  min-width: 0;
   height: 54px;
   min-height: 2px;
   border-radius: 999px;
