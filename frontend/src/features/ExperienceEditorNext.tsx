@@ -216,6 +216,7 @@ type ScriptSourceWordRange = {
 };
 
 const displayDocumentHistoryLimit = 80;
+const scriptActionHistoryLimit = 80;
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -678,6 +679,26 @@ function deckUrlForNewTab(value: string) {
   if (!trimmed) return "";
   if (/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
+}
+
+function isNativeUndoTarget(target: EventTarget | null) {
+  const element =
+    target instanceof HTMLElement
+      ? target
+      : target instanceof Text
+        ? target.parentElement
+        : null;
+
+  return Boolean(
+    element?.closest(
+      "input, textarea, select, [contenteditable='true'], .cm-editor, .python-dsl-editor",
+    ),
+  );
+}
+
+function appendScriptActionHistoryEntry(stack: string[], value: string) {
+  if (stack[stack.length - 1] === value) return stack;
+  return [...stack, value].slice(-scriptActionHistoryLimit);
 }
 
 function wordInsertionIndex(text: string, wordIndex: number) {
@@ -2144,6 +2165,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     Record<string, PendingScriptDisplayDraft>
   >({});
   const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
+  const scriptActionHistoryStepIdRef = useRef("");
+  const scriptActionRedoStackRef = useRef<string[]>([]);
+  const scriptActionUndoStackRef = useRef<string[]>([]);
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2275,6 +2299,61 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     isReady: status === "ready",
     restorePath: experienceNextEditPath,
   });
+
+  useEffect(() => {
+    const stepId = activeScriptStep?.id ?? "";
+    if (scriptActionHistoryStepIdRef.current === stepId) return;
+
+    scriptActionHistoryStepIdRef.current = stepId;
+    scriptActionRedoStackRef.current = [];
+    scriptActionUndoStackRef.current = [];
+  }, [activeScriptStep?.id]);
+
+  useEffect(() => {
+    function handleScriptActionHistoryShortcut(
+      event: globalThis.KeyboardEvent,
+    ) {
+      if (
+        activeScriptDetailTab !== "script" ||
+        !activeScriptAction ||
+        !activeScriptStep ||
+        isNativeUndoTarget(event.target)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      const isMod = event.ctrlKey || event.metaKey;
+      const isRedo =
+        isMod &&
+        !event.altKey &&
+        (key === "y" || (key === "z" && event.shiftKey));
+      const isUndo =
+        isMod && !event.altKey && key === "z" && !event.shiftKey;
+      if (!isRedo && !isUndo) return;
+
+      const stack = isRedo
+        ? scriptActionRedoStackRef.current
+        : scriptActionUndoStackRef.current;
+      if (!stack.length) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      applyScriptActionHistory(isRedo ? "redo" : "undo");
+    }
+
+    document.addEventListener("keydown", handleScriptActionHistoryShortcut);
+    return () =>
+      document.removeEventListener(
+        "keydown",
+        handleScriptActionHistoryShortcut,
+      );
+  }, [
+    activeScriptAction,
+    activeScriptDetailTab,
+    activeScriptStep,
+    activeScriptText,
+  ]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -3260,8 +3339,54 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     queueActiveScriptTextChange(nextMarkedScriptText, value);
   }
 
-  function updateActiveScriptMarkedText(value: string) {
+  function recordScriptActionHistory(previousText: string, nextText: string) {
+    if (!activeScriptStep || previousText === nextText) return;
+
+    scriptActionUndoStackRef.current = appendScriptActionHistoryEntry(
+      scriptActionUndoStackRef.current,
+      previousText,
+    );
+    scriptActionRedoStackRef.current = [];
+  }
+
+  function updateActiveScriptMarkedText(value: string, recordHistory = true) {
+    if (value === activeScriptText) return;
+
+    if (recordHistory) {
+      recordScriptActionHistory(activeScriptText, value);
+    }
     queueActiveScriptTextChange(value);
+  }
+
+  function applyScriptActionHistory(direction: "redo" | "undo") {
+    if (!activeScriptStep) return;
+
+    const sourceStack =
+      direction === "undo"
+        ? scriptActionUndoStackRef.current
+        : scriptActionRedoStackRef.current;
+    let targetText = sourceStack.pop();
+    while (targetText !== undefined && targetText === activeScriptText) {
+      targetText = sourceStack.pop();
+    }
+    if (targetText === undefined) return;
+
+    if (direction === "undo") {
+      scriptActionUndoStackRef.current = sourceStack;
+      scriptActionRedoStackRef.current = appendScriptActionHistoryEntry(
+        scriptActionRedoStackRef.current,
+        activeScriptText,
+      );
+    } else {
+      scriptActionRedoStackRef.current = sourceStack;
+      scriptActionUndoStackRef.current = appendScriptActionHistoryEntry(
+        scriptActionUndoStackRef.current,
+        activeScriptText,
+      );
+    }
+
+    setScriptActionMenu(null);
+    updateActiveScriptMarkedText(targetText, false);
   }
 
   function openScriptInsertMenu(
