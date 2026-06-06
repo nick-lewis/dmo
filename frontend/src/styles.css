@@ -882,7 +882,7 @@ button {
   --next-tutor-presence-height: 82px;
 
   position: relative;
-  z-index: 140;
+  z-index: 520;
   display: grid;
   grid-template-columns: var(--next-tutor-inline-size) minmax(0, 1fr);
   align-items: center;
@@ -896,7 +896,7 @@ button {
   position: relative;
   grid-column: 1;
   grid-row: 1;
-  z-index: 150;
+  z-index: 530;
   justify-self: start;
   align-self: center;
   height: var(--next-tutor-presence-height);
@@ -986,7 +986,7 @@ button {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  z-index: 160;
+  z-index: 540;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
