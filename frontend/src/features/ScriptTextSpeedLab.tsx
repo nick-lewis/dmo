@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { PlayIcon, RefreshIcon, StopIcon } from "../components/Icons";
 import {
   clampScriptTextAudioRevealSpeed,
   defaultScriptTextAudioRevealSpeed,
   readScriptTextAudioRevealSpeed,
-  scriptTextPauseBoundaries,
   scriptTextPreviewIndexAtAudioTime,
   writeScriptTextAudioRevealSpeed,
 } from "./useScriptAudioPlayback";
@@ -34,10 +33,6 @@ export function ScriptTextSpeedLab() {
   const [revealSpeed, setRevealSpeed] = useState(readScriptTextAudioRevealSpeed);
   const [text, setText] = useState(sampleText);
 
-  const boundaries = useMemo(
-    () => scriptTextPauseBoundaries(text, durationSeconds),
-    [durationSeconds, text],
-  );
   const visibleIndex = scriptTextPreviewIndexAtAudioTime({
     audioTimeSeconds: positionSeconds,
     durationSeconds,
@@ -188,15 +183,6 @@ export function ScriptTextSpeedLab() {
 
             <div className="script-speed-timeline" aria-label="Simulated audio">
               <span style={{ width: `${progressPercent}%` }} />
-              {boundaries.map((boundary) => (
-                <i
-                  aria-hidden="true"
-                  key={`${boundary.index}-${boundary.timeSeconds}`}
-                  style={{
-                    left: `${(boundary.timeSeconds / durationSeconds) * 100}%`,
-                  }}
-                />
-              ))}
             </div>
 
             <div className="script-speed-chat-frame">
@@ -208,7 +194,6 @@ export function ScriptTextSpeedLab() {
 
             <div className="script-speed-readout">
               <span>{visibleIndex} / {text.length} characters</span>
-              <span>{boundaries.length} page breaks</span>
               <span>Default {defaultScriptTextAudioRevealSpeed.toFixed(2)}x</span>
             </div>
           </section>

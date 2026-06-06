@@ -25,7 +25,6 @@ import type {
   EventConversationChoice,
   MessageAudioPayload,
   ScriptCue,
-  ScriptWord,
   TutoringSession,
 } from "../types";
 
@@ -91,118 +90,40 @@ function scriptStreamIndexAt(text: string, progress: number) {
 type ScriptTextStreamSync = {
   audio: HTMLAudioElement;
   durationSeconds: number;
-  scriptWords?: ScriptWord[];
 };
-
-export type ScriptTextBoundary = {
-  index: number;
-  timeSeconds: number;
-};
-
-function textWordCountBefore(text: string, index: number) {
-  return text.slice(0, index).match(/\S+/g)?.length ?? 0;
-}
-
-function scriptTextBoundaryTime(
-  text: string,
-  index: number,
-  durationSeconds: number,
-  scriptWords: ScriptWord[] = [],
-) {
-  if (!durationSeconds) return 0;
-
-  const wordCount = textWordCountBefore(text, index);
-  if (scriptWords.length && wordCount > 0) {
-    const word = scriptWords[Math.min(wordCount - 1, scriptWords.length - 1)];
-    if (word && Number.isFinite(word.end)) {
-      return clamp(word.end, 0, durationSeconds);
-    }
-  }
-
-  return durationSeconds * clamp(index / Math.max(1, text.length), 0, 1);
-}
-
-export function scriptTextPauseBoundaries(
-  text: string,
-  durationSeconds: number,
-  scriptWords: ScriptWord[] = [],
-) {
-  if (!durationSeconds) return [];
-
-  const boundaries: ScriptTextBoundary[] = [];
-  const boundaryPattern = /\n[ \t]*\n+/g;
-  let match: RegExpExecArray | null;
-  let minimumTimeSeconds = 0;
-
-  while ((match = boundaryPattern.exec(text))) {
-    const index = match.index + match[0].length;
-    if (index <= 0 || index >= text.length) continue;
-
-    const timeSeconds = clamp(
-      scriptTextBoundaryTime(text, index, durationSeconds, scriptWords),
-      minimumTimeSeconds + 0.05,
-      Math.max(minimumTimeSeconds + 0.05, durationSeconds - 0.05),
-    );
-    minimumTimeSeconds = timeSeconds;
-    boundaries.push({ index, timeSeconds });
-  }
-
-  return boundaries;
-}
 
 export function scriptStreamIndexAtAudioTime(
   text: string,
   audioTimeSeconds: number,
   durationSeconds: number,
-  boundaries: ScriptTextBoundary[],
   revealSpeed = defaultScriptTextAudioRevealSpeed,
 ) {
   if (!durationSeconds) return text.length;
   const currentTime = clamp(audioTimeSeconds, 0, durationSeconds);
-  const stops = [...boundaries, { index: text.length, timeSeconds: durationSeconds }];
-  let previousIndex = 0;
-  let previousTimeSeconds = 0;
+  const progress = clamp(
+    (currentTime / durationSeconds) * clampScriptTextAudioRevealSpeed(revealSpeed),
+    0,
+    1,
+  );
 
-  for (const stop of stops) {
-    if (currentTime + 0.015 >= stop.timeSeconds) {
-      previousIndex = stop.index;
-      previousTimeSeconds = stop.timeSeconds;
-      continue;
-    }
-
-    const sectionText = text.slice(previousIndex, stop.index);
-    const sectionDuration = Math.max(0.05, stop.timeSeconds - previousTimeSeconds);
-    const sectionProgress = clamp(
-      ((currentTime - previousTimeSeconds) / sectionDuration) *
-        clampScriptTextAudioRevealSpeed(revealSpeed),
-      0,
-      1,
-    );
-
-    return previousIndex + scriptStreamIndexAt(sectionText, sectionProgress);
-  }
-
-  return text.length;
+  return scriptStreamIndexAt(text, progress);
 }
 
 export function scriptTextPreviewIndexAtAudioTime({
   audioTimeSeconds,
   durationSeconds,
   revealSpeed,
-  scriptWords = [],
   text,
 }: {
   audioTimeSeconds: number;
   durationSeconds: number;
   revealSpeed: number;
-  scriptWords?: ScriptWord[];
   text: string;
 }) {
   return scriptStreamIndexAtAudioTime(
     text,
     audioTimeSeconds,
     durationSeconds,
-    scriptTextPauseBoundaries(text, durationSeconds, scriptWords),
     revealSpeed,
   );
 }
@@ -404,14 +325,6 @@ export function useScriptAudioPlayback({
           : sync
             ? durationMs / 1000
             : 0;
-      const audioBoundaries =
-        sync && audioDurationSeconds
-          ? scriptTextPauseBoundaries(
-              fullText,
-              audioDurationSeconds,
-              sync.scriptWords,
-            )
-          : [];
       const revealSpeed = readScriptTextAudioRevealSpeed();
 
       const scheduleTick = () => {
@@ -456,7 +369,6 @@ export function useScriptAudioPlayback({
               fullText,
               sync.audio.ended ? audioDurationSeconds : sync.audio.currentTime,
               audioDurationSeconds,
-              audioBoundaries,
               revealSpeed,
             )
           : scriptStreamIndexAt(
@@ -612,7 +524,6 @@ export function useScriptAudioPlayback({
     cueValue?: unknown,
     durationSeconds?: number | null,
     displayText = "",
-    scriptWords: ScriptWord[] = [],
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
@@ -637,7 +548,6 @@ export function useScriptAudioPlayback({
       streamScriptMessageText(message, durationMs, messageDisplayText, {
         audio,
         durationSeconds: fallbackDurationSeconds,
-        scriptWords,
       }),
       playPreparedScriptAudio(
         audio,
@@ -717,7 +627,6 @@ export function useScriptAudioPlayback({
           payload.scriptCues,
           payload.durationSeconds,
           payload.displayText,
-          payload.scriptWords ?? [],
         );
       } catch (error) {
         scriptTextSkipRef.current?.();

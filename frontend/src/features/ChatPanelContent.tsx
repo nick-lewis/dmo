@@ -84,6 +84,9 @@ export function ChatPanelContent({
   const turnAnchorMessage = turnAnchorMessageId
     ? messages.find((message) => message.id === turnAnchorMessageId)
     : null;
+  const turnAnchorIsStreaming = Boolean(
+    turnAnchorMessage?.metadata?.streaming,
+  );
   const turnAnchorIsVisible = Boolean(
     turnAnchorMessage && !turnAnchorMessage.metadata?.scriptHidden,
   );
@@ -108,6 +111,19 @@ export function ChatPanelContent({
       if (turnAnchorMessageId) {
         const target = messageRefs.current.get(turnAnchorMessageId);
         if (target) {
+          if (turnAnchorIsStreaming) {
+            messageList.scrollTo({
+              top: Math.max(
+                0,
+                target.offsetTop +
+                  target.offsetHeight -
+                  messageList.clientHeight +
+                  12,
+              ),
+            });
+            return;
+          }
+
           messageList.scrollTo({
             behavior: "smooth",
             top: Math.max(0, target.offsetTop - 2),
@@ -133,6 +149,7 @@ export function ChatPanelContent({
   }, [
     messages.length,
     runtimeButtonsLayoutKey,
+    turnAnchorIsStreaming,
     turnAnchorIsVisible,
     turnAnchorMessageId,
     turnAnchorScrollKey,

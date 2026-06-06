@@ -10853,15 +10853,6 @@ button {
   background: color-mix(in srgb, var(--accent) 42%, var(--accent-soft));
 }
 
-.script-speed-timeline i {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
-  transform: translateX(-1px);
-}
-
 .script-speed-chat-frame {
   min-height: 0;
   overflow: auto;
