@@ -1037,6 +1037,14 @@ button {
   gap: 3px;
 }
 
+.next-tutor-speed-field {
+  grid-column: 1 / -1;
+}
+
+.next-tutor-speed-field input[type="number"] {
+  max-width: 104px;
+}
+
 .next-tutor-settings-menu .control-field textarea.prompt-textarea.compact {
   min-height: 36px;
   overflow: hidden;

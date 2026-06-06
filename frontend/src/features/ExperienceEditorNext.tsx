@@ -107,6 +107,11 @@ import {
 } from "./scriptActionEditorUtils";
 import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
 import { useVoiceSample } from "./useVoiceSample";
+import {
+  clampScriptTextAudioRevealSpeed,
+  readScriptTextAudioRevealSpeed,
+  writeScriptTextAudioRevealSpeed,
+} from "./useScriptAudioPlayback";
 
 const tutorVoiceTextareaMinHeightPx = 36;
 const tutorVoiceTextareaMaxHeightPx = 160;
@@ -2234,6 +2239,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   >({});
   const [audioPreparation, setAudioPreparation] =
     useState<AudioPreparationState | null>(null);
+  const [scriptTextRevealSpeed, setScriptTextRevealSpeed] = useState(() =>
+    readScriptTextAudioRevealSpeed(),
+  );
+  const [scriptTextRevealSpeedDraft, setScriptTextRevealSpeedDraft] = useState(
+    () => String(readScriptTextAudioRevealSpeed()),
+  );
   const [checkpointRecordingMode, setCheckpointRecordingMode] =
     useState<CheckpointRecordingMode>(() => readCheckpointRecordingMode());
   const [runningEventId, setRunningEventId] = useState("");
@@ -2945,6 +2956,30 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const tutorAvatarUploadLabel = isUploadingTutorAvatar
     ? "Uploading tutor image"
     : "Choose tutor image";
+
+  function saveScriptTextRevealSpeed(value: number) {
+    const nextSpeed = clampScriptTextAudioRevealSpeed(value);
+    setScriptTextRevealSpeed(nextSpeed);
+    writeScriptTextAudioRevealSpeed(nextSpeed);
+    return nextSpeed;
+  }
+
+  function changeScriptTextRevealSpeed(value: string) {
+    setScriptTextRevealSpeedDraft(value);
+
+    const parsedSpeed = Number.parseFloat(value);
+    if (!Number.isFinite(parsedSpeed)) return;
+
+    saveScriptTextRevealSpeed(parsedSpeed);
+  }
+
+  function normalizeScriptTextRevealSpeedDraft() {
+    const parsedSpeed = Number.parseFloat(scriptTextRevealSpeedDraft);
+    const nextSpeed = saveScriptTextRevealSpeed(
+      Number.isFinite(parsedSpeed) ? parsedSpeed : scriptTextRevealSpeed,
+    );
+    setScriptTextRevealSpeedDraft(String(nextSpeed));
+  }
 
   function clearEventAutosaveTimer() {
     if (!eventAutosaveTimerRef.current) return;
@@ -4757,6 +4792,21 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label className="control-field next-tutor-speed-field">
+                    <span>Text reveal speed</span>
+                    <input
+                      aria-label="Text reveal speed"
+                      max="4"
+                      min="0.7"
+                      onChange={(event) =>
+                        changeScriptTextRevealSpeed(event.target.value)
+                      }
+                      onBlur={normalizeScriptTextRevealSpeedDraft}
+                      step="0.05"
+                      type="number"
+                      value={scriptTextRevealSpeedDraft}
+                    />
                   </label>
                   <label className="control-field">
                     <span>Chat model</span>
