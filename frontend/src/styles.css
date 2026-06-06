@@ -1710,7 +1710,7 @@ button {
 
 .next-fine-tuning-panel {
   display: grid;
-  grid-template-rows: clamp(150px, 24vh, 230px) auto auto;
+  grid-template-rows: auto auto auto;
   align-content: start;
   align-self: start;
   gap: 10px;
@@ -1723,8 +1723,9 @@ button {
 .next-fine-preview {
   display: grid;
   place-items: center;
-  align-self: stretch;
-  height: 100%;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  justify-self: stretch;
   min-height: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 72%, transparent);
