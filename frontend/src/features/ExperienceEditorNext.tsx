@@ -1138,7 +1138,7 @@ function scriptActionRowsFromScript(
   if (text.slice(0, firstSlide.start).trim()) {
     rows.push({
       key: "before",
-      label: "Before slide",
+      label: "No slide",
       marker: null,
       slideRef: "",
       textEnd: firstSlide.start,
@@ -2163,7 +2163,7 @@ function ScriptActionReadOnlyView({
                   ) : (
                     <span>
                       {!row.slideRef
-                        ? ""
+                        ? "No slide"
                         : !deckUrl.trim()
                           ? "Deck URL needed"
                           : preview?.status === "loading"
@@ -2188,7 +2188,7 @@ function ScriptActionReadOnlyView({
               <div className="next-script-view-empty" />
             </div>
             <div className="next-script-slide-preview" role="cell">
-              <span />
+              <span>No slide</span>
             </div>
           </div>
         )}
