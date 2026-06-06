@@ -29,9 +29,9 @@ export const scriptMarkerOptions = [
     title: "Insert a timed Google slide change at the cursor.",
   },
   {
-    label: "Side image",
+    label: "Interface image",
     marker: "[side_image: right, show, test-images/dLU-right.png]",
-    title: "Set a left or right image beside the chat.",
+    title: "Set a left or right interface image beside the chat.",
   },
   {
     label: "Note",
@@ -92,10 +92,10 @@ export const scriptMarkerGroups: Array<{
   options: ScriptMarkerOption[];
 }> = [
   {
-    description: "Slides and side images.",
+    description: "Slides and interface images.",
     label: "Visuals",
     options: scriptMarkerOptions.filter((option) =>
-      ["Slide", "Side image"].includes(option.label),
+      ["Slide", "Interface image"].includes(option.label),
     ),
   },
   {
@@ -172,7 +172,7 @@ export function scriptMarkerLabel(type: string) {
     pause: "Pause",
     play_sound: "Sound",
     show_image: "Image",
-    side_image: "Side image",
+    side_image: "Interface image",
     slide: "Slide",
   };
   return labels[type] ?? type;
@@ -197,7 +197,7 @@ export function scriptMarkerIcon(type: string) {
     pause: "P",
     play_sound: "AU",
     show_image: "I",
-    side_image: "SI",
+    side_image: "UI",
     slide: "S",
   };
   return icons[type] ?? "M";

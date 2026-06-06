@@ -201,7 +201,7 @@ export function ScriptMarkerEditor({
       <div className="script-marker-controls side-image-marker-controls">
         <span className="event-detail-label">SIDE</span>
         <select
-          aria-label="Image side"
+          aria-label="Interface image side"
           onChange={(event) => replaceSideImageArgs(event.target.value)}
           value={currentSide}
         >
@@ -210,7 +210,7 @@ export function ScriptMarkerEditor({
         </select>
         <span className="event-detail-label">STATE</span>
         <select
-          aria-label="Image state"
+          aria-label="Interface image state"
           onChange={(event) =>
             replaceSideImageArgs(currentSide, event.target.value)
           }
@@ -223,7 +223,7 @@ export function ScriptMarkerEditor({
           <>
             <span className="event-detail-label">IMAGE</span>
             <input
-              aria-label="Side image path"
+              aria-label="Interface image path"
               onChange={(event) =>
                 replaceSideImageArgs(currentSide, "show", event.target.value)
               }

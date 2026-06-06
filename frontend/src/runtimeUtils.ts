@@ -173,9 +173,11 @@ export function runtimeActionText(action: Record<string, unknown>) {
   }
   if (type === "side_image") {
     const slot = compactRuntimeValue(action.slot, "left");
-    if (action.visible === false) return `${slot} side image off`;
+    if (action.visible === false) return `${slot} interface image off`;
     const imagePath = compactRuntimeValue(action.imagePath, "");
-    return imagePath ? `${slot} side image -> ${imagePath}` : `${slot} side image on`;
+    return imagePath
+      ? `${slot} interface image -> ${imagePath}`
+      : `${slot} interface image on`;
   }
   if (type === "show_image") {
     return compactRuntimeValue(action.imagePath, "image");

@@ -4368,7 +4368,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                   role="menuitem"
                   type="button"
                 >
-                  Image
+                  Interface image
                 </button>
                 <button
                   className="next-script-action-menu-item is-action"
@@ -4409,7 +4409,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                     <label>
                       <span>Side</span>
                       <select
-                        aria-label="Image side"
+                        aria-label="Interface image side"
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,
@@ -4431,7 +4431,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                     <label>
                       <span>State</span>
                       <select
-                        aria-label="Image state"
+                        aria-label="Interface image state"
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,
@@ -4450,7 +4450,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                     <label>
                       <span>Image</span>
                       <input
-                        aria-label="Side image path"
+                        aria-label="Interface image path"
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,

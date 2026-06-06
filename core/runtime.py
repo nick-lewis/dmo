@@ -682,11 +682,11 @@ def runtime_action_summary(action):
     if action_type == "side_image":
         slot = action.get("slot", "left") or "left"
         if action.get("visible") is False:
-            return f"{slot} side image off"
+            return f"{slot} interface image off"
         image_path = action.get("imagePath")
         if image_path:
-            return f"{slot} side image -> {image_path}"
-        return f"{slot} side image on"
+            return f"{slot} interface image -> {image_path}"
+        return f"{slot} interface image on"
     if action_type == "show_image":
         return str(action.get("imagePath", "image") or "image")
     if action_type == "overlay":
