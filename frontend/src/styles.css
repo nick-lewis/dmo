@@ -1836,6 +1836,7 @@ button {
   align-items: center;
   gap: 1px;
   height: 56px;
+  pointer-events: none;
 }
 
 .next-fine-wave-bars span {
@@ -1845,6 +1846,7 @@ button {
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-2) 42%, var(--page-ink));
   opacity: 0.68;
+  pointer-events: none;
   transform-origin: center;
 }
 
@@ -1856,6 +1858,7 @@ button {
   color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
   font-size: 0.74rem;
   font-weight: 780;
+  pointer-events: none;
   white-space: nowrap;
 }
 

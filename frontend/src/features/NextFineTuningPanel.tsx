@@ -1,4 +1,5 @@
 import {
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useRef,
@@ -42,6 +43,20 @@ type ActiveMarkerDrag = {
   markerIndex: number;
   timeSeconds: number;
 } | null;
+
+type ScrubState = {
+  pointerId: number;
+  timeSeconds: number;
+};
+
+type MouseScrubState = {
+  timeSeconds: number;
+};
+
+type ManualSeekState = {
+  expiresAt: number;
+  timeSeconds: number;
+};
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
@@ -163,6 +178,43 @@ function useAudioWaveform(audioUrl: string, bucketCount: number) {
   return waveform;
 }
 
+function useSeekableAudioUrl(audioUrl: string) {
+  const [seekableAudioUrl, setSeekableAudioUrl] = useState("");
+
+  useEffect(() => {
+    let isCancelled = false;
+    let objectUrl = "";
+    setSeekableAudioUrl("");
+
+    if (!audioUrl) return undefined;
+
+    void fetch(audioUrl, { credentials: "include" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load fine tuning audio.");
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (isCancelled) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = "";
+          return;
+        }
+        setSeekableAudioUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!isCancelled) setSeekableAudioUrl(audioUrl);
+      });
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [audioUrl]);
+
+  return seekableAudioUrl;
+}
+
 function playbackRateFromStorage() {
   try {
     const saved = Number(window.localStorage.getItem(fineTuningSpeedStorageKey));
@@ -187,8 +239,10 @@ export function NextFineTuningPanel({
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const ignoreMarkerClickRef = useRef(false);
   const ignoreWaveformClickRef = useRef(false);
+  const manualSeekRef = useRef<ManualSeekState | null>(null);
   const markerDragRef = useRef<MarkerDragState | null>(null);
-  const scrubPointerRef = useRef<number | null>(null);
+  const mouseScrubRef = useRef<MouseScrubState | null>(null);
+  const scrubRef = useRef<ScrubState | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [draggingMarker, setDraggingMarker] = useState<ActiveMarkerDrag>(null);
@@ -198,6 +252,7 @@ export function NextFineTuningPanel({
     defaultWaveformBucketCount,
   );
   const audioUrl = audioItem?.audioUrl ?? "";
+  const audioPlaybackUrl = useSeekableAudioUrl(audioUrl);
   const waveform = useAudioWaveform(audioUrl, waveformBucketCount);
   const markers = parseScriptMarkerInstances(text);
   const spokenText = spokenTextFromMarkedScript(text);
@@ -223,6 +278,35 @@ export function NextFineTuningPanel({
     return clamp((clientX - rect.left) / rect.width, 0, 1) * durationSeconds;
   }
 
+  function timeFromWaveformEvent(
+    event: ReactMouseEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>,
+    fallbackSeconds = 0,
+  ) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || !durationSeconds) return fallbackSeconds;
+
+    const clientOffset = event.clientX - rect.left;
+    const nativeOffset = Number(
+      (event.nativeEvent as MouseEvent | PointerEvent).offsetX,
+    );
+    const hasUsableClientOffset =
+      Number.isFinite(clientOffset) &&
+      clientOffset >= -1 &&
+      clientOffset <= rect.width + 1;
+    const hasUsableNativeOffset =
+      Number.isFinite(nativeOffset) &&
+      nativeOffset >= 0 &&
+      nativeOffset <= rect.width;
+    const offsetX = hasUsableClientOffset
+      ? clientOffset
+      : hasUsableNativeOffset
+        ? nativeOffset
+        : Number.NaN;
+
+    if (!Number.isFinite(offsetX)) return fallbackSeconds;
+    return clamp(offsetX / rect.width, 0, 1) * durationSeconds;
+  }
+
   function markerTime(marker: ScriptMarkerInstance, index: number) {
     if (draggingMarker?.markerIndex === index) return draggingMarker.timeSeconds;
     return markerTimelineTimeSeconds(
@@ -235,6 +319,10 @@ export function NextFineTuningPanel({
 
   function seek(seconds: number, options?: { pause?: boolean }) {
     const nextTime = clamp(seconds, 0, durationSeconds || 0);
+    manualSeekRef.current = {
+      expiresAt: window.performance.now() + 650,
+      timeSeconds: nextTime,
+    };
     setCurrentTime(nextTime);
     if (audioRef.current) {
       if (options?.pause) {
@@ -275,7 +363,7 @@ export function NextFineTuningPanel({
 
   function togglePlayback() {
     const audio = audioRef.current;
-    if (!audio || !audioUrl) return;
+    if (!audio || !audioPlaybackUrl) return;
 
     audio.playbackRate = playbackRate;
     if (audio.paused) {
@@ -297,27 +385,61 @@ export function NextFineTuningPanel({
   }
 
   function beginScrub(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!audioUrl || event.button !== 0) return;
+    if (!audioUrl || event.button > 0) return;
     event.preventDefault();
-    scrubPointerRef.current = event.pointerId;
+    const nextTime = timeFromWaveformEvent(event);
+    scrubRef.current = { pointerId: event.pointerId, timeSeconds: nextTime };
     event.currentTarget.setPointerCapture(event.pointerId);
-    seek(timeFromClientX(event.clientX), { pause: true });
+    seek(nextTime, { pause: true });
   }
 
   function updateScrub(event: ReactPointerEvent<HTMLDivElement>) {
-    if (scrubPointerRef.current !== event.pointerId) return;
+    const scrubState = scrubRef.current;
+    if (!scrubState || scrubState.pointerId !== event.pointerId) return;
     event.preventDefault();
-    seek(timeFromClientX(event.clientX), { pause: true });
+    const nextTime = timeFromWaveformEvent(event, scrubState.timeSeconds);
+    scrubState.timeSeconds = nextTime;
+    seek(nextTime, { pause: true });
   }
 
   function endScrub(event: ReactPointerEvent<HTMLDivElement>) {
-    if (scrubPointerRef.current !== event.pointerId) return;
+    const scrubState = scrubRef.current;
+    if (!scrubState || scrubState.pointerId !== event.pointerId) return;
     event.preventDefault();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    seek(timeFromClientX(event.clientX), { pause: true });
-    scrubPointerRef.current = null;
+    seek(scrubState.timeSeconds, { pause: true });
+    scrubRef.current = null;
+    ignoreWaveformClickRef.current = true;
+    window.setTimeout(() => {
+      ignoreWaveformClickRef.current = false;
+    }, 120);
+  }
+
+  function beginMouseScrub(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!audioUrl || event.button > 0 || scrubRef.current) return;
+    event.preventDefault();
+    const nextTime = timeFromWaveformEvent(event);
+    mouseScrubRef.current = { timeSeconds: nextTime };
+    seek(nextTime, { pause: true });
+  }
+
+  function updateMouseScrub(event: ReactMouseEvent<HTMLDivElement>) {
+    const scrubState = mouseScrubRef.current;
+    if (!scrubState) return;
+    event.preventDefault();
+    const nextTime = timeFromWaveformEvent(event, scrubState.timeSeconds);
+    scrubState.timeSeconds = nextTime;
+    seek(nextTime, { pause: true });
+  }
+
+  function endMouseScrub(event: ReactMouseEvent<HTMLDivElement>) {
+    const scrubState = mouseScrubRef.current;
+    if (!scrubState) return;
+    event.preventDefault();
+    seek(scrubState.timeSeconds, { pause: true });
+    mouseScrubRef.current = null;
     ignoreWaveformClickRef.current = true;
     window.setTimeout(() => {
       ignoreWaveformClickRef.current = false;
@@ -386,41 +508,94 @@ export function NextFineTuningPanel({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return undefined;
+    const audioElement = audio;
 
     function syncTime() {
-      if (!markerDragRef.current && scrubPointerRef.current === null) {
-        setCurrentTime(audio?.currentTime ?? 0);
+      if (
+        markerDragRef.current ||
+        scrubRef.current !== null ||
+        mouseScrubRef.current !== null
+      ) {
+        return;
       }
+      if (audioElement.paused) return;
+
+      const manualSeek = manualSeekRef.current;
+      if (manualSeek && window.performance.now() < manualSeek.expiresAt) {
+        const audioTime = audioElement.currentTime;
+        if (Math.abs(audioTime - manualSeek.timeSeconds) > 0.35) {
+          setCurrentTime(manualSeek.timeSeconds);
+          return;
+        }
+        manualSeekRef.current = null;
+      }
+
+      setCurrentTime(audioElement.currentTime || 0);
     }
 
     function syncDuration() {
       setAudioDuration(
-        audio && Number.isFinite(audio.duration) ? audio.duration : 0,
+        Number.isFinite(audioElement.duration) ? audioElement.duration : 0,
       );
     }
 
     function syncPlaying() {
-      setIsPlaying(Boolean(audio && !audio.paused && !audio.ended));
+      setIsPlaying(Boolean(!audioElement.paused && !audioElement.ended));
     }
 
-    audio.addEventListener("durationchange", syncDuration);
-    audio.addEventListener("ended", syncPlaying);
-    audio.addEventListener("loadedmetadata", syncDuration);
-    audio.addEventListener("pause", syncPlaying);
-    audio.addEventListener("play", syncPlaying);
-    audio.addEventListener("timeupdate", syncTime);
+    function handleEnded() {
+      setIsPlaying(false);
+      setCurrentTime(
+        clamp(
+          audioElement.currentTime ||
+            (Number.isFinite(audioElement.duration)
+              ? audioElement.duration
+              : durationSeconds),
+          0,
+          durationSeconds || 0,
+        ),
+      );
+    }
+
+    audioElement.addEventListener("durationchange", syncDuration);
+    audioElement.addEventListener("ended", handleEnded);
+    audioElement.addEventListener("loadedmetadata", syncDuration);
+    audioElement.addEventListener("pause", syncPlaying);
+    audioElement.addEventListener("play", syncPlaying);
+    audioElement.addEventListener("seeked", syncTime);
+    audioElement.addEventListener("timeupdate", syncTime);
     syncDuration();
     syncPlaying();
 
     return () => {
-      audio.removeEventListener("durationchange", syncDuration);
-      audio.removeEventListener("ended", syncPlaying);
-      audio.removeEventListener("loadedmetadata", syncDuration);
-      audio.removeEventListener("pause", syncPlaying);
-      audio.removeEventListener("play", syncPlaying);
-      audio.removeEventListener("timeupdate", syncTime);
+      audioElement.removeEventListener("durationchange", syncDuration);
+      audioElement.removeEventListener("ended", handleEnded);
+      audioElement.removeEventListener("loadedmetadata", syncDuration);
+      audioElement.removeEventListener("pause", syncPlaying);
+      audioElement.removeEventListener("play", syncPlaying);
+      audioElement.removeEventListener("seeked", syncTime);
+      audioElement.removeEventListener("timeupdate", syncTime);
     };
-  }, [audioUrl]);
+  }, [audioPlaybackUrl, durationSeconds]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !audioPlaybackUrl || !currentTime) return undefined;
+
+    const restoreSeekPosition = () => {
+      audio.currentTime = clamp(currentTime, 0, durationSeconds || currentTime);
+    };
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      restoreSeekPosition();
+      return undefined;
+    }
+
+    audio.addEventListener("loadedmetadata", restoreSeekPosition, { once: true });
+    return () => {
+      audio.removeEventListener("loadedmetadata", restoreSeekPosition);
+    };
+  }, [audioPlaybackUrl]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = playbackRate;
@@ -434,8 +609,10 @@ export function NextFineTuningPanel({
   useEffect(() => {
     setCurrentTime(0);
     setDraggingMarker(null);
+    manualSeekRef.current = null;
     markerDragRef.current = null;
-    scrubPointerRef.current = null;
+    mouseScrubRef.current = null;
+    scrubRef.current = null;
   }, [audioItem?.id]);
 
   useEffect(() => {
@@ -485,7 +662,7 @@ export function NextFineTuningPanel({
 
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
-      <audio preload="auto" ref={audioRef} src={audioUrl} />
+      <audio preload="auto" ref={audioRef} src={audioPlaybackUrl} />
       <section className="next-fine-preview" aria-label="Main panel preview">
         {slidePreview?.status === "ready" && slidePreview.imageUrl ? (
           <img alt={slideRef ? `Slide ${slideRef}` : ""} src={slidePreview.imageUrl} />
@@ -506,7 +683,7 @@ export function NextFineTuningPanel({
         <button
           aria-label={isPlaying ? "Pause fine tuning audio" : "Play fine tuning audio"}
           className="next-script-audio-preview-button has-audio"
-          disabled={!audioUrl}
+          disabled={!audioPlaybackUrl}
           onClick={togglePlayback}
           title={isPlaying ? "Pause" : "Play"}
           type="button"
@@ -515,7 +692,7 @@ export function NextFineTuningPanel({
         </button>
         <button
           className="next-fine-speed-button"
-          disabled={!audioUrl}
+          disabled={!audioPlaybackUrl}
           onClick={cyclePlaybackRate}
           title="Playback speed"
           type="button"
@@ -544,8 +721,12 @@ export function NextFineTuningPanel({
             event.preventDefault();
             return;
           }
-          seek(timeFromClientX(event.clientX), { pause: true });
+          seek(timeFromWaveformEvent(event, currentTime), { pause: true });
         }}
+        onMouseDown={beginMouseScrub}
+        onMouseLeave={endMouseScrub}
+        onMouseMove={updateMouseScrub}
+        onMouseUp={endMouseScrub}
         onPointerCancel={endScrub}
         onPointerDown={beginScrub}
         onPointerMove={updateScrub}
@@ -626,6 +807,7 @@ export function NextFineTuningPanel({
               onPointerDown={(event) => beginMarkerDrag(event, index, timeSeconds)}
               onPointerMove={updateMarkerDrag}
               onPointerUp={endMarkerDrag}
+              onMouseDown={(event) => event.stopPropagation()}
               style={{
                 left: `${markerPercent}%`,
                 top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
