@@ -1656,7 +1656,40 @@ button {
 }
 
 .next-script-view {
-  min-height: min(620px, calc(100vh - 280px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  height: min(620px, calc(100vh - 280px));
+  min-height: 260px;
+}
+
+.next-script-slides-link-row {
+  display: block;
+  min-width: 0;
+}
+
+.next-script-slides-link-row input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 38%, transparent);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  outline: 0;
+}
+
+.next-script-slides-link-row input:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 26%, var(--panel-soft-border));
+}
+
+.next-script-slides-link-row input::placeholder {
+  color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
 }
 
 .next-script-insertion-caret {
@@ -1671,8 +1704,7 @@ button {
 }
 
 .next-script-slide-flow {
-  height: min(620px, calc(100vh - 280px));
-  min-height: min(620px, calc(100vh - 280px));
+  min-height: 0;
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 78%, transparent);
   border-radius: 7px;

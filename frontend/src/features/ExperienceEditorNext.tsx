@@ -95,8 +95,8 @@ import {
 } from "./useExperienceAutosave";
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
 import {
-  clickIndexForTextTarget,
   clamp,
+  dropIndexForTextTarget,
   isSlideMarker,
   nextAvailableSlideRef,
   slidePreviewKeyForDeck,
@@ -129,9 +129,10 @@ type PendingConversationAutosave = {
 };
 
 type PendingScriptTextAutosave = {
+  deckUrl?: string;
   eventId: string;
   stepId: string;
-  text: string;
+  text?: string;
 };
 
 type PendingScriptDisplayDraft = {
@@ -670,6 +671,13 @@ function removeScriptMarker(text: string, marker: ScriptMarkerInstance) {
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([.,!?;:])/g, "$1")
     .trim();
+}
+
+function deckUrlForNewTab(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
 }
 
 function wordInsertionIndex(text: string, wordIndex: number) {
@@ -1678,6 +1686,7 @@ function ScriptActionReadOnlyView({
   deckUrl,
   displayBreaks,
   markers,
+  onDeckUrlChange,
   onOpenInsert,
   onOpenMarker,
   onRemoveMarker,
@@ -1689,6 +1698,7 @@ function ScriptActionReadOnlyView({
   deckUrl: string;
   displayBreaks: number[];
   markers: ScriptActionViewMarker[];
+  onDeckUrlChange: (value: string) => void;
   onOpenInsert: (
     insertionIndex: number,
     event: ReactMouseEvent<HTMLElement>,
@@ -1775,7 +1785,7 @@ function ScriptActionReadOnlyView({
     const afterIndex = Number(insertTarget.dataset.insertAfter);
     const safeBeforeIndex = Number.isFinite(beforeIndex) ? beforeIndex : 0;
     const safeAfterIndex = Number.isFinite(afterIndex) ? afterIndex : text.length;
-    const insertionIndex = clickIndexForTextTarget(
+    const insertionIndex = dropIndexForTextTarget(
       insertTarget,
       safeBeforeIndex,
       safeAfterIndex,
@@ -1786,8 +1796,7 @@ function ScriptActionReadOnlyView({
       event.clientX,
       event.clientY,
     );
-    const textLength = Math.max(1, safeAfterIndex - safeBeforeIndex);
-    const ratio = clamp((insertionIndex - safeBeforeIndex) / textLength, 0, 1);
+    const ratio = insertionIndex <= safeBeforeIndex ? 0 : 1;
 
     return {
       height: Math.max(16, rect.height - 3),
@@ -1948,6 +1957,33 @@ function ScriptActionReadOnlyView({
 
   return (
     <div className="next-script-view">
+      <label className="next-script-slides-link-row">
+        <input
+          aria-label="Slides link"
+          onChange={(event) => onDeckUrlChange(event.target.value)}
+          onMouseDown={(event) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+
+            const url = deckUrlForNewTab(deckUrl);
+            if (!url) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            const link = document.createElement("a");
+            link.href = url;
+            link.rel = "noopener noreferrer";
+            link.target = "_blank";
+            document.body.append(link);
+            link.click();
+            link.remove();
+          }}
+          placeholder="Slides link"
+          spellCheck={false}
+          title="Ctrl-click to open slides"
+          type="url"
+          value={deckUrl}
+        />
+      </label>
       <div
         aria-label="Slides and actions"
         className="next-script-slide-flow"
@@ -2941,6 +2977,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     clearScriptTextAutosaveTimer();
     pendingScriptTextAutosaveRef.current = null;
+    const nextConfig = { ...targetStep.config };
+    const didUpdateScriptText = pending.text !== undefined;
+    if (pending.text !== undefined) {
+      nextConfig.text = pending.text;
+    }
+    if (pending.deckUrl !== undefined) {
+      nextConfig.deckUrl = pending.deckUrl;
+    }
 
     try {
       const payload = await apiFetch<{ step: EventActionStep }>(
@@ -2954,7 +2998,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           body: JSON.stringify({
             actionType: targetStep.actionType,
             condition: targetStep.condition,
-            config: { ...targetStep.config, text: pending.text },
+            config: nextConfig,
             enabled: targetStep.enabled,
             label: targetStep.label,
             sortOrder: targetStep.sortOrder,
@@ -2975,14 +3019,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           replaceEventStep(currentEvent, payload.step),
         );
       });
-      void loadScriptAudioItems(experience.id, false);
+      if (didUpdateScriptText) {
+        void loadScriptAudioItems(experience.id, false);
+      }
       return true;
     } catch (saveError) {
       pendingScriptTextAutosaveRef.current = pending;
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Could not save script text.",
+          : "Could not save script.",
       );
       return false;
     }
@@ -3120,7 +3166,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       }
     }
 
+    const currentPending = pendingScriptTextAutosaveRef.current;
+    const pendingForStep =
+      currentPending?.eventId === selectedEvent.id &&
+      currentPending.stepId === activeScriptStep.id
+        ? currentPending
+        : null;
     pendingScriptTextAutosaveRef.current = {
+      ...pendingForStep,
       eventId: selectedEvent.id,
       stepId: activeScriptStep.id,
       text: nextMarkedScriptText,
@@ -3144,6 +3197,50 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         replaceEventStep(currentEvent, {
           ...currentStep,
           config: { ...currentStep.config, text: nextMarkedScriptText },
+        }),
+      );
+    });
+
+    clearScriptTextAutosaveTimer();
+    scriptTextAutosaveTimerRef.current = window.setTimeout(() => {
+      void flushScriptTextAutosave();
+    }, experienceAutosaveDelayMs);
+  }
+
+  function updateActiveScriptDeckUrl(value: string) {
+    if (!experience || !selectedEvent || !activeScriptStep) return;
+
+    const currentPending = pendingScriptTextAutosaveRef.current;
+    const pendingForStep =
+      currentPending?.eventId === selectedEvent.id &&
+      currentPending.stepId === activeScriptStep.id
+        ? currentPending
+        : null;
+    pendingScriptTextAutosaveRef.current = {
+      ...pendingForStep,
+      deckUrl: value,
+      eventId: selectedEvent.id,
+      stepId: activeScriptStep.id,
+    };
+
+    setExperience((current) => {
+      if (!current || current.id !== experience.id) return current;
+
+      const currentEvent = current.events.find(
+        (event) => event.id === selectedEvent.id,
+      );
+      if (!currentEvent) return current;
+
+      const currentStep = currentEvent.steps.find(
+        (step) => step.id === activeScriptStep.id,
+      );
+      if (!currentStep) return current;
+
+      return replaceExperienceEvent(
+        current,
+        replaceEventStep(currentEvent, {
+          ...currentStep,
+          config: { ...currentStep.config, deckUrl: value },
         }),
       );
     });
@@ -3856,6 +3953,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             deckUrl={activeScriptDeckUrl}
             displayBreaks={[]}
             markers={activeScriptActionView.markers}
+            onDeckUrlChange={updateActiveScriptDeckUrl}
             onOpenInsert={openScriptInsertMenu}
             onOpenMarker={openScriptMarkerMenu}
             onRemoveMarker={removeScriptActionMarker}
