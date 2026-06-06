@@ -1655,6 +1655,17 @@ button {
   min-height: min(620px, calc(100vh - 280px));
 }
 
+.next-script-insertion-caret {
+  position: fixed;
+  z-index: 70;
+  width: 2px;
+  min-height: 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-2) 78%, var(--page-ink));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2-soft) 55%, transparent);
+  pointer-events: none;
+}
+
 .next-script-slide-flow {
   height: min(620px, calc(100vh - 280px));
   min-height: min(620px, calc(100vh - 280px));
@@ -1715,6 +1726,10 @@ button {
 
 .next-script-view-word {
   border-radius: 4px;
+  cursor: text;
+}
+
+.next-script-view-space {
   cursor: text;
 }
 

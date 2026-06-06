@@ -94,6 +94,7 @@ import {
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
 import {
   clickIndexForTextTarget,
+  clamp,
   isSlideMarker,
   nextAvailableSlideRef,
   slidePreviewKeyForDeck,
@@ -188,6 +189,13 @@ type ScriptActionRow = {
   slideRef: string;
   textEnd: number;
   textStart: number;
+};
+
+type ScriptInsertionPreview = {
+  height: number;
+  insertionIndex: number;
+  x: number;
+  y: number;
 };
 
 const displayDocumentHistoryLimit = 80;
@@ -1214,12 +1222,100 @@ function ScriptActionReadOnlyView({
   previews: Record<string, ScriptSlidePreview>;
   text: string;
 }) {
+  const [insertionPreview, setInsertionPreview] =
+    useState<ScriptInsertionPreview | null>(null);
   const breakCounts = new Map<number, number>();
   normalizeDisplayBreaks(displayBreaks).forEach((breakIndex) => {
     breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
   });
 
   let wordIndex = 0;
+
+  function elementFromEventTarget(target: EventTarget | null) {
+    if (target instanceof HTMLElement) return target;
+    if (target instanceof Text) return target.parentElement;
+    return null;
+  }
+
+  function closestClientRectToPointer(
+    element: HTMLElement,
+    clientX: number,
+    clientY: number,
+  ) {
+    const rects = Array.from(element.getClientRects()).filter(
+      (rect) => rect.width > 0 || rect.height > 0,
+    );
+    if (!rects.length) return element.getBoundingClientRect();
+
+    return rects.reduce((closestRect, rect) => {
+      const closestX = clamp(clientX, rect.left, rect.right);
+      const closestY = clamp(clientY, rect.top, rect.bottom);
+      const currentDistance =
+        (clientX - closestX) ** 2 + (clientY - closestY) ** 2;
+      const bestX = clamp(clientX, closestRect.left, closestRect.right);
+      const bestY = clamp(clientY, closestRect.top, closestRect.bottom);
+      const bestDistance = (clientX - bestX) ** 2 + (clientY - bestY) ** 2;
+      return currentDistance < bestDistance ? rect : closestRect;
+    }, rects[0]);
+  }
+
+  function previewForScriptPointer(event: ReactMouseEvent<HTMLElement>) {
+    const target = elementFromEventTarget(event.target);
+    if (!target || target.closest(".next-script-action-token")) return null;
+
+    const insertRegion = target.closest<HTMLElement>("[data-default-insert]");
+    const defaultInsertionIndex = Number(insertRegion?.dataset.defaultInsert);
+    const insertTarget = target.closest<HTMLElement>("[data-insert-before]");
+
+    if (!insertTarget) {
+      const region = insertRegion ?? event.currentTarget;
+      const rect = region.getBoundingClientRect();
+      const styles = window.getComputedStyle(event.currentTarget);
+      const lineHeight =
+        Number.parseFloat(styles.lineHeight) ||
+        Number.parseFloat(styles.fontSize) * 1.75 ||
+        22;
+      return {
+        height: Math.max(16, lineHeight - 3),
+        insertionIndex: Number.isFinite(defaultInsertionIndex)
+          ? defaultInsertionIndex
+          : text.length,
+        x: Math.round(clamp(event.clientX, rect.left + 12, rect.right - 12)),
+        y: Math.round(
+          clamp(
+            event.clientY - lineHeight / 2,
+            rect.top + 8,
+            Math.max(rect.top + 8, rect.bottom - lineHeight - 8),
+          ),
+        ),
+      };
+    }
+
+    const beforeIndex = Number(insertTarget.dataset.insertBefore);
+    const afterIndex = Number(insertTarget.dataset.insertAfter);
+    const safeBeforeIndex = Number.isFinite(beforeIndex) ? beforeIndex : 0;
+    const safeAfterIndex = Number.isFinite(afterIndex) ? afterIndex : text.length;
+    const insertionIndex = clickIndexForTextTarget(
+      insertTarget,
+      safeBeforeIndex,
+      safeAfterIndex,
+      event.clientX,
+    );
+    const rect = closestClientRectToPointer(
+      insertTarget,
+      event.clientX,
+      event.clientY,
+    );
+    const textLength = Math.max(1, safeAfterIndex - safeBeforeIndex);
+    const ratio = clamp((insertionIndex - safeBeforeIndex) / textLength, 0, 1);
+
+    return {
+      height: Math.max(16, rect.height - 3),
+      insertionIndex,
+      x: Math.round(rect.left + ratio * rect.width),
+      y: Math.round(rect.top + 1),
+    };
+  }
 
   function renderActionToken(marker: ScriptMarkerInstance) {
     return (
@@ -1259,7 +1355,16 @@ function ScriptActionReadOnlyView({
       pieceOffset += piece.length;
 
       if (/^\s+$/.test(piece)) {
-        nodes.push(piece);
+        nodes.push(
+          <span
+            className="next-script-view-space"
+            data-insert-after={pieceStart + piece.length}
+            data-insert-before={pieceStart}
+            key={`${keyPrefix}-space-${index}-${pieceStart}`}
+          >
+            {piece}
+          </span>,
+        );
         return;
       }
 
@@ -1325,33 +1430,29 @@ function ScriptActionReadOnlyView({
     return nodes;
   }
 
-  function handleScriptClick(event: ReactMouseEvent<HTMLDivElement>) {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    if (target.closest(".next-script-action-token")) return;
+  function handleScriptContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
+    const preview = previewForScriptPointer(event);
+    if (!preview) return;
+    event.preventDefault();
+    onOpenInsert(preview.insertionIndex, event);
+    setInsertionPreview(preview);
+  }
 
-    const insertRegion = target.closest<HTMLElement>("[data-default-insert]");
-    const defaultInsertionIndex = Number(insertRegion?.dataset.defaultInsert);
-    const insertTarget = target.closest<HTMLElement>("[data-insert-before]");
-    if (!insertTarget) {
-      onOpenInsert(
-        Number.isFinite(defaultInsertionIndex) ? defaultInsertionIndex : text.length,
-        event,
-      );
-      return;
-    }
-
-    const beforeIndex = Number(insertTarget.dataset.insertBefore);
-    const afterIndex = Number(insertTarget.dataset.insertAfter);
-    onOpenInsert(
-      clickIndexForTextTarget(
-        insertTarget,
-        Number.isFinite(beforeIndex) ? beforeIndex : 0,
-        Number.isFinite(afterIndex) ? afterIndex : text.length,
-        event.clientX,
-      ),
-      event,
-    );
+  function handleScriptMouseMove(event: ReactMouseEvent<HTMLDivElement>) {
+    const preview = previewForScriptPointer(event);
+    setInsertionPreview((current) => {
+      if (
+        current &&
+        preview &&
+        current.insertionIndex === preview.insertionIndex &&
+        current.x === preview.x &&
+        current.y === preview.y &&
+        current.height === preview.height
+      ) {
+        return current;
+      }
+      return preview;
+    });
   }
 
   return (
@@ -1385,7 +1486,9 @@ function ScriptActionReadOnlyView({
                 <div
                   className="next-script-slide-script"
                   data-default-insert={row.textEnd}
-                  onClick={handleScriptClick}
+                  onContextMenu={handleScriptContextMenu}
+                  onMouseLeave={() => setInsertionPreview(null)}
+                  onMouseMove={handleScriptMouseMove}
                   role="cell"
                 >
                   {row.marker ? (
@@ -1400,10 +1503,8 @@ function ScriptActionReadOnlyView({
                   ) : null}
                   <div className="next-script-segment-document">
                     {rowNodes.length ? rowNodes : (
-                      <button
+                      <div
                         className="next-script-view-empty"
-                        onClick={(event) => onOpenInsert(row.textStart, event)}
-                        type="button"
                       />
                     )}
                   </div>
@@ -1433,14 +1534,12 @@ function ScriptActionReadOnlyView({
             <div
               className="next-script-slide-script"
               data-default-insert={0}
-              onClick={handleScriptClick}
+              onContextMenu={handleScriptContextMenu}
+              onMouseLeave={() => setInsertionPreview(null)}
+              onMouseMove={handleScriptMouseMove}
               role="cell"
             >
-              <button
-                className="next-script-view-empty"
-                onClick={(event) => onOpenInsert(0, event)}
-                type="button"
-              />
+              <div className="next-script-view-empty" />
             </div>
             <div className="next-script-slide-preview" role="cell">
               <span />
@@ -1448,6 +1547,17 @@ function ScriptActionReadOnlyView({
           </div>
         )}
       </div>
+      {insertionPreview ? (
+        <span
+          aria-hidden="true"
+          className="next-script-insertion-caret"
+          style={{
+            height: insertionPreview.height,
+            left: insertionPreview.x,
+            top: insertionPreview.y,
+          }}
+        />
+      ) : null}
     </div>
   );
 }
