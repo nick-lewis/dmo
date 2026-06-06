@@ -182,10 +182,14 @@ type ScriptActionMenuState =
       y: number;
     };
 
+type ScriptActionViewMarker = ScriptMarkerInstance & {
+  sourceMarker: ScriptMarkerInstance;
+};
+
 type ScriptActionRow = {
   key: string;
   label: string;
-  marker: ScriptMarkerInstance | null;
+  marker: ScriptActionViewMarker | null;
   slideRef: string;
   textEnd: number;
   textStart: number;
@@ -196,6 +200,11 @@ type ScriptInsertionPreview = {
   insertionIndex: number;
   x: number;
   y: number;
+};
+
+type ScriptSourceWordRange = {
+  end: number;
+  start: number;
 };
 
 const displayDocumentHistoryLimit = 80;
@@ -449,6 +458,14 @@ function markerEditKey(marker: ScriptMarkerInstance) {
   return `${marker.start}:${marker.end}:${marker.marker}`;
 }
 
+function sourceMarkerForView(marker: ScriptMarkerInstance | ScriptActionViewMarker) {
+  return "sourceMarker" in marker ? marker.sourceMarker : marker;
+}
+
+function viewMarkerEditKey(marker: ScriptMarkerInstance | ScriptActionViewMarker) {
+  return markerEditKey(sourceMarkerForView(marker));
+}
+
 function markerStyleType(marker: ScriptMarkerInstance) {
   return isSlideMarker(marker) ? "slide" : "action";
 }
@@ -518,9 +535,287 @@ function mergeMarkersIntoSpokenText(
     );
 }
 
-function scriptActionRowsFromScript(
+function markedScriptSourceWordRanges(
   text: string,
   markers: ScriptMarkerInstance[],
+) {
+  const ranges: ScriptSourceWordRange[] = [];
+  const wordPattern = /[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g;
+
+  function appendSegment(segment: string, offset: number) {
+    wordPattern.lastIndex = 0;
+    for (const match of segment.matchAll(wordPattern)) {
+      const start = offset + (match.index ?? 0);
+      ranges.push({
+        end: start + match[0].length,
+        start,
+      });
+    }
+  }
+
+  let cursor = 0;
+  [...markers]
+    .sort((left, right) => left.start - right.start)
+    .forEach((marker) => {
+      if (marker.start > cursor) {
+        appendSegment(text.slice(cursor, marker.start), cursor);
+      }
+      cursor = Math.max(cursor, marker.end);
+    });
+
+  if (cursor < text.length) {
+    appendSegment(text.slice(cursor), cursor);
+  }
+
+  return ranges;
+}
+
+function appendMappedText(
+  characters: string[],
+  sourceIndexByTextIndex: number[],
+  value: string,
+  sourceStart: number,
+  sourceEnd: number,
+) {
+  if (!value) return;
+  sourceIndexByTextIndex[characters.length] = sourceStart;
+  for (let index = 0; index < value.length; index += 1) {
+    characters.push(value[index]);
+    const ratio = (index + 1) / value.length;
+    sourceIndexByTextIndex[characters.length] = Math.round(
+      sourceStart + (sourceEnd - sourceStart) * ratio,
+    );
+  }
+}
+
+function appendMappedBoundary(
+  characters: string[],
+  sourceIndexByTextIndex: number[],
+  value: string,
+  sourceStart: number,
+  sourceEnd: number,
+) {
+  if (!value) return;
+  sourceIndexByTextIndex[characters.length] = sourceStart;
+  characters.push(value);
+  sourceIndexByTextIndex[characters.length] = sourceEnd;
+}
+
+function buildDisplayActionBaseText(
+  sourceText: string,
+  sourceMarkers: ScriptMarkerInstance[],
+  displaySlots: string[],
+  displayBreaks: number[],
+) {
+  const sourceWordRanges = markedScriptSourceWordRanges(sourceText, sourceMarkers);
+  const slots = displaySlots.length
+    ? displaySlots
+    : displayTranscriptSlotsFromText(spokenTextFromMarkedScript(sourceText));
+  const breakCounts = new Map<number, number>();
+  normalizeDisplayBreaks(displayBreaks, slots.length).forEach((breakIndex) => {
+    breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
+  });
+
+  const characters: string[] = [];
+  const displayRangesBySourceWord: Array<
+    { end: number; start: number } | undefined
+  > = [];
+  const sourceIndexByTextIndex = [0];
+  let lineHasText = false;
+  let previousVisibleSourceEnd = 0;
+
+  slots.forEach((slot, slotIndex) => {
+    const sourceRange = sourceWordRanges[slotIndex] ?? {
+      end: sourceText.length,
+      start: sourceText.length,
+    };
+    const displayText = slot.trim();
+
+    if (displayText) {
+      if (lineHasText) {
+        appendMappedBoundary(
+          characters,
+          sourceIndexByTextIndex,
+          " ",
+          previousVisibleSourceEnd,
+          sourceRange.start,
+        );
+      }
+
+      const displayStart = characters.length;
+      appendMappedText(
+        characters,
+        sourceIndexByTextIndex,
+        displayText,
+        sourceRange.start,
+        sourceRange.end,
+      );
+      displayRangesBySourceWord[slotIndex] = {
+        end: characters.length,
+        start: displayStart,
+      };
+      lineHasText = true;
+      previousVisibleSourceEnd = sourceRange.end;
+    }
+
+    for (
+      let breakIndex = 0;
+      breakIndex < (breakCounts.get(slotIndex) ?? 0);
+      breakIndex += 1
+    ) {
+      appendMappedBoundary(
+        characters,
+        sourceIndexByTextIndex,
+        "\n",
+        sourceRange.end,
+        sourceRange.end,
+      );
+      lineHasText = false;
+      previousVisibleSourceEnd = sourceRange.end;
+    }
+  });
+
+  return {
+    displayRangesBySourceWord,
+    sourceIndexByTextIndex,
+    text: characters.join("").replace(/\n+$/, ""),
+  };
+}
+
+function displayInsertionIndexForSourceWordIndex(
+  wordIndex: number,
+  displayText: string,
+  displayRangesBySourceWord: Array<{ end: number; start: number } | undefined>,
+) {
+  if (wordIndex <= 0) return 0;
+
+  for (let index = wordIndex - 1; index >= 0; index -= 1) {
+    const range = displayRangesBySourceWord[index];
+    if (range) return range.end;
+  }
+
+  for (let index = wordIndex; index < displayRangesBySourceWord.length; index += 1) {
+    const range = displayRangesBySourceWord[index];
+    if (range) return range.start;
+  }
+
+  return displayText.length;
+}
+
+function insertViewMarkerAt(
+  text: string,
+  sourceIndexByTextIndex: number[],
+  insertionIndex: number,
+  marker: ScriptMarkerInstance,
+) {
+  const safeIndex = Math.min(Math.max(0, insertionIndex), text.length);
+  const before = text.slice(0, safeIndex);
+  const after = text.slice(safeIndex);
+  const prefix = before && !/\s$/.test(before) ? " " : "";
+  const suffix = after && !/^\s/.test(after) ? " " : "";
+  const insertedText = `${prefix}${marker.marker}${suffix}`;
+  const nextText = `${before}${insertedText}${after}`;
+  const nextSourceIndexByTextIndex: number[] = [];
+  const insertedLength = insertedText.length;
+  const markerStart = safeIndex + prefix.length;
+  const markerEnd = markerStart + marker.marker.length;
+
+  for (let index = 0; index <= nextText.length; index += 1) {
+    if (index <= safeIndex) {
+      nextSourceIndexByTextIndex[index] = sourceIndexByTextIndex[index] ?? 0;
+    } else if (index <= markerStart) {
+      nextSourceIndexByTextIndex[index] = marker.start;
+    } else if (index <= markerEnd) {
+      const ratio = (index - markerStart) / Math.max(1, marker.marker.length);
+      nextSourceIndexByTextIndex[index] = Math.round(
+        marker.start + (marker.end - marker.start) * ratio,
+      );
+    } else if (index <= safeIndex + insertedLength) {
+      nextSourceIndexByTextIndex[index] = marker.end;
+    } else {
+      nextSourceIndexByTextIndex[index] =
+        sourceIndexByTextIndex[index - insertedLength] ?? marker.end;
+    }
+  }
+
+  return {
+    markerEnd,
+    markerStart,
+    sourceIndexByTextIndex: nextSourceIndexByTextIndex,
+    text: nextText,
+  };
+}
+
+function projectScriptActionsToDisplayText({
+  displayBreaks,
+  displaySlots,
+  markers,
+  sourceText,
+}: {
+  displayBreaks: number[];
+  displaySlots: string[];
+  markers: ScriptMarkerInstance[];
+  sourceText: string;
+}) {
+  let {
+    displayRangesBySourceWord,
+    sourceIndexByTextIndex,
+    text,
+  } = buildDisplayActionBaseText(
+    sourceText,
+    markers,
+    displaySlots,
+    displayBreaks,
+  );
+  const baseTextLength = text.length;
+  const viewMarkers: ScriptActionViewMarker[] = [];
+  let offset = 0;
+
+  markers
+    .map((marker, index) => ({
+      displayIndex: displayInsertionIndexForSourceWordIndex(
+        marker.wordIndex,
+        text,
+        displayRangesBySourceWord,
+      ),
+      index,
+      marker,
+    }))
+    .sort((left, right) =>
+      left.displayIndex === right.displayIndex
+        ? left.index - right.index
+        : left.displayIndex - right.displayIndex,
+    )
+    .forEach(({ displayIndex, marker }) => {
+      const next = insertViewMarkerAt(
+        text,
+        sourceIndexByTextIndex,
+        displayIndex + offset,
+        marker,
+      );
+      viewMarkers.push({
+        ...marker,
+        end: next.markerEnd,
+        sourceMarker: marker,
+        start: next.markerStart,
+      });
+      offset = next.text.length - baseTextLength;
+      text = next.text;
+      sourceIndexByTextIndex = next.sourceIndexByTextIndex;
+    });
+
+  viewMarkers.sort((left, right) => left.start - right.start);
+  return {
+    markers: viewMarkers,
+    rows: scriptActionRowsFromScript(text, viewMarkers),
+    sourceIndexByTextIndex,
+    text,
+  };
+}
+
+function scriptActionRowsFromScript(
+  text: string,
+  markers: ScriptActionViewMarker[],
 ) {
   const slideMarkers = markers.filter(isSlideMarker);
   if (!slideMarkers.length) {
@@ -555,7 +850,7 @@ function scriptActionRowsFromScript(
     const nextMarker = slideMarkers[index + 1] ?? null;
     const slideRef = marker.argList[0]?.trim() || "1";
     rows.push({
-      key: markerEditKey(marker),
+      key: viewMarkerEditKey(marker),
       label: `Slide ${slideRef}`,
       marker,
       slideRef,
@@ -1209,12 +1504,13 @@ function ScriptActionReadOnlyView({
   onOpenMarker,
   onRemoveMarker,
   previews,
+  sourceIndexByTextIndex,
   text,
 }: {
   actionRows: ScriptActionRow[];
   deckUrl: string;
   displayBreaks: number[];
-  markers: ScriptMarkerInstance[];
+  markers: ScriptActionViewMarker[];
   onOpenInsert: (
     insertionIndex: number,
     event: ReactMouseEvent<HTMLElement>,
@@ -1225,6 +1521,7 @@ function ScriptActionReadOnlyView({
   ) => void;
   onRemoveMarker: (marker: ScriptMarkerInstance) => void;
   previews: Record<string, ScriptSlidePreview>;
+  sourceIndexByTextIndex: number[];
   text: string;
 }) {
   const [insertionPreview, setInsertionPreview] =
@@ -1322,22 +1619,31 @@ function ScriptActionReadOnlyView({
     };
   }
 
-  function renderActionToken(marker: ScriptMarkerInstance) {
+  function sourceIndexForTextIndex(index: number) {
+    return (
+      sourceIndexByTextIndex[index] ??
+      sourceIndexByTextIndex[sourceIndexByTextIndex.length - 1] ??
+      0
+    );
+  }
+
+  function renderActionToken(marker: ScriptActionViewMarker) {
+    const sourceMarker = sourceMarkerForView(marker);
     return (
       <button
         className={[
           "next-script-action-token",
           markerStyleType(marker) === "slide" ? "is-slide" : "is-action",
         ].join(" ")}
-        key={markerEditKey(marker)}
-        onClick={(event) => onOpenMarker(marker, event)}
-        onContextMenu={(event) => onOpenMarker(marker, event)}
+        key={viewMarkerEditKey(marker)}
+        onClick={(event) => onOpenMarker(sourceMarker, event)}
+        onContextMenu={(event) => onOpenMarker(sourceMarker, event)}
         onKeyDown={(event) => {
           if (event.key !== "Backspace" && event.key !== "Delete") return;
           event.preventDefault();
-          onRemoveMarker(marker);
+          onRemoveMarker(sourceMarker);
         }}
-        title={marker.marker}
+        title={sourceMarker.marker}
         type="button"
       >
         {isSlideMarker(marker)
@@ -1363,8 +1669,10 @@ function ScriptActionReadOnlyView({
         nodes.push(
           <span
             className="next-script-view-space"
-            data-insert-after={pieceStart + piece.length}
-            data-insert-before={pieceStart}
+            data-insert-after={sourceIndexForTextIndex(
+              pieceStart + piece.length,
+            )}
+            data-insert-before={sourceIndexForTextIndex(pieceStart)}
             key={`${keyPrefix}-space-${index}-${pieceStart}`}
           >
             {piece}
@@ -1378,8 +1686,8 @@ function ScriptActionReadOnlyView({
       nodes.push(
         <span
           className="next-script-view-word"
-          data-insert-after={afterIndex}
-          data-insert-before={beforeIndex}
+          data-insert-after={sourceIndexForTextIndex(afterIndex)}
+          data-insert-before={sourceIndexForTextIndex(beforeIndex)}
           key={`${keyPrefix}-word-${index}-${beforeIndex}`}
         >
           {piece}
@@ -1490,7 +1798,7 @@ function ScriptActionReadOnlyView({
               >
                 <div
                   className="next-script-slide-script"
-                  data-default-insert={row.textEnd}
+                  data-default-insert={sourceIndexForTextIndex(row.textEnd)}
                   onContextMenu={handleScriptContextMenu}
                   onMouseLeave={() => setInsertionPreview(null)}
                   onMouseMove={handleScriptMouseMove}
@@ -1510,6 +1818,9 @@ function ScriptActionReadOnlyView({
                     {rowNodes.length ? rowNodes : (
                       <div
                         className="next-script-view-empty"
+                        data-default-insert={sourceIndexForTextIndex(
+                          row.textStart,
+                        )}
                       />
                     )}
                   </div>
@@ -1538,7 +1849,7 @@ function ScriptActionReadOnlyView({
           <div className="next-script-slide-row has-no-slide is-empty" role="row">
             <div
               className="next-script-slide-script"
-              data-default-insert={0}
+              data-default-insert={sourceIndexForTextIndex(0)}
               onContextMenu={handleScriptContextMenu}
               onMouseLeave={() => setInsertionPreview(null)}
               onMouseMove={handleScriptMouseMove}
@@ -1679,10 +1990,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     ? stringConfigValue(activeScriptStep.config, "deckUrl")
     : "";
   const activeScriptMarkers = parseScriptMarkerInstances(activeScriptText);
-  const activeScriptActionRows = scriptActionRowsFromScript(
-    activeScriptText,
-    activeScriptMarkers,
-  );
   const activeAudioScriptText = spokenTextFromMarkedScript(activeScriptText);
   const activeScriptAudioItem = scriptAudioItemForScriptText(
     scriptAudioItems,
@@ -1703,6 +2010,26 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeScriptAudioItem,
     displayBreakDrafts,
   );
+  const activeDisplaySlots = activeScriptAudioItem
+    ? (displaySlotDrafts[activeScriptAudioItem.id] ??
+      scriptAudioPersistedDisplaySlots(activeScriptAudioItem))
+    : [];
+  const activeDisplayBaseSlots = activeScriptAudioItem
+    ? scriptAudioDisplayBaseSlots(activeScriptAudioItem)
+    : [];
+  const activeDisplayEditorBreaks = activeScriptAudioItem
+    ? normalizeDisplayBreaks(
+        displayBreakDrafts[activeScriptAudioItem.id] ??
+          scriptAudioPersistedDisplayBreaks(activeScriptAudioItem),
+        activeDisplaySlots.length,
+      )
+    : [];
+  const activeScriptActionView = projectScriptActionsToDisplayText({
+    displayBreaks: activeDisplayEditorBreaks,
+    displaySlots: activeDisplaySlots,
+    markers: activeScriptMarkers,
+    sourceText: activeScriptText,
+  });
   const activeAudioScriptVisualText =
     activeDisplayBreaks.length && activeAudioScriptText
       ? displayTextFromSlots(
@@ -1890,7 +2217,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const deckUrl = activeScriptDeckUrl.trim();
     const slideRefs = Array.from(
       new Set(
-        activeScriptActionRows
+        activeScriptActionView.rows
           .map((row) => row.slideRef.trim())
           .filter(Boolean),
       ),
@@ -1948,7 +2275,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   }, [
     activeScriptDeckUrl,
     activeScriptDetailTab,
-    activeScriptText,
+    activeScriptActionView.rows,
     scriptSlidePreviews,
   ]);
 
@@ -3074,20 +3401,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     </div>
   ) : null;
 
-  const activeDisplaySlots = activeScriptAudioItem
-    ? (displaySlotDrafts[activeScriptAudioItem.id] ??
-      scriptAudioPersistedDisplaySlots(activeScriptAudioItem))
-    : [];
-  const activeDisplayBaseSlots = activeScriptAudioItem
-    ? scriptAudioDisplayBaseSlots(activeScriptAudioItem)
-    : [];
-  const activeDisplayEditorBreaks = activeScriptAudioItem
-    ? normalizeDisplayBreaks(
-        displayBreakDrafts[activeScriptAudioItem.id] ??
-          scriptAudioPersistedDisplayBreaks(activeScriptAudioItem),
-        activeDisplaySlots.length,
-      )
-    : [];
   const isDisplayTextResetDisabled = activeScriptAudioItem
     ? displaySlotsAreEqual(
         activeDisplaySlots,
@@ -3226,15 +3539,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           />
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView
-            actionRows={activeScriptActionRows}
+            actionRows={activeScriptActionView.rows}
             deckUrl={activeScriptDeckUrl}
-            displayBreaks={activeDisplayBreaks}
-            markers={activeScriptMarkers}
+            displayBreaks={[]}
+            markers={activeScriptActionView.markers}
             onOpenInsert={openScriptInsertMenu}
             onOpenMarker={openScriptMarkerMenu}
             onRemoveMarker={removeScriptActionMarker}
             previews={scriptSlidePreviews}
-            text={activeScriptText}
+            sourceIndexByTextIndex={activeScriptActionView.sourceIndexByTextIndex}
+            text={activeScriptActionView.text}
           />
         ) : activeScriptDetailTab === "fine-tuning" ? (
           <div aria-label="Fine Tuning" className="next-fine-tuning-panel" />
