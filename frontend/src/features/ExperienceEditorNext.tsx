@@ -12,8 +12,6 @@ import {
 
 import {
   apiFetch,
-  experienceEditPath,
-  experienceEditorMockupsPath,
   experienceNextEditPath,
   experienceRunPath,
 } from "../api";
@@ -2114,7 +2112,6 @@ function ScriptActionReadOnlyView({
 }
 
 export function ExperienceEditorNext({ experienceId }: { experienceId: string }) {
-  const [user, setUser] = useState<ApiUser | null>(null);
   const [experience, setExperience] = useState<Experience | null>(null);
   const [experienceForm, setExperienceForm] = useState<ExperienceForm>({
     description: "",
@@ -2127,7 +2124,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
   const [isTutorSettingsOpen, setIsTutorSettingsOpen] = useState(false);
   const [isUploadingTutorAvatar, setIsUploadingTutorAvatar] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [activeScriptAction, setActiveScriptAction] =
     useState<ActiveScriptAction | null>(null);
   const [activeScriptDetailTab, setActiveScriptDetailTab] =
@@ -2378,7 +2374,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       setError("");
 
       try {
-        const me = await apiFetch<{ user: ApiUser }>("/api/auth/me/");
+        await apiFetch<{ user: ApiUser }>("/api/auth/me/");
         const payload = await apiFetch<ExperiencesPayload>("/api/experiences/");
         const nextExperience =
           payload.experiences.find((candidate) => candidate.id === experienceId) ??
@@ -2409,7 +2405,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             ? scriptDetailTabFromStored(uiState)
             : "audio";
 
-        setUser(me.user);
         setExperience(nextExperience);
         setExperienceForm({
           description: nextExperience.description,
@@ -3616,26 +3611,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     window.location.assign("/experiences");
   }
 
-  async function openCurrentEditor() {
-    if (!experience) return;
-
-    const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
-
-    writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceEditPath(experience.id));
-  }
-
-  async function openMockups() {
-    if (!experience) return;
-
-    const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
-
-    writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceEditorMockupsPath(experience.id));
-  }
-
   async function runExperience() {
     if (!experience) return;
 
@@ -3666,19 +3641,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
     writeSelectedExperienceId(experience.id);
     window.location.assign(experienceRunPath(experience.id));
-  }
-
-  async function signOut() {
-    setIsSigningOut(true);
-
-    try {
-      await apiFetch<{ ok: boolean }>("/api/auth/logout/", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-    } finally {
-      window.location.assign("/accounts/login/");
-    }
   }
 
   async function createEvent() {
@@ -4303,33 +4265,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             type="button"
           >
             Experiences
-          </button>
-        </div>
-        <div className="study-actions">
-          {user ? <span className="study-user">{user.displayName}</span> : null}
-          <button
-            className="header-action secondary"
-            disabled={!experience}
-            onClick={() => void openMockups()}
-            type="button"
-          >
-            Mockups
-          </button>
-          <button
-            className="header-action secondary"
-            disabled={!experience}
-            onClick={() => void openCurrentEditor()}
-            type="button"
-          >
-            Current editor
-          </button>
-          <button
-            className="header-action secondary"
-            disabled={isSigningOut}
-            onClick={() => void signOut()}
-            type="button"
-          >
-            Sign out
           </button>
         </div>
       </header>
