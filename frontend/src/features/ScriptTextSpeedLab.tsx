@@ -18,7 +18,7 @@ But first I need you to meet someone. This is Liddle Lou, and right now Liddle L
 
 By building one capability at a time, Liddle Lou could start to learn how to do more interesting things.`;
 
-const speedPresets = [1, 1.25, 1.5, 1.65, 1.85, 2.1, 2.5, 3];
+const speedPresets = [1, 1.25, 1.5, 1.65, 1.85, 2, 2.5, 3];
 
 function formatSeconds(value: number) {
   return `${value.toFixed(2)}s`;
