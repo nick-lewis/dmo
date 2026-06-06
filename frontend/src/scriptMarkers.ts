@@ -30,7 +30,7 @@ export const scriptMarkerOptions = [
   },
   {
     label: "Side image",
-    marker: "[side_image: right, show, test-images/dLU-left.png]",
+    marker: "[side_image: right, show, test-images/dLU-right.png]",
     title: "Set a left or right image beside the chat.",
   },
   {

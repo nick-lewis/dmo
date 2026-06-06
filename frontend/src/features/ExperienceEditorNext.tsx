@@ -218,6 +218,12 @@ type ScriptInsertionPreview = {
   y: number;
 };
 
+type SideImageActionState = {
+  imagePath: string;
+  side: "left" | "right";
+  visible: boolean;
+};
+
 type ScriptSourceWordRange = {
   end: number;
   start: number;
@@ -226,6 +232,7 @@ type ScriptSourceWordRange = {
 const displayDocumentHistoryLimit = 80;
 const scriptActionHistoryLimit = 80;
 const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const defaultSideImagePath = "test-images/dLU-right.png";
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -332,7 +339,7 @@ function writeLocationNextEditorUiState(state: PersistedNextEditorUiState) {
 function defaultTutorSettings(): TutorSettings {
   return {
     assistantName: "dee-lou",
-    avatarPath: "test-images/dLU-right.png",
+    avatarPath: defaultSideImagePath,
     choiceIconBackground: defaultChoiceIconBackground,
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
@@ -340,6 +347,45 @@ function defaultTutorSettings(): TutorSettings {
     voice: "ash",
     voiceInstructions: "",
   };
+}
+
+function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
+  const firstArg = args[0]?.trim().toLowerCase() || "";
+  const hasSideArg = [
+    "agent",
+    "avatar",
+    "left",
+    "main",
+    "right",
+    "side",
+    "tutor",
+  ].includes(firstArg);
+  const side = ["right", "side"].includes(firstArg) ? "right" : "left";
+  const remainingArgs = hasSideArg ? args.slice(1) : args;
+  const rawMode = remainingArgs[0]?.trim() || "show";
+  const mode = rawMode.toLowerCase();
+  const hideModes = ["hide", "hidden", "off", "false", "0"];
+  const showModes = ["show", "on", "visible", "true", "1"];
+  const imagePath =
+    remainingArgs.length > 1
+      ? remainingArgs[1]
+      : showModes.includes(mode) || hideModes.includes(mode)
+        ? ""
+        : remainingArgs[0] || "";
+
+  return {
+    imagePath,
+    side,
+    visible: !hideModes.includes(mode),
+  };
+}
+
+function sideImageActionArgs(state: SideImageActionState) {
+  const imagePath = state.imagePath.trim();
+  if (state.visible) {
+    return imagePath ? [state.side, "show", imagePath] : [state.side, "show"];
+  }
+  return imagePath ? [state.side, "hide", imagePath] : [state.side, "hide"];
 }
 
 function sortedExperienceEvents(events: ExperienceEvent[]) {
@@ -3553,13 +3599,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
   }
 
-  function insertScriptAction(type: "slide" | "sound") {
+  function insertScriptAction(type: "slide" | "side-image" | "sound") {
     if (!activeScriptStep || scriptActionMenu?.mode !== "insert") return;
 
-    const marker =
-      type === "slide"
-        ? buildScriptMarker("gslide", [nextAvailableSlideRef(activeScriptMarkers)])
-        : buildScriptMarker("play_sound", [scriptSoundOptions[0].path, "0.5"]);
+    let marker = buildScriptMarker("play_sound", [
+      scriptSoundOptions[0].path,
+      "0.5",
+    ]);
+    if (type === "slide") {
+      marker = buildScriptMarker("gslide", [
+        nextAvailableSlideRef(activeScriptMarkers),
+      ]);
+    } else if (type === "side-image") {
+      marker = buildScriptMarker("side_image", [
+        "left",
+        "show",
+        tutorForm.avatarPath || defaultSideImagePath,
+      ]);
+    }
     updateActiveScriptMarkedText(
       insertScriptMarkerAt(
         activeScriptText,
@@ -4138,6 +4195,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           (marker) => markerEditKey(marker) === scriptActionMenu.markerKey,
         ) ?? null)
       : null;
+  const editingSideImageState =
+    editingScriptMarker?.type === "side_image"
+      ? sideImageActionStateFromArgs(editingScriptMarker.argList)
+      : null;
   const displayTextPanel = activeScriptAudioItem ? (
     <DisplayTextEditor
       baseSlots={activeDisplayBaseSlots}
@@ -4303,6 +4364,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                 </button>
                 <button
                   className="next-script-action-menu-item is-action"
+                  onClick={() => insertScriptAction("side-image")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Image
+                </button>
+                <button
+                  className="next-script-action-menu-item is-action"
                   onClick={() => insertScriptAction("sound")}
                   role="menuitem"
                   type="button"
@@ -4334,6 +4403,68 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                       value={editingScriptMarker.argList[0] ?? ""}
                     />
                   </label>
+                ) : editingScriptMarker.type === "side_image" &&
+                  editingSideImageState ? (
+                  <>
+                    <label>
+                      <span>Side</span>
+                      <select
+                        aria-label="Image side"
+                        onChange={(event) =>
+                          replaceScriptActionMarker(
+                            editingScriptMarker,
+                            sideImageActionArgs({
+                              ...editingSideImageState,
+                              side:
+                                event.target.value === "right"
+                                  ? "right"
+                                  : "left",
+                            }),
+                          )
+                        }
+                        value={editingSideImageState.side}
+                      >
+                        <option value="left">Left</option>
+                        <option value="right">Right</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>State</span>
+                      <select
+                        aria-label="Image state"
+                        onChange={(event) =>
+                          replaceScriptActionMarker(
+                            editingScriptMarker,
+                            sideImageActionArgs({
+                              ...editingSideImageState,
+                              visible: event.target.value !== "hide",
+                            }),
+                          )
+                        }
+                        value={editingSideImageState.visible ? "show" : "hide"}
+                      >
+                        <option value="show">Show</option>
+                        <option value="hide">Hide</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Image</span>
+                      <input
+                        aria-label="Side image path"
+                        onChange={(event) =>
+                          replaceScriptActionMarker(
+                            editingScriptMarker,
+                            sideImageActionArgs({
+                              ...editingSideImageState,
+                              imagePath: event.target.value,
+                            }),
+                          )
+                        }
+                        placeholder={defaultSideImagePath}
+                        value={editingSideImageState.imagePath}
+                      />
+                    </label>
+                  </>
                 ) : editingScriptMarker.type === "play_sound" ? (
                   <>
                     <label>
