@@ -3620,6 +3620,25 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     );
   }
 
+  async function regenerateActiveScriptAudio(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const item = activeScriptAudioItem;
+    if (!item || !item.canGenerate || scriptAudioStatus === "generating") return;
+
+    if (isActiveScriptAudioPlaying) {
+      stopScriptAudioPreview();
+    }
+
+    const payload = await generateScriptAudio(item.id, true);
+    if (payload?.errors?.length) {
+      setError(payload.errors.join(" "));
+    }
+  }
+
   async function generateMissingAudioBeforeRun() {
     if (!experience) return null;
 
@@ -4074,7 +4093,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               .join(" ")}
             disabled={activeScriptAudioPreviewDisabled}
             onClick={() => void playOrGenerateActiveScriptAudio()}
-            title={activeScriptAudioPreviewLabel}
+            onContextMenu={(event) => void regenerateActiveScriptAudio(event)}
+            title={`${activeScriptAudioPreviewLabel}. Right-click to regenerate.`}
             type="button"
           >
             {isActiveScriptAudioPlaying ? <StopIcon /> : <MicIcon />}
