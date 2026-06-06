@@ -1,4 +1,5 @@
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -58,6 +59,14 @@ type ManualSeekState = {
   timeSeconds: number;
 };
 
+type TimelineMarkerLayout = {
+  hasTimeMatch: boolean;
+  index: number;
+  lane: number;
+  marker: ScriptMarkerInstance;
+  timeSeconds: number;
+};
+
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
   deckUrl: string;
@@ -68,11 +77,10 @@ type FineTuningPanelProps = {
 
 const defaultWaveformBucketCount = 520;
 const markerFineDragRatio = 0.08;
+const markerKeyboardStepSeconds = 0.005;
+const markerKeyboardFineStepSeconds = 0.001;
+const markerSnapThresholdSeconds = 0.03;
 const fineTuningSpeedStorageKey = "dlu.next-fine-tuning-speed.v1";
-
-function markerEditKey(marker: ScriptMarkerInstance) {
-  return `${marker.start}:${marker.end}:${marker.marker}`;
-}
 
 function replaceScriptMarker(
   text: string,
@@ -87,6 +95,16 @@ function markerLabel(marker: ScriptMarkerInstance) {
     return `Slide ${marker.argList[0]?.trim() || "1"}`;
   }
   return marker.detail || marker.label;
+}
+
+function markerHasIcon(marker: ScriptMarkerInstance) {
+  return !isSlideMarker(marker) && marker.type !== "side_image";
+}
+
+function estimateMarkerWidthPx(marker: ScriptMarkerInstance) {
+  const labelLength = markerLabel(marker).length;
+  const iconWidth = markerHasIcon(marker) ? 20 : 0;
+  return Math.min(178, Math.max(74, 48 + iconWidth + labelLength * 6.2));
 }
 
 function decodePeaks(audioBuffer: AudioBuffer, bucketCount: number) {
@@ -248,9 +266,13 @@ export function NextFineTuningPanel({
   const [draggingMarker, setDraggingMarker] = useState<ActiveMarkerDrag>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(playbackRateFromStorage);
+  const [selectedMarkerIndex, setSelectedMarkerIndex] = useState<number | null>(
+    null,
+  );
   const [waveformBucketCount, setWaveformBucketCount] = useState(
     defaultWaveformBucketCount,
   );
+  const [waveformWidth, setWaveformWidth] = useState(0);
   const audioUrl = audioItem?.audioUrl ?? "";
   const audioPlaybackUrl = useSeekableAudioUrl(audioUrl);
   const waveform = useAudioWaveform(audioUrl, waveformBucketCount);
@@ -342,6 +364,20 @@ export function NextFineTuningPanel({
       appendScriptMarkerTimelineArg(marker.argList, seconds * 1000),
     );
     onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
+  }
+
+  function snapMarkerTime(seconds: number, markerIndex: number) {
+    const match = markers
+      .map((marker, index) => ({
+        index,
+        timeSeconds: markerTime(marker, index),
+      }))
+      .filter(({ index }) => index !== markerIndex)
+      .find(
+        ({ timeSeconds }) =>
+          Math.abs(timeSeconds - seconds) <= markerSnapThresholdSeconds,
+      );
+    return match ? match.timeSeconds : seconds;
   }
 
   function activeSlideMarker(): ScriptMarkerInstance | null {
@@ -461,6 +497,7 @@ export function NextFineTuningPanel({
       moved: false,
       timeSeconds: seconds,
     };
+    setSelectedMarkerIndex(markerIndex);
     setDraggingMarker({ markerIndex, timeSeconds: seconds });
     setCurrentTime(seconds);
   }
@@ -477,14 +514,17 @@ export function NextFineTuningPanel({
       0,
       durationSeconds || 0,
     );
+    const snappedSeconds = event.shiftKey
+      ? nextSeconds
+      : snapMarkerTime(nextSeconds, dragState.markerIndex);
     dragState.lastClientX = event.clientX;
-    dragState.timeSeconds = nextSeconds;
+    dragState.timeSeconds = snappedSeconds;
     dragState.moved = true;
     setDraggingMarker({
       markerIndex: dragState.markerIndex,
-      timeSeconds: nextSeconds,
+      timeSeconds: snappedSeconds,
     });
-    setCurrentTime(nextSeconds);
+    setCurrentTime(snappedSeconds);
   }
 
   function endMarkerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -503,6 +543,30 @@ export function NextFineTuningPanel({
     seek(draggingMarker.timeSeconds);
     markerDragRef.current = null;
     setDraggingMarker(null);
+  }
+
+  function moveMarkerByKeyboard(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    markerIndex: number,
+  ) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const marker = markers[markerIndex];
+    if (!marker) return;
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const step = event.shiftKey
+      ? markerKeyboardFineStepSeconds
+      : markerKeyboardStepSeconds;
+    const nextTime = clamp(
+      markerTime(marker, markerIndex) + direction * step,
+      0,
+      durationSeconds || 0,
+    );
+    setSelectedMarkerIndex(markerIndex);
+    updateMarkerTime(markerIndex, nextTime);
+    seek(nextTime, { pause: true });
   }
 
   useEffect(() => {
@@ -609,11 +673,18 @@ export function NextFineTuningPanel({
   useEffect(() => {
     setCurrentTime(0);
     setDraggingMarker(null);
+    setSelectedMarkerIndex(null);
     manualSeekRef.current = null;
     markerDragRef.current = null;
     mouseScrubRef.current = null;
     scrubRef.current = null;
   }, [audioItem?.id]);
+
+  useEffect(() => {
+    setSelectedMarkerIndex((current) =>
+      current !== null && current >= markers.length ? null : current,
+    );
+  }, [markers.length]);
 
   useEffect(() => {
     const element = waveformRef.current;
@@ -623,6 +694,10 @@ export function NextFineTuningPanel({
     function updateBucketCount() {
       const width = observedElement.getBoundingClientRect().width;
       if (!width) return;
+      const roundedWidth = Math.round(width);
+      setWaveformWidth((current) =>
+        current === roundedWidth ? current : roundedWidth,
+      );
       const nextBucketCount = Math.round(clamp(width / 1.45, 360, 960));
       setWaveformBucketCount((current) =>
         current === nextBucketCount ? current : nextBucketCount,
@@ -641,24 +716,53 @@ export function NextFineTuningPanel({
     slideRef && deckUrl
       ? previews[slidePreviewKeyForDeck(deckUrl, slideRef)]
       : null;
-  const timelineMarkers = markers.map((marker, index) => {
+  const rawTimelineMarkers = markers.map((marker, index) => {
     const timeSeconds = markerTime(marker, index);
-    const timeMs = Math.round(timeSeconds * 1000);
-    const lane = markers
-      .slice(0, index)
-      .filter(
-        (previous, previousIndex) =>
-          Math.round(markerTime(previous, previousIndex) * 1000) === timeMs,
-      ).length;
-    return { index, lane, marker, timeSeconds };
+    return {
+      index,
+      marker,
+      timeMs: Math.round(timeSeconds * 1000),
+      timeSeconds,
+      widthPx: estimateMarkerWidthPx(marker),
+    };
   });
+  const timeMatchCounts = new Map<number, number>();
+  rawTimelineMarkers.forEach((item) => {
+    timeMatchCounts.set(item.timeMs, (timeMatchCounts.get(item.timeMs) ?? 0) + 1);
+  });
+  const laneRightEdges: number[] = [];
+  const waveformWidthForLayout = Math.max(waveformWidth || 0, 1);
+  const layoutByIndex = new Map<number, TimelineMarkerLayout>();
+  [...rawTimelineMarkers]
+    .sort(
+      (left, right) =>
+        left.timeSeconds - right.timeSeconds || left.index - right.index,
+    )
+    .forEach((item) => {
+      const markerCenterPx =
+        (item.timeSeconds / durationForLayout) * waveformWidthForLayout;
+      const markerLeftPx = markerCenterPx - item.widthPx / 2;
+      const markerRightPx = markerCenterPx + item.widthPx / 2;
+      const laneIndex = laneRightEdges.findIndex(
+        (rightEdge) => markerLeftPx > rightEdge + 6,
+      );
+      const lane = laneIndex >= 0 ? laneIndex : laneRightEdges.length;
+      laneRightEdges[lane] = markerRightPx;
+      layoutByIndex.set(item.index, {
+        hasTimeMatch: (timeMatchCounts.get(item.timeMs) ?? 0) > 1,
+        index: item.index,
+        lane,
+        marker: item.marker,
+        timeSeconds: item.timeSeconds,
+      });
+    });
+  const timelineMarkers = rawTimelineMarkers
+    .map((item) => layoutByIndex.get(item.index))
+    .filter((item): item is TimelineMarkerLayout => Boolean(item));
   const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
   const waveformMarkerTop = 68;
   const waveformMarkerGap = 28;
-  const waveformHeight = Math.min(
-    210,
-    Math.max(124, 96 + laneCount * waveformMarkerGap),
-  );
+  const waveformHeight = Math.max(124, 96 + laneCount * waveformMarkerGap);
 
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
@@ -759,7 +863,7 @@ export function NextFineTuningPanel({
           className="next-fine-playhead"
           style={{ left: `${progressPercent}%` }}
         />
-        {timelineMarkers.map(({ index, lane, marker, timeSeconds }) => {
+        {timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
           const markerPercent = clamp(
             (timeSeconds / durationForLayout) * 100,
             0,
@@ -781,10 +885,14 @@ export function NextFineTuningPanel({
               aria-label={`${markerLabel(marker)} at ${formatTimelineSeconds(
                 timeSeconds,
               )}`}
+              aria-pressed={selectedMarkerIndex === index}
               className={[
                 "next-fine-marker",
                 slideMarkerForPreview ? "is-slide" : "is-action",
                 slideMarkerForPreview ? "has-preview" : "",
+                markerHasIcon(marker) ? "has-icon" : "",
+                selectedMarkerIndex === index ? "is-selected" : "",
+                hasTimeMatch ? "is-time-match" : "",
                 markerPercent < 28
                   ? "is-preview-left"
                   : markerPercent > 72
@@ -793,7 +901,7 @@ export function NextFineTuningPanel({
               ]
                 .filter(Boolean)
                 .join(" ")}
-              key={markerEditKey(marker)}
+              key={`${index}-${marker.start}-${marker.type}`}
               onClick={(event) => {
                 if (ignoreMarkerClickRef.current) {
                   event.preventDefault();
@@ -801,8 +909,10 @@ export function NextFineTuningPanel({
                   return;
                 }
                 event.stopPropagation();
+                setSelectedMarkerIndex(index);
                 seek(timeSeconds);
               }}
+              onKeyDown={(event) => moveMarkerByKeyboard(event, index)}
               onPointerCancel={endMarkerDrag}
               onPointerDown={(event) => beginMarkerDrag(event, index, timeSeconds)}
               onPointerMove={updateMarkerDrag}
@@ -814,12 +924,15 @@ export function NextFineTuningPanel({
               }}
               type="button"
             >
-              {slideMarkerForPreview ? null : (
+              {markerHasIcon(marker) ? (
                 <span className="next-fine-marker-icon">
                   {scriptMarkerIcon(marker.type)}
                 </span>
-              )}
+              ) : null}
               <strong>{markerLabel(marker)}</strong>
+              <span className="next-fine-marker-time">
+                {timeSeconds.toFixed(2)}
+              </span>
               {slideMarkerForPreview ? (
                 <span aria-hidden="true" className="next-fine-marker-preview">
                   {previewImageUrl ? (

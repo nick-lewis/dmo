@@ -1826,7 +1826,6 @@ button {
   position: relative;
   align-self: end;
   min-width: 0;
-  max-height: 210px;
   overflow-x: clip;
   overflow-y: visible;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
@@ -1899,10 +1898,10 @@ button {
 .next-fine-marker {
   position: absolute;
   display: inline-grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px;
-  max-width: 148px;
+  max-width: 178px;
   min-height: 24px;
   padding: 3px 7px;
   border: 1px solid currentColor;
@@ -1915,8 +1914,11 @@ button {
   z-index: 2;
 }
 
+.next-fine-marker.has-icon {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .next-fine-marker.is-slide {
-  grid-template-columns: minmax(0, 1fr);
   color: color-mix(in srgb, var(--accent) 84%, var(--page-ink));
   background: color-mix(in srgb, var(--accent-soft) 52%, var(--panel-bg-strong));
 }
@@ -1933,6 +1935,16 @@ button {
   z-index: 8;
 }
 
+.next-fine-marker.is-selected {
+  outline: 2px solid color-mix(in srgb, currentColor 34%, transparent);
+  outline-offset: 2px;
+  z-index: 9;
+}
+
+.next-fine-marker.is-time-match {
+  box-shadow: inset 3px 0 0 currentColor;
+}
+
 .next-fine-marker-icon {
   font-size: 0.66rem;
   font-weight: 880;
@@ -1943,6 +1955,13 @@ button {
   overflow: hidden;
   font-weight: 820;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-fine-marker-time {
+  color: color-mix(in srgb, currentColor 64%, transparent);
+  font-size: 0.62rem;
+  font-weight: 860;
   white-space: nowrap;
 }
 
