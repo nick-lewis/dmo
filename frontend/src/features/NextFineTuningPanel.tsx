@@ -534,6 +534,7 @@ export function NextFineTuningPanel({
         className={[
           "next-fine-waveform",
           audioUrl ? "" : "is-disabled",
+          draggingMarker ? "is-dragging-marker" : "",
         ]
           .filter(Boolean)
           .join(" ")}

@@ -1923,7 +1923,8 @@ button {
 .next-fine-marker-preview {
   position: absolute;
   bottom: calc(100% + 9px);
-  display: none;
+  display: grid;
+  place-items: center;
   width: min(210px, 62vw);
   aspect-ratio: 16 / 10;
   padding: 5px;
@@ -1932,13 +1933,32 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 86%, var(--page-bg));
   box-shadow: 0 14px 30px color-mix(in srgb, var(--page-ink) 16%, transparent);
   color: color-mix(in srgb, var(--muted-ink) 88%, var(--page-ink));
+  opacity: 0;
   pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    visibility 0s linear 120ms;
+  visibility: hidden;
 }
 
 .next-fine-marker.has-preview:hover .next-fine-marker-preview,
 .next-fine-marker.has-preview:focus-visible .next-fine-marker-preview {
-  display: grid;
-  place-items: center;
+  opacity: 1;
+  transition-delay: 260ms, 260ms;
+  visibility: visible;
+}
+
+.next-fine-waveform.is-dragging-marker .next-fine-marker-preview,
+.next-fine-waveform.is-dragging-marker
+  .next-fine-marker.has-preview:hover
+  .next-fine-marker-preview,
+.next-fine-waveform.is-dragging-marker
+  .next-fine-marker.has-preview:focus-visible
+  .next-fine-marker-preview {
+  opacity: 0;
+  transition: none;
+  transition-delay: 0ms, 0ms;
+  visibility: hidden;
 }
 
 .next-fine-marker.is-preview-left .next-fine-marker-preview {
