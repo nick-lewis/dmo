@@ -873,6 +873,28 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(aligned_cues[0]["time"], 1.25)
         self.assertEqual(aligned_cues[1]["time"], 1.75)
 
+    def test_script_cue_word_times_align_when_transcript_skips_prefix(self):
+        script = "Ah hello there my name is D-Lou and Now the idea is simple"
+        words = [
+            {"word": "Now", "start": 9.88, "end": 10.32},
+            {"word": "the", "start": 10.32, "end": 10.38},
+            {"word": "idea", "start": 10.38, "end": 10.7},
+            {"word": "is", "start": 10.7, "end": 10.9},
+            {"word": "simple", "start": 10.9, "end": 11.2},
+        ]
+
+        aligned_cues = script_cues_with_word_times(
+            [
+                {"progress": 0.02, "wordIndex": 2},
+                {"progress": 0.72, "wordIndex": 8},
+            ],
+            words,
+            script,
+        )
+
+        self.assertEqual(aligned_cues[0]["time"], 0.224)
+        self.assertEqual(aligned_cues[1]["time"], 9.88)
+
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
             {},

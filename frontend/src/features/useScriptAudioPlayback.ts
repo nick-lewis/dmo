@@ -100,6 +100,7 @@ type ScriptDisplayChunkSpec = {
   id: string;
   index: number;
   scriptWords: ScriptWord[];
+  slotStartTimes: number[];
   startSlot: number;
   startTime: number;
   textBreaks: number[];
@@ -213,6 +214,135 @@ function displayTextFromSlotRange(
   return lines.join("\n").replace(/^\n+|\n+$/g, "");
 }
 
+function normalizeTimingToken(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function alignDisplaySlotsToScriptWords(
+  displaySlots: string[],
+  scriptWords: ScriptWord[],
+) {
+  if (!displaySlots.length || !scriptWords.length) return [];
+
+  if (displaySlots.length === scriptWords.length) {
+    return displaySlots.map((_, index) => index);
+  }
+
+  const displayTokens = displaySlots.map(normalizeTimingToken);
+  const timingTokens = scriptWords.map((word) =>
+    normalizeTimingToken(word.word),
+  );
+  const rowCount = displayTokens.length + 1;
+  const columnCount = timingTokens.length + 1;
+  const costs = Array.from({ length: rowCount }, () =>
+    Array.from({ length: columnCount }, () => 0),
+  );
+
+  for (let row = displayTokens.length - 1; row >= 0; row -= 1) {
+    for (let column = timingTokens.length - 1; column >= 0; column -= 1) {
+      costs[row][column] =
+        displayTokens[row] && displayTokens[row] === timingTokens[column]
+          ? costs[row + 1][column + 1] + 1
+          : Math.max(costs[row + 1][column], costs[row][column + 1]);
+    }
+  }
+
+  const slotWordIndexes = Array.from(
+    { length: displaySlots.length },
+    () => -1,
+  );
+  let row = 0;
+  let column = 0;
+  while (row < displayTokens.length && column < timingTokens.length) {
+    if (
+      displayTokens[row] &&
+      displayTokens[row] === timingTokens[column] &&
+      costs[row][column] === costs[row + 1][column + 1] + 1
+    ) {
+      slotWordIndexes[row] = column;
+      row += 1;
+      column += 1;
+    } else if (costs[row + 1][column] >= costs[row][column + 1]) {
+      row += 1;
+    } else {
+      column += 1;
+    }
+  }
+
+  return slotWordIndexes;
+}
+
+function scriptWordStart(scriptWords: ScriptWord[], wordIndex: number) {
+  const word = scriptWords[wordIndex];
+  return word && Number.isFinite(word.start) ? word.start : null;
+}
+
+function approximateDisplaySlotStartTime({
+  displaySlotCount,
+  durationSeconds,
+  scriptWords,
+  slotWordIndexes,
+  startSlot,
+}: {
+  displaySlotCount: number;
+  durationSeconds: number;
+  scriptWords: ScriptWord[];
+  slotWordIndexes: number[];
+  startSlot: number;
+}) {
+  for (let index = startSlot; index < slotWordIndexes.length; index += 1) {
+    const mappedTime = scriptWordStart(scriptWords, slotWordIndexes[index]);
+    if (mappedTime !== null) return mappedTime;
+  }
+
+  const directTime = scriptWordStart(
+    scriptWords,
+    Math.min(Math.max(0, startSlot), scriptWords.length - 1),
+  );
+  if (directTime !== null) return directTime;
+
+  return durationSeconds * clamp(startSlot / Math.max(1, displaySlotCount), 0, 1);
+}
+
+function slotStartTimesForChunk({
+  displaySlotCount,
+  durationSeconds,
+  endSlot,
+  endTime,
+  scriptWords,
+  slotWordIndexes,
+  startSlot,
+  startTime,
+}: {
+  displaySlotCount: number;
+  durationSeconds: number;
+  endSlot: number;
+  endTime: number;
+  scriptWords: ScriptWord[];
+  slotWordIndexes: number[];
+  startSlot: number;
+  startTime: number;
+}) {
+  const slotCount = Math.max(1, endSlot - startSlot + 1);
+  return Array.from({ length: slotCount }, (_, offset) => {
+    const slotIndex = startSlot + offset;
+    const mappedTime = scriptWordStart(scriptWords, slotWordIndexes[slotIndex]);
+    if (mappedTime !== null) {
+      return clamp(mappedTime, startTime, endTime);
+    }
+
+    const interpolatedProgress = offset / Math.max(1, slotCount - 1);
+    const interpolatedTime =
+      startTime + (endTime - startTime) * interpolatedProgress;
+    if (Number.isFinite(interpolatedTime)) return interpolatedTime;
+
+    return durationSeconds * clamp(slotIndex / Math.max(1, displaySlotCount), 0, 1);
+  });
+}
+
 function scriptDisplayChunkSpecsFromPayload(
   messageId: string,
   payload: MessageAudioPayload,
@@ -231,25 +361,49 @@ function scriptDisplayChunkSpecsFromPayload(
     .sort((left, right) => left - right);
 
   if (!splitAfterIndexes.length) return [];
-  if (!displaySlots.length || displaySlots.length !== scriptWords.length) return [];
+  if (!displaySlots.length || !scriptWords.length) return [];
 
   const specs: ScriptDisplayChunkSpec[] = [];
-  let startSlot = 0;
   const splitBoundaries = [...splitAfterIndexes, displaySlots.length - 1];
+  const chunkStarts = [
+    0,
+    ...splitAfterIndexes.map((splitAfterIndex) => splitAfterIndex + 1),
+  ];
+  const slotWordIndexes = alignDisplaySlotsToScriptWords(displaySlots, scriptWords);
+  const audioEndTime =
+    durationSeconds ||
+    scriptWords[scriptWords.length - 1]?.end ||
+    scriptWords[scriptWords.length - 1]?.start ||
+    0;
+  const chunkStartTimes = chunkStarts.map((slotIndex, index) => {
+    if (index === 0) return 0;
+    return approximateDisplaySlotStartTime({
+      displaySlotCount: displaySlots.length,
+      durationSeconds: audioEndTime,
+      scriptWords,
+      slotWordIndexes,
+      startSlot: slotIndex,
+    });
+  });
 
-  splitBoundaries.forEach((endSlot) => {
-    if (endSlot < startSlot) return;
+  chunkStartTimes.forEach((time, index) => {
+    if (index <= 0) return;
+    const previousTime = chunkStartTimes[index - 1];
+    if (time <= previousTime) {
+      chunkStartTimes[index] = previousTime + 0.05;
+    }
+  });
 
-    const nextStartSlot = endSlot + 1;
-    const startWord = scriptWords[startSlot];
-    const nextStartWord =
-      nextStartSlot < scriptWords.length ? scriptWords[nextStartSlot] : null;
-    const endWord = scriptWords[endSlot];
-    const startTime =
-      startSlot <= 0 ? 0 : Number.isFinite(startWord?.start) ? startWord.start : 0;
-    const endTime = nextStartWord
-      ? nextStartWord.start
-      : durationSeconds || endWord?.end || startTime;
+  chunkStarts.forEach((startSlot, chunkIndex) => {
+    const endSlot = splitBoundaries[chunkIndex];
+    if (endSlot === undefined || endSlot < startSlot) return;
+
+    const startTime = Math.max(0, chunkStartTimes[chunkIndex] ?? 0);
+    const nextStartTime = chunkStartTimes[chunkIndex + 1];
+    const endTime = Math.max(
+      startTime,
+      nextStartTime ?? audioEndTime,
+    );
     const textBreaks = displayBreaks.filter(
       (breakIndex) => breakIndex >= startSlot && breakIndex < endSlot,
     );
@@ -262,18 +416,26 @@ function scriptDisplayChunkSpecsFromPayload(
 
     specs.push({
       endSlot,
-      endTime: Math.max(startTime, endTime),
+      endTime,
       fullText,
       id: `${messageId}:chunk:${specs.length}`,
       index: specs.length,
       scriptWords,
+      slotStartTimes: slotStartTimesForChunk({
+        displaySlotCount: displaySlots.length,
+        durationSeconds: audioEndTime,
+        endSlot,
+        endTime,
+        scriptWords,
+        slotWordIndexes,
+        startSlot,
+        startTime,
+      }),
       startSlot,
       startTime,
       textBreaks,
       textSlots: displaySlots,
     });
-
-    startSlot = nextStartSlot;
   });
 
   return specs.length > 1 ? specs : [];
@@ -301,8 +463,8 @@ function scriptDisplayChunkStatesAt(
 
     if (hasStarted) {
       for (let index = chunk.startSlot; index <= chunk.endSlot; index += 1) {
-        const word = chunk.scriptWords[index];
-        if (word && currentTime + 0.015 >= word.start) {
+        const slotTime = chunk.slotStartTimes[index - chunk.startSlot];
+        if (Number.isFinite(slotTime) && currentTime + 0.015 >= slotTime) {
           visibleEndSlot = index;
         }
       }

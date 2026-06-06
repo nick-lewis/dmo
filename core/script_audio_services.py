@@ -290,7 +290,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         timing_preview = words[:12]
         timed_marker_count = sum(
             1
-            for marker in script_cues_with_word_times(markers, words)
+            for marker in script_cues_with_word_times(markers, words, script)
             if isinstance(marker.get("time"), (int, float))
         )
     display_slots = load_script_audio_display_slots(script)
@@ -781,6 +781,7 @@ def cached_script_audio_payload(session, script, script_cues=None):
             payload["scriptCues"] = script_cues_with_word_times(
                 script_cues,
                 script_words,
+                script,
             )
     return payload
 
@@ -859,7 +860,7 @@ def generate_message_script_audio_payload(
             script=script,
         )
         display_payload = runtime_script_audio_display_payload(script)
-        script_cues = script_cues_with_word_times(script_cues, script_words)
+        script_cues = script_cues_with_word_times(script_cues, script_words, script)
         next_metadata = dict(metadata)
         next_metadata["scriptCues"] = script_cues
         script_audio = dict(next_metadata.get("scriptAudio") or {})

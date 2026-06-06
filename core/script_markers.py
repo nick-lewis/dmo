@@ -17,6 +17,7 @@ SCRIPT_MARKER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SCRIPT_WORD_PATTERN = re.compile(r"\S+")
+SCRIPT_TIMING_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 SCRIPT_MARKER_TIMING_ARG_PATTERN = re.compile(
     r"^@\s*(\d+(?:\.\d+)?)\s*(ms|s)?$",
     re.IGNORECASE,
@@ -29,6 +30,70 @@ def normalize_script_speech(text):
 
 def script_word_count(text):
     return len(SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text)))
+
+
+def normalize_script_timing_token(value):
+    text = (
+        str(value or "")
+        .lower()
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u2032", "'")
+    )
+    return "".join(SCRIPT_TIMING_TOKEN_PATTERN.findall(text))
+
+
+def script_timing_tokens(text):
+    return [
+        normalize_script_timing_token(word)
+        for word in SCRIPT_WORD_PATTERN.findall(normalize_script_speech(text))
+    ]
+
+
+def align_script_words_to_timing_words(script_text, words):
+    script_tokens = script_timing_tokens(script_text)
+    timing_tokens = [
+        normalize_script_timing_token(word.get("word"))
+        for word in words
+        if isinstance(word, dict)
+    ]
+    if not script_tokens or not timing_tokens:
+        return []
+
+    if len(script_tokens) == len(timing_tokens):
+        return list(range(len(script_tokens)))
+
+    row_count = len(script_tokens) + 1
+    column_count = len(timing_tokens) + 1
+    costs = [[0 for _ in range(column_count)] for _ in range(row_count)]
+    for row in range(len(script_tokens) - 1, -1, -1):
+        for column in range(len(timing_tokens) - 1, -1, -1):
+            if script_tokens[row] and script_tokens[row] == timing_tokens[column]:
+                costs[row][column] = costs[row + 1][column + 1] + 1
+            else:
+                costs[row][column] = max(
+                    costs[row + 1][column],
+                    costs[row][column + 1],
+                )
+
+    word_indexes = [-1 for _ in script_tokens]
+    row = 0
+    column = 0
+    while row < len(script_tokens) and column < len(timing_tokens):
+        if (
+            script_tokens[row]
+            and script_tokens[row] == timing_tokens[column]
+            and costs[row][column] == costs[row + 1][column + 1] + 1
+        ):
+            word_indexes[row] = column
+            row += 1
+            column += 1
+        elif costs[row + 1][column] >= costs[row][column + 1]:
+            row += 1
+        else:
+            column += 1
+
+    return word_indexes
 
 
 def parse_script_marker_args(args_text):
@@ -152,7 +217,16 @@ def parse_script_markers(script_text):
     return spoken_text, markers
 
 
-def script_cue_time_from_words(cue, words):
+def script_cue_time_from_progress(cue, words):
+    try:
+        progress = float(cue.get("progress", 0) or 0)
+    except (TypeError, ValueError):
+        progress = 0
+    duration = float(words[-1].get("end", 0) or 0)
+    return round(max(0.0, duration * min(1.0, max(0.0, progress))), 3)
+
+
+def script_cue_time_from_words(cue, words, word_indexes=None):
     if not words:
         return None
 
@@ -165,12 +239,14 @@ def script_cue_time_from_words(cue, words):
         word_index = None
 
     if word_index is None:
-        try:
-            progress = float(cue.get("progress", 0) or 0)
-        except (TypeError, ValueError):
-            progress = 0
-        duration = float(words[-1].get("end", 0) or 0)
-        return round(max(0.0, duration * min(1.0, max(0.0, progress))), 3)
+        return script_cue_time_from_progress(cue, words)
+
+    if word_indexes:
+        if 0 <= word_index < len(word_indexes):
+            mapped_index = word_indexes[word_index]
+            if mapped_index >= 0 and mapped_index < len(words):
+                return round(float(words[mapped_index].get("start", 0) or 0), 3)
+        return script_cue_time_from_progress(cue, words)
 
     if word_index <= 0:
         return 0.0
@@ -179,11 +255,12 @@ def script_cue_time_from_words(cue, words):
     return round(float(words[word_index].get("start", 0) or 0), 3)
 
 
-def script_cues_with_word_times(cues, words):
+def script_cues_with_word_times(cues, words, script_text=""):
     if not isinstance(cues, list):
         return []
 
     timed_cues = []
+    word_indexes = align_script_words_to_timing_words(script_text, words) if script_text else []
     for cue in cues:
         if not isinstance(cue, dict):
             continue
@@ -196,7 +273,7 @@ def script_cues_with_word_times(cues, words):
         if explicit_time is not None:
             next_cue["time"] = round(max(0.0, explicit_time), 3)
         else:
-            cue_time = script_cue_time_from_words(next_cue, words)
+            cue_time = script_cue_time_from_words(next_cue, words, word_indexes)
             if cue_time is not None:
                 next_cue["time"] = cue_time
         timed_cues.append(next_cue)
