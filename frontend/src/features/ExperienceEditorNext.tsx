@@ -5,6 +5,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -2041,7 +2042,6 @@ function ScriptActionReadOnlyView({
                 >
                   {row.marker ? (
                     <div className="next-script-slide-anchor">
-                      <span>{row.label}</span>
                       {renderActionToken(row.marker)}
                     </div>
                   ) : row.label !== "No slide" ? (
@@ -2233,7 +2233,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const activeScriptDeckUrl = activeScriptStep
     ? stringConfigValue(activeScriptStep.config, "deckUrl")
     : "";
-  const activeScriptMarkers = parseScriptMarkerInstances(activeScriptText);
+  const activeScriptMarkers = useMemo(
+    () => parseScriptMarkerInstances(activeScriptText),
+    [activeScriptText],
+  );
   const activeAudioScriptText = spokenTextFromMarkedScript(activeScriptText);
   const activeScriptAudioItem = scriptAudioItemForScriptText(
     scriptAudioItems,
@@ -2268,12 +2271,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         activeDisplaySlots.length,
       )
     : [];
-  const activeScriptActionView = projectScriptActionsToDisplayText({
-    displayBreaks: activeDisplayEditorBreaks,
-    displaySlots: activeDisplaySlots,
-    markers: activeScriptMarkers,
-    sourceText: activeScriptText,
-  });
+  const activeScriptActionViewKey = displayDraftKey(
+    activeDisplaySlots,
+    activeDisplayEditorBreaks,
+  );
+  const activeScriptActionView = useMemo(
+    () =>
+      projectScriptActionsToDisplayText({
+        displayBreaks: activeDisplayEditorBreaks,
+        displaySlots: activeDisplaySlots,
+        markers: activeScriptMarkers,
+        sourceText: activeScriptText,
+      }),
+    [
+      activeScriptActionViewKey,
+      activeScriptMarkers,
+      activeScriptText,
+    ],
+  );
   const activeAudioScriptVisualText =
     activeDisplayBreaks.length && activeAudioScriptText
       ? displayTextFromSlots(
@@ -2524,7 +2539,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     );
     if (!deckUrl || !slideRefs.length) return;
 
-    let isCancelled = false;
     slideRefs.forEach((slideRef) => {
       const previewKey = slidePreviewKeyForDeck(deckUrl, slideRef);
       const currentPreview = scriptSlidePreviews[previewKey];
@@ -2545,17 +2559,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         body: JSON.stringify({ deckUrl, slideRef }),
       })
         .then((payload) => {
-          if (isCancelled) return;
           setScriptSlidePreviews((current) => ({
             ...current,
             [previewKey]: {
-              imageUrl: payload.imageUrl,
+              detail: payload.pageId,
+              imageUrl: `${payload.imageUrl}?v=${Date.now()}`,
               status: "ready",
             },
           }));
         })
         .catch((error) => {
-          if (isCancelled) return;
           setScriptSlidePreviews((current) => ({
             ...current,
             [previewKey]: {
@@ -2568,15 +2581,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           }));
         });
     });
-
-    return () => {
-      isCancelled = true;
-    };
   }, [
     activeScriptDeckUrl,
     activeScriptDetailTab,
     activeScriptActionView.rows,
-    scriptSlidePreviews,
   ]);
 
   useEffect(() => {
