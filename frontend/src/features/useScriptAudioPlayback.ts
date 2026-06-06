@@ -33,7 +33,7 @@ const scriptTextStreamFallbackMs = 8000;
 const scriptTextStreamMinMs = 1600;
 const scriptImmediateCueProgress = 0.001;
 export const scriptTextAudioRevealSpeedStorageKey =
-  "dlu.script-text-audio-reveal-speed.v1";
+  "dlu.script-text-audio-reveal-speed.v2";
 export const defaultScriptTextAudioRevealSpeed = 1.65;
 
 function clamp(value: number, min: number, max: number) {

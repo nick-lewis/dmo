@@ -423,7 +423,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 30px;
+  min-height: 34px;
   padding: 0 2px;
 }
 
@@ -431,8 +431,8 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: 999px;
@@ -460,6 +460,11 @@ button {
 .study-back-button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+.study-back-button svg {
+  width: 17px;
+  height: 17px;
 }
 
 .study-actions {
