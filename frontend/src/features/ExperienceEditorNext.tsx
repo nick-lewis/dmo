@@ -4343,7 +4343,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         ) : null}
 
         {experience ? (
-          <section className="editor-section next-editor-overview-section">
+          <section className="next-editor-overview-section">
             <div className="next-overview-editor">
               <button
                 aria-label="Run experience"

@@ -649,9 +649,9 @@ button {
 
 .next-overview-editor {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -659,9 +659,9 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-top: 4px;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-soft-border));
   border-radius: 999px;
   color: white;
@@ -693,20 +693,20 @@ button {
 }
 
 .overview-title-text {
-  min-height: 38px;
-  padding: 1px 4px 2px;
+  min-height: 28px;
+  padding: 0 3px 1px;
   color: var(--page-ink);
-  font-size: 1.42rem;
-  font-weight: 780;
+  font-size: 1.08rem;
+  font-weight: 760;
 }
 
 .overview-description-text {
-  min-height: 26px;
-  padding: 1px 4px 2px;
+  min-height: 21px;
+  padding: 0 3px 1px;
   color: var(--muted-ink);
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   font-weight: 650;
-  line-height: 1.35;
+  line-height: 1.26;
   field-sizing: content;
   overflow: hidden;
   resize: none;
@@ -902,30 +902,30 @@ button {
 }
 
 .next-editor-overview-section {
-  --next-tutor-action-size: 30px;
-  --next-tutor-float-gap: 12px;
-  --next-tutor-float-offset: 136px;
-  --next-tutor-inline-size: 124px;
+  --next-tutor-action-size: 24px;
+  --next-tutor-inline-size: 76px;
+  --next-tutor-presence-height: 58px;
 
   position: relative;
   z-index: 140;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 0;
-  margin-left: var(--next-tutor-float-offset);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--next-tutor-inline-size);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 0 2px;
   overflow: visible;
 }
 
 .next-tutor-presence {
-  position: absolute;
+  position: relative;
   z-index: 150;
-  top: 50%;
-  left: calc(-1 * (var(--next-tutor-inline-size) + var(--next-tutor-float-gap)));
-  height: calc(100% + 18px);
+  justify-self: end;
+  align-self: center;
+  height: var(--next-tutor-presence-height);
   width: var(--next-tutor-inline-size);
   min-width: 0;
   padding: 0;
-  transform: translateY(-50%);
 }
 
 .next-tutor-avatar-wrap {
@@ -943,7 +943,7 @@ button {
   height: 100%;
   border-radius: 10px;
   object-fit: contain;
-  transform: scale(1.24);
+  transform: scale(1.12);
   background: transparent;
 }
 
@@ -971,13 +971,13 @@ button {
 }
 
 .next-tutor-play-button {
-  right: 2px;
-  bottom: 2px;
+  right: 1px;
+  bottom: 1px;
 }
 
 .next-tutor-settings-button {
-  top: 2px;
-  right: 2px;
+  top: 1px;
+  right: 1px;
 }
 
 .next-tutor-avatar-wrap:hover .next-tutor-play-button,
@@ -1008,12 +1008,12 @@ button {
 .next-tutor-settings-menu {
   position: absolute;
   top: calc(100% + 8px);
-  left: 0;
+  right: 0;
   z-index: 160;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  width: min(520px, calc(100vw - 54px));
+  width: min(520px, calc(100vw - 32px));
   max-height: calc(100vh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -2452,23 +2452,22 @@ button {
   }
 
   .next-editor-overview-section {
-    --next-tutor-action-size: 28px;
-    --next-tutor-float-gap: 10px;
-    --next-tutor-float-offset: 104px;
-    --next-tutor-inline-size: 94px;
+    --next-tutor-action-size: 23px;
+    --next-tutor-inline-size: 68px;
+    --next-tutor-presence-height: 52px;
 
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    margin-left: var(--next-tutor-float-offset);
+    grid-template-columns: minmax(0, 1fr) var(--next-tutor-inline-size);
+    gap: 10px;
   }
 
   .next-tutor-presence {
     width: var(--next-tutor-inline-size);
+    height: var(--next-tutor-presence-height);
     min-width: 0;
   }
 
   .next-tutor-settings-menu {
-    left: 0;
+    right: 0;
     width: min(520px, calc(100vw - 32px));
     grid-template-columns: minmax(0, 1fr);
   }
