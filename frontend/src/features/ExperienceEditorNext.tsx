@@ -45,6 +45,7 @@ import {
   spokenTextFromMarkedScript,
 } from "../scriptMarkers";
 import {
+  scriptAudioItemIsReady,
   scriptAudioItemNeedsGeneration,
   scriptAudioMissingItems,
 } from "../scriptAudio";
@@ -1129,6 +1130,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const activeScriptAudioNeedsGeneration = activeScriptAudioItem
     ? scriptAudioItemNeedsGeneration(activeScriptAudioItem)
     : false;
+  const activeScriptAudioReady = activeScriptAudioItem
+    ? scriptAudioItemIsReady(activeScriptAudioItem)
+    : false;
   const isActiveScriptAudioPlaying =
     Boolean(activeScriptAudioItem) &&
     playingScriptAudioId === activeScriptAudioItem?.id;
@@ -1293,6 +1297,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     void loadScriptAudioItems(experience.id, false);
   }, [experience?.id, status]);
+
+  useEffect(() => {
+    if (activeScriptDetailTab === "display" && !activeScriptAudioReady) {
+      setActiveScriptDetailTab("audio");
+    }
+  }, [activeScriptAudioReady, activeScriptDetailTab]);
 
   useEffect(() => {
     saveDisplayTranscriptRef.current = saveScriptAudioDisplayTranscript;
@@ -2418,10 +2428,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               Audio script
             </button>
             <button
+              aria-disabled={activeScriptAudioReady ? "false" : "true"}
               aria-selected={activeScriptDetailTab === "display" ? "true" : "false"}
               className={activeScriptDetailTab === "display" ? "is-active" : ""}
-              onClick={() => setActiveScriptDetailTab("display")}
+              onClick={() => {
+                if (!activeScriptAudioReady) return;
+                setActiveScriptDetailTab("display");
+              }}
               role="tab"
+              title={
+                activeScriptAudioReady
+                  ? "Edit display text"
+                  : "Generate this audio before editing display text."
+              }
               type="button"
             >
               Display Text

@@ -1599,8 +1599,9 @@ button {
 }
 
 .next-script-tabs button[aria-disabled="true"] {
+  border-bottom: 1px dotted color-mix(in srgb, var(--muted-ink) 34%, transparent);
   color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
-  cursor: default;
+  cursor: help;
 }
 
 .next-script-tabs button:not([aria-disabled="true"]):hover,
