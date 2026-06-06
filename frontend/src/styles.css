@@ -1652,21 +1652,62 @@ button {
 }
 
 .next-script-view {
-  display: grid;
-  grid-template-rows: minmax(180px, auto) minmax(160px, 1fr);
-  gap: 12px;
   min-height: min(620px, calc(100vh - 280px));
 }
 
-.next-script-view-document {
-  min-height: 180px;
-  max-height: min(360px, calc(48vh - 120px));
+.next-script-slide-flow {
+  height: min(620px, calc(100vh - 280px));
+  min-height: min(620px, calc(100vh - 280px));
   overflow: auto;
-  padding: 12px 13px;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 78%, transparent);
   border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 42%, transparent);
+}
+
+.next-script-slide-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 30%);
+  min-height: 132px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-soft-border) 58%, transparent);
+}
+
+.next-script-slide-row:last-child {
+  border-bottom: 0;
+}
+
+.next-script-slide-row.has-slide {
+  background: color-mix(in srgb, var(--accent-soft) 14%, transparent);
+}
+
+.next-script-slide-row.has-no-slide {
+  background: color-mix(in srgb, var(--panel-bg-strong) 40%, transparent);
+}
+
+.next-script-slide-script {
+  min-width: 0;
+  padding: 13px 14px 15px;
+  cursor: text;
+}
+
+.next-script-slide-anchor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.next-script-slide-anchor span {
+  color: color-mix(in srgb, var(--muted-ink) 80%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.next-script-slide-anchor.is-muted {
+  opacity: 0.72;
+}
+
+.next-script-segment-document {
   color: color-mix(in srgb, var(--page-ink) 88%, var(--muted-ink));
-  background: color-mix(in srgb, var(--panel-bg-strong) 58%, transparent);
   font-size: 0.9rem;
   line-height: 1.75;
   white-space: pre-wrap;
@@ -1687,6 +1728,35 @@ button {
   border: 1px dotted color-mix(in srgb, var(--muted-ink) 40%, transparent);
   border-radius: 7px;
   background: transparent;
+}
+
+.next-script-slide-preview {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 12px 12px 12px 14px;
+  border-left: 1px solid color-mix(in srgb, var(--panel-soft-border) 52%, transparent);
+}
+
+.next-script-slide-preview img {
+  display: block;
+  width: 100%;
+  max-height: 156px;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.next-script-slide-preview span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 96px;
+  border: 1px dotted color-mix(in srgb, var(--panel-soft-border) 88%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted-ink) 76%, transparent);
+  font-size: 0.72rem;
 }
 
 .next-script-action-token {
@@ -1718,66 +1788,6 @@ button {
 .next-script-action-token:focus-visible {
   outline: 2px solid color-mix(in srgb, currentColor 22%, transparent);
   outline-offset: 2px;
-}
-
-.next-script-slide-table {
-  overflow: auto;
-  border-top: 1px solid color-mix(in srgb, var(--panel-soft-border) 72%, transparent);
-}
-
-.next-script-slide-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 28%);
-  min-height: 118px;
-  border-bottom: 1px solid color-mix(in srgb, var(--panel-soft-border) 58%, transparent);
-}
-
-.next-script-slide-copy {
-  min-width: 0;
-  padding: 12px 12px 12px 2px;
-}
-
-.next-script-slide-copy span {
-  display: block;
-  margin-bottom: 6px;
-  color: color-mix(in srgb, var(--muted-ink) 80%, var(--page-ink));
-  font-size: 0.72rem;
-  font-weight: 820;
-}
-
-.next-script-slide-copy p {
-  margin: 0;
-  color: color-mix(in srgb, var(--page-ink) 86%, var(--muted-ink));
-  font-size: 0.84rem;
-  line-height: 1.55;
-}
-
-.next-script-slide-preview {
-  display: grid;
-  place-items: center;
-  min-width: 0;
-  padding: 10px 0 10px 12px;
-}
-
-.next-script-slide-preview img {
-  display: block;
-  width: 100%;
-  max-height: 150px;
-  object-fit: contain;
-  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
-  border-radius: 6px;
-  background: #fff;
-}
-
-.next-script-slide-preview span {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  min-height: 92px;
-  border: 1px dotted color-mix(in srgb, var(--panel-soft-border) 88%, transparent);
-  border-radius: 6px;
-  color: color-mix(in srgb, var(--muted-ink) 76%, transparent);
-  font-size: 0.72rem;
 }
 
 .next-script-action-popover {

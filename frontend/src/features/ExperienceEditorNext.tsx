@@ -181,12 +181,13 @@ type ScriptActionMenuState =
       y: number;
     };
 
-type ScriptSlideRow = {
+type ScriptActionRow = {
   key: string;
   label: string;
   marker: ScriptMarkerInstance | null;
-  scriptText: string;
   slideRef: string;
+  textEnd: number;
+  textStart: number;
 };
 
 const displayDocumentHistoryLimit = 80;
@@ -504,48 +505,49 @@ function mergeMarkersIntoSpokenText(
     );
 }
 
-function slideRowsFromScript(text: string, markers: ScriptMarkerInstance[]) {
+function scriptActionRowsFromScript(
+  text: string,
+  markers: ScriptMarkerInstance[],
+) {
   const slideMarkers = markers.filter(isSlideMarker);
   if (!slideMarkers.length) {
-    const scriptText = spokenTextFromMarkedScript(text);
-    return scriptText
+    return text.trim()
       ? [
           {
             key: "script",
             label: "No slide",
             marker: null,
-            scriptText,
             slideRef: "",
+            textEnd: text.length,
+            textStart: 0,
           },
         ]
       : [];
   }
 
-  const rows: ScriptSlideRow[] = [];
+  const rows: ScriptActionRow[] = [];
   const firstSlide = slideMarkers[0];
-  const preSlideText = spokenTextFromMarkedScript(text.slice(0, firstSlide.start));
-  if (preSlideText) {
+  if (text.slice(0, firstSlide.start).trim()) {
     rows.push({
       key: "before",
       label: "Before slide",
       marker: null,
-      scriptText: preSlideText,
       slideRef: "",
+      textEnd: firstSlide.start,
+      textStart: 0,
     });
   }
 
   slideMarkers.forEach((marker, index) => {
     const nextMarker = slideMarkers[index + 1] ?? null;
-    const scriptText = spokenTextFromMarkedScript(
-      text.slice(marker.end, nextMarker?.start ?? text.length),
-    );
     const slideRef = marker.argList[0]?.trim() || "1";
     rows.push({
       key: markerEditKey(marker),
       label: `Slide ${slideRef}`,
       marker,
-      scriptText,
       slideRef,
+      textEnd: nextMarker?.start ?? text.length,
+      textStart: marker.end,
     });
   });
 
@@ -1186,6 +1188,7 @@ function DisplayTextEditor({
 }
 
 function ScriptActionReadOnlyView({
+  actionRows,
   deckUrl,
   displayBreaks,
   markers,
@@ -1193,9 +1196,9 @@ function ScriptActionReadOnlyView({
   onOpenMarker,
   onRemoveMarker,
   previews,
-  slideRows,
   text,
 }: {
+  actionRows: ScriptActionRow[];
   deckUrl: string;
   displayBreaks: number[];
   markers: ScriptMarkerInstance[];
@@ -1209,7 +1212,6 @@ function ScriptActionReadOnlyView({
   ) => void;
   onRemoveMarker: (marker: ScriptMarkerInstance) => void;
   previews: Record<string, ScriptSlidePreview>;
-  slideRows: ScriptSlideRow[];
   text: string;
 }) {
   const breakCounts = new Map<number, number>();
@@ -1217,11 +1219,39 @@ function ScriptActionReadOnlyView({
     breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
   });
 
-  const nodes: Array<JSX.Element | string> = [];
-  let cursor = 0;
   let wordIndex = 0;
 
-  function appendTextSegment(segment: string, offset: number, keyPrefix: string) {
+  function renderActionToken(marker: ScriptMarkerInstance) {
+    return (
+      <button
+        className={[
+          "next-script-action-token",
+          markerStyleType(marker) === "slide" ? "is-slide" : "is-action",
+        ].join(" ")}
+        key={markerEditKey(marker)}
+        onClick={(event) => onOpenMarker(marker, event)}
+        onContextMenu={(event) => onOpenMarker(marker, event)}
+        onKeyDown={(event) => {
+          if (event.key !== "Backspace" && event.key !== "Delete") return;
+          event.preventDefault();
+          onRemoveMarker(marker);
+        }}
+        title={marker.marker}
+        type="button"
+      >
+        {isSlideMarker(marker)
+          ? `Slide ${marker.argList[0]?.trim() || "1"}`
+          : marker.label}
+      </button>
+    );
+  }
+
+  function appendTextSegment(
+    nodes: Array<JSX.Element | string>,
+    segment: string,
+    offset: number,
+    keyPrefix: string,
+  ) {
     const pieces = segment.match(/\s+|\S+/g) ?? [];
     let pieceOffset = 0;
     pieces.forEach((piece, index) => {
@@ -1256,37 +1286,43 @@ function ScriptActionReadOnlyView({
     });
   }
 
-  markers.forEach((marker, index) => {
-    if (marker.start > cursor) {
-      appendTextSegment(text.slice(cursor, marker.start), cursor, `text-${index}`);
-    }
-    nodes.push(
-      <button
-        className={[
-          "next-script-action-token",
-          markerStyleType(marker) === "slide" ? "is-slide" : "is-action",
-        ].join(" ")}
-        key={markerEditKey(marker)}
-        onClick={(event) => onOpenMarker(marker, event)}
-        onContextMenu={(event) => onOpenMarker(marker, event)}
-        onKeyDown={(event) => {
-          if (event.key !== "Backspace" && event.key !== "Delete") return;
-          event.preventDefault();
-          onRemoveMarker(marker);
-        }}
-        title={marker.marker}
-        type="button"
-      >
-        {isSlideMarker(marker)
-          ? `Slide ${marker.argList[0]?.trim() || "1"}`
-          : marker.label}
-      </button>,
-    );
-    cursor = marker.end;
-  });
+  function renderSegmentNodes(
+    textStart: number,
+    textEnd: number,
+    keyPrefix: string,
+  ) {
+    const nodes: Array<JSX.Element | string> = [];
+    let cursor = textStart;
+    markers
+      .filter(
+        (marker) =>
+          !isSlideMarker(marker) &&
+          marker.start >= textStart &&
+          marker.end <= textEnd,
+      )
+      .forEach((marker, index) => {
+        if (marker.start > cursor) {
+          appendTextSegment(
+            nodes,
+            text.slice(cursor, marker.start),
+            cursor,
+            `${keyPrefix}-text-${index}`,
+          );
+        }
+        nodes.push(renderActionToken(marker));
+        cursor = marker.end;
+      });
 
-  if (cursor < text.length) {
-    appendTextSegment(text.slice(cursor), cursor, "tail");
+    if (cursor < textEnd) {
+      appendTextSegment(
+        nodes,
+        text.slice(cursor, textEnd),
+        cursor,
+        `${keyPrefix}-tail`,
+      );
+    }
+
+    return nodes;
   }
 
   function handleScriptClick(event: ReactMouseEvent<HTMLDivElement>) {
@@ -1294,9 +1330,14 @@ function ScriptActionReadOnlyView({
     if (!target) return;
     if (target.closest(".next-script-action-token")) return;
 
+    const insertRegion = target.closest<HTMLElement>("[data-default-insert]");
+    const defaultInsertionIndex = Number(insertRegion?.dataset.defaultInsert);
     const insertTarget = target.closest<HTMLElement>("[data-insert-before]");
     if (!insertTarget) {
-      onOpenInsert(text.length, event);
+      onOpenInsert(
+        Number.isFinite(defaultInsertionIndex) ? defaultInsertionIndex : text.length,
+        event,
+      );
       return;
     }
 
@@ -1316,49 +1357,96 @@ function ScriptActionReadOnlyView({
   return (
     <div className="next-script-view">
       <div
-        aria-label="Script view"
-        className="next-script-view-document"
-        onClick={handleScriptClick}
+        aria-label="Slides and actions"
+        className="next-script-slide-flow"
+        role="table"
       >
-        {nodes.length ? nodes : (
-          <button
-            className="next-script-view-empty"
-            onClick={(event) => onOpenInsert(0, event)}
-            type="button"
-          />
-        )}
-      </div>
-      <div className="next-script-slide-table" role="table">
-        {slideRows.map((row) => {
-          const previewKey = row.slideRef
-            ? slidePreviewKeyForDeck(deckUrl, row.slideRef)
-            : "";
-          const preview = previewKey ? previews[previewKey] : null;
+        {actionRows.length ? (
+          actionRows.map((row) => {
+            const rowNodes = renderSegmentNodes(
+              row.textStart,
+              row.textEnd,
+              row.key,
+            );
+            const previewKey = row.slideRef
+              ? slidePreviewKeyForDeck(deckUrl, row.slideRef)
+              : "";
+            const preview = previewKey ? previews[previewKey] : null;
 
-          return (
-            <div className="next-script-slide-row" key={row.key} role="row">
-              <div className="next-script-slide-copy" role="cell">
-                <span>{row.label}</span>
-                <p>{row.scriptText}</p>
+            return (
+              <div
+                className={[
+                  "next-script-slide-row",
+                  row.marker ? "has-slide" : "has-no-slide",
+                ].join(" ")}
+                key={row.key}
+                role="row"
+              >
+                <div
+                  className="next-script-slide-script"
+                  data-default-insert={row.textEnd}
+                  onClick={handleScriptClick}
+                  role="cell"
+                >
+                  {row.marker ? (
+                    <div className="next-script-slide-anchor">
+                      <span>{row.label}</span>
+                      {renderActionToken(row.marker)}
+                    </div>
+                  ) : row.label !== "No slide" ? (
+                    <div className="next-script-slide-anchor is-muted">
+                      <span>{row.label}</span>
+                    </div>
+                  ) : null}
+                  <div className="next-script-segment-document">
+                    {rowNodes.length ? rowNodes : (
+                      <button
+                        className="next-script-view-empty"
+                        onClick={(event) => onOpenInsert(row.textStart, event)}
+                        type="button"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="next-script-slide-preview" role="cell">
+                  {row.slideRef &&
+                  preview?.status === "ready" &&
+                  preview.imageUrl ? (
+                    <img alt={row.label} src={preview.imageUrl} />
+                  ) : (
+                    <span>
+                      {!row.slideRef
+                        ? ""
+                        : !deckUrl.trim()
+                          ? "Deck URL needed"
+                          : preview?.status === "loading"
+                            ? "Loading"
+                            : preview?.detail || "Slide unavailable"}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="next-script-slide-preview" role="cell">
-                {row.slideRef && preview?.status === "ready" && preview.imageUrl ? (
-                  <img alt={row.label} src={preview.imageUrl} />
-                ) : (
-                  <span>
-                    {!row.slideRef
-                      ? ""
-                      : !deckUrl.trim()
-                        ? "Deck URL needed"
-                        : preview?.status === "loading"
-                          ? "Loading"
-                          : preview?.detail || "Slide unavailable"}
-                  </span>
-                )}
-              </div>
+            );
+          })
+        ) : (
+          <div className="next-script-slide-row has-no-slide is-empty" role="row">
+            <div
+              className="next-script-slide-script"
+              data-default-insert={0}
+              onClick={handleScriptClick}
+              role="cell"
+            >
+              <button
+                className="next-script-view-empty"
+                onClick={(event) => onOpenInsert(0, event)}
+                type="button"
+              />
             </div>
-          );
-        })}
+            <div className="next-script-slide-preview" role="cell">
+              <span />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1476,7 +1564,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     ? stringConfigValue(activeScriptStep.config, "deckUrl")
     : "";
   const activeScriptMarkers = parseScriptMarkerInstances(activeScriptText);
-  const activeScriptSlideRows = slideRowsFromScript(
+  const activeScriptActionRows = scriptActionRowsFromScript(
     activeScriptText,
     activeScriptMarkers,
   );
@@ -1687,7 +1775,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const deckUrl = activeScriptDeckUrl.trim();
     const slideRefs = Array.from(
       new Set(
-        activeScriptSlideRows
+        activeScriptActionRows
           .map((row) => row.slideRef.trim())
           .filter(Boolean),
       ),
@@ -2965,17 +3053,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               role="tab"
               type="button"
             >
-              Audio script
-            </button>
-            <button
-              aria-selected={activeScriptDetailTab === "script" ? "true" : "false"}
-              className={activeScriptDetailTab === "script" ? "is-active" : ""}
-              onClick={() => setActiveScriptDetailTab("script")}
-              role="tab"
-              title="Place script actions"
-              type="button"
-            >
-              Script View
+              Audio
             </button>
             <button
               aria-disabled={activeScriptAudioReady ? "false" : "true"}
@@ -2995,6 +3073,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             >
               Display Text
             </button>
+            <button
+              aria-selected={activeScriptDetailTab === "script" ? "true" : "false"}
+              className={activeScriptDetailTab === "script" ? "is-active" : ""}
+              onClick={() => setActiveScriptDetailTab("script")}
+              role="tab"
+              title="Place slides and actions"
+              type="button"
+            >
+              Slides &amp; Actions
+            </button>
           </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
@@ -3010,6 +3098,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           />
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView
+            actionRows={activeScriptActionRows}
             deckUrl={activeScriptDeckUrl}
             displayBreaks={activeDisplayBreaks}
             markers={activeScriptMarkers}
@@ -3017,7 +3106,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             onOpenMarker={openScriptMarkerMenu}
             onRemoveMarker={removeScriptActionMarker}
             previews={scriptSlidePreviews}
-            slideRows={activeScriptSlideRows}
             text={activeScriptText}
           />
         ) : (
