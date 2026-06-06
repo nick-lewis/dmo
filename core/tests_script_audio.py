@@ -659,6 +659,8 @@ class ScriptAudioCachePayloadTests(TestCase):
                 payload = cached_script_audio_payload(session, script)
 
         self.assertEqual(payload["displayText"], display_text)
+        self.assertEqual(payload["displayBreaks"], [])
+        self.assertEqual(payload["displaySlots"], display_slots)
 
     @override_settings(OPENAI_API_KEY="test-key")
     def test_message_audio_generation_keeps_display_formatting_when_timing_words_differ(self):
@@ -734,7 +736,17 @@ class ScriptAudioCachePayloadTests(TestCase):
 
         self.assertEqual(status_code, 200)
         self.assertEqual(error, "")
+        self.assertEqual(payload["displayBreaks"], [1])
+        self.assertEqual(payload["displaySlots"], ["First", "line", "second", "line."])
         self.assertEqual(payload["displayText"], "First line\nsecond line.")
+        self.assertEqual(
+            message.metadata["scriptAudio"]["displayBreaks"],
+            [1],
+        )
+        self.assertEqual(
+            message.metadata["scriptAudio"]["displaySlots"],
+            ["First", "line", "second", "line."],
+        )
         self.assertEqual(
             message.metadata["scriptAudio"]["displayText"],
             "First line\nsecond line.",

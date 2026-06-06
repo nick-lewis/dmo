@@ -25,6 +25,7 @@ import type {
   EventConversationChoice,
   MessageAudioPayload,
   ScriptCue,
+  ScriptWord,
   TutoringSession,
 } from "../types";
 
@@ -92,6 +93,30 @@ type ScriptTextStreamSync = {
   durationSeconds: number;
 };
 
+type ScriptDisplayChunkSpec = {
+  endSlot: number;
+  endTime: number;
+  fullText: string;
+  id: string;
+  index: number;
+  scriptWords: ScriptWord[];
+  startSlot: number;
+  startTime: number;
+  textBreaks: number[];
+  textSlots: string[];
+};
+
+type ScriptDisplayChunkState = {
+  active: boolean;
+  complete: boolean;
+  fullText: string;
+  id: string;
+  index: number;
+  streaming: boolean;
+  text: string;
+  visible: boolean;
+};
+
 export function scriptStreamIndexAtAudioTime(
   text: string,
   audioTimeSeconds: number,
@@ -126,6 +151,188 @@ export function scriptTextPreviewIndexAtAudioTime({
     durationSeconds,
     revealSpeed,
   );
+}
+
+function normalizeScriptDisplaySlots(value: string[] | undefined) {
+  if (!Array.isArray(value)) return [];
+  return value.map((slot) => (slot == null ? "" : String(slot).trim()));
+}
+
+function normalizeScriptDisplayBreaks(
+  value: number[] | undefined,
+  slotCount: number,
+) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => Number(item))
+    .filter(
+      (index) =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        (!slotCount || index < slotCount - 1),
+    )
+    .sort((left, right) => left - right);
+}
+
+function displayBreakCountMap(breaks: number[]) {
+  const counts = new Map<number, number>();
+  breaks.forEach((breakIndex) =>
+    counts.set(breakIndex, (counts.get(breakIndex) ?? 0) + 1),
+  );
+  return counts;
+}
+
+function hasStagedDisplayBreak(displayBreaks: number[] | undefined) {
+  const breakCounts = displayBreakCountMap(
+    normalizeScriptDisplayBreaks(displayBreaks, 0),
+  );
+  return [...breakCounts.values()].some((count) => count >= 2);
+}
+
+function displayTextFromSlotRange(
+  slots: string[],
+  breaks: number[],
+  startSlot: number,
+  endSlot: number,
+) {
+  if (endSlot < startSlot) return "";
+
+  const breakCounts = displayBreakCountMap(breaks);
+  const lines = [""];
+  for (let index = startSlot; index <= endSlot; index += 1) {
+    const slotText = slots[index]?.trim() ?? "";
+    if (slotText) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]} ${slotText}`.trim();
+    }
+
+    const breakCount = breakCounts.get(index) ?? 0;
+    if (breakCount === 1 && index < endSlot) {
+      lines.push("");
+    }
+  }
+  return lines.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+function scriptDisplayChunkSpecsFromPayload(
+  messageId: string,
+  payload: MessageAudioPayload,
+  durationSeconds: number,
+) {
+  const displaySlots = normalizeScriptDisplaySlots(payload.displaySlots);
+  const displayBreaks = normalizeScriptDisplayBreaks(
+    payload.displayBreaks,
+    displaySlots.length,
+  );
+  const scriptWords = Array.isArray(payload.scriptWords) ? payload.scriptWords : [];
+  const breakCounts = displayBreakCountMap(displayBreaks);
+  const splitAfterIndexes = [...breakCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([index]) => index)
+    .sort((left, right) => left - right);
+
+  if (!splitAfterIndexes.length) return [];
+  if (!displaySlots.length || displaySlots.length !== scriptWords.length) return [];
+
+  const specs: ScriptDisplayChunkSpec[] = [];
+  let startSlot = 0;
+  const splitBoundaries = [...splitAfterIndexes, displaySlots.length - 1];
+
+  splitBoundaries.forEach((endSlot) => {
+    if (endSlot < startSlot) return;
+
+    const nextStartSlot = endSlot + 1;
+    const startWord = scriptWords[startSlot];
+    const nextStartWord =
+      nextStartSlot < scriptWords.length ? scriptWords[nextStartSlot] : null;
+    const endWord = scriptWords[endSlot];
+    const startTime =
+      startSlot <= 0 ? 0 : Number.isFinite(startWord?.start) ? startWord.start : 0;
+    const endTime = nextStartWord
+      ? nextStartWord.start
+      : durationSeconds || endWord?.end || startTime;
+    const textBreaks = displayBreaks.filter(
+      (breakIndex) => breakIndex >= startSlot && breakIndex < endSlot,
+    );
+    const fullText = displayTextFromSlotRange(
+      displaySlots,
+      textBreaks,
+      startSlot,
+      endSlot,
+    );
+
+    specs.push({
+      endSlot,
+      endTime: Math.max(startTime, endTime),
+      fullText,
+      id: `${messageId}:chunk:${specs.length}`,
+      index: specs.length,
+      scriptWords,
+      startSlot,
+      startTime,
+      textBreaks,
+      textSlots: displaySlots,
+    });
+
+    startSlot = nextStartSlot;
+  });
+
+  return specs.length > 1 ? specs : [];
+}
+
+function scriptDisplayChunkStatesAt(
+  chunks: ScriptDisplayChunkSpec[],
+  audioTimeSeconds: number,
+  isDone: boolean,
+) {
+  const currentTime = Math.max(0, audioTimeSeconds);
+  let activeIndex = 0;
+
+  chunks.forEach((chunk) => {
+    if (currentTime + 0.015 >= chunk.startTime) {
+      activeIndex = chunk.index;
+    }
+  });
+
+  const states = chunks.map((chunk) => {
+    const hasStarted = isDone || currentTime + 0.015 >= chunk.startTime;
+    const isComplete = isDone || currentTime + 0.015 >= chunk.endTime;
+    const isActive = hasStarted && chunk.index === activeIndex && !isDone;
+    let visibleEndSlot = chunk.startSlot - 1;
+
+    if (hasStarted) {
+      for (let index = chunk.startSlot; index <= chunk.endSlot; index += 1) {
+        const word = chunk.scriptWords[index];
+        if (word && currentTime + 0.015 >= word.start) {
+          visibleEndSlot = index;
+        }
+      }
+    }
+
+    const text = isComplete
+      ? chunk.fullText
+      : displayTextFromSlotRange(
+          chunk.textSlots,
+          chunk.textBreaks,
+          chunk.startSlot,
+          visibleEndSlot,
+        );
+
+    return {
+      active: isActive,
+      complete: isComplete,
+      fullText: chunk.fullText,
+      id: chunk.id,
+      index: chunk.index,
+      streaming: isActive && !isComplete,
+      text,
+      visible: hasStarted || chunk.index === 0,
+    };
+  });
+
+  return {
+    activeChunkId: chunks[activeIndex]?.id ?? "",
+    states,
+  };
 }
 
 function sortedEventConversationChoices(choices: EventConversationChoice[] = []) {
@@ -294,9 +501,16 @@ export function useScriptAudioPlayback({
     durationMs: number,
     displayText = "",
     sync?: ScriptTextStreamSync,
+    displayChunks: ScriptDisplayChunkSpec[] = [],
   ) {
     const fullText = displayText.trim() || message.content;
     if (!fullText.trim()) return Promise.resolve();
+    const initialChunkState = displayChunks.length
+      ? scriptDisplayChunkStatesAt(displayChunks, 0, false)
+      : null;
+    let activeChunkId = initialChunkState?.activeChunkId || message.id;
+
+    setTurnAnchorMessageId(activeChunkId);
 
     setMessages((current) =>
       current.map((currentMessage) =>
@@ -307,6 +521,7 @@ export function useScriptAudioPlayback({
               metadata: {
                 ...currentMessage.metadata,
                 scriptHidden: false,
+                scriptDisplayChunks: initialChunkState?.states,
                 streaming: true,
               },
             }
@@ -343,6 +558,12 @@ export function useScriptAudioPlayback({
         if (scriptTextSkipRef.current === finish) {
           scriptTextSkipRef.current = null;
         }
+        const finalChunkState = displayChunks.length
+          ? scriptDisplayChunkStatesAt(displayChunks, audioDurationSeconds, true)
+          : null;
+        if (finalChunkState?.activeChunkId) {
+          setTurnAnchorMessageId(finalChunkState.activeChunkId);
+        }
         setMessages((current) =>
           current.map((currentMessage) =>
             currentMessage.id === message.id
@@ -352,6 +573,7 @@ export function useScriptAudioPlayback({
                   metadata: {
                     ...currentMessage.metadata,
                     scriptHidden: false,
+                    scriptDisplayChunks: finalChunkState?.states,
                     streaming: false,
                   },
                 }
@@ -364,27 +586,48 @@ export function useScriptAudioPlayback({
       const tick = () => {
         if (isDone) return;
 
-        const nextIndex = sync
-          ? scriptStreamIndexAtAudioTime(
-              fullText,
-              sync.audio.ended ? audioDurationSeconds : sync.audio.currentTime,
-              audioDurationSeconds,
-              revealSpeed,
-            )
-          : scriptStreamIndexAt(
-              fullText,
-              Math.min(1, (performance.now() - startedAt) / durationMs),
-            );
+        const currentAudioTime =
+          sync && sync.audio.ended ? audioDurationSeconds : sync?.audio.currentTime ?? 0;
+        const chunkState =
+          sync && displayChunks.length
+            ? scriptDisplayChunkStatesAt(
+                displayChunks,
+                currentAudioTime,
+                sync.audio.ended,
+              )
+            : null;
+        const nextIndex = chunkState
+          ? fullText.length
+          : sync
+            ? scriptStreamIndexAtAudioTime(
+                fullText,
+                currentAudioTime,
+                audioDurationSeconds,
+                revealSpeed,
+              )
+            : scriptStreamIndexAt(
+                fullText,
+                Math.min(1, (performance.now() - startedAt) / durationMs),
+              );
+        const isTextComplete = chunkState
+          ? sync?.audio.ended || currentAudioTime + 0.015 >= audioDurationSeconds
+          : nextIndex >= fullText.length;
+
+        if (chunkState?.activeChunkId && chunkState.activeChunkId !== activeChunkId) {
+          activeChunkId = chunkState.activeChunkId;
+          setTurnAnchorMessageId(activeChunkId);
+        }
 
         setMessages((current) =>
           current.map((currentMessage) =>
             currentMessage.id === message.id
               ? {
                   ...currentMessage,
-                  content: fullText.slice(0, nextIndex),
+                  content: chunkState ? fullText : fullText.slice(0, nextIndex),
                   metadata: {
                     ...currentMessage.metadata,
                     scriptHidden: false,
+                    scriptDisplayChunks: chunkState?.states,
                     streaming: true,
                   },
                 }
@@ -392,7 +635,7 @@ export function useScriptAudioPlayback({
           ),
         );
 
-        if (nextIndex >= fullText.length) {
+        if (isTextComplete) {
           finish();
           return;
         }
@@ -524,6 +767,7 @@ export function useScriptAudioPlayback({
     cueValue?: unknown,
     durationSeconds?: number | null,
     displayText = "",
+    payload?: MessageAudioPayload,
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
@@ -534,6 +778,23 @@ export function useScriptAudioPlayback({
       durationSeconds && Number.isFinite(durationSeconds)
         ? durationSeconds
         : durationMs / 1000;
+    const displayChunks = payload
+      ? scriptDisplayChunkSpecsFromPayload(
+          message.id,
+          payload,
+          fallbackDurationSeconds,
+        )
+      : [];
+    if (
+      payload &&
+      !displayChunks.length &&
+      hasStagedDisplayBreak(payload.displayBreaks)
+    ) {
+      setChatError(
+        payload.timingWarning ||
+          "Staged chat reveal needs aligned generated word timing. Regenerate audio to enable chunk timing.",
+      );
+    }
 
     const allCues = scriptCuesFromMessage(message, cueValue);
     await Promise.all([
@@ -548,7 +809,7 @@ export function useScriptAudioPlayback({
       streamScriptMessageText(message, durationMs, messageDisplayText, {
         audio,
         durationSeconds: fallbackDurationSeconds,
-      }),
+      }, displayChunks),
       playPreparedScriptAudio(
         audio,
         cues,
@@ -627,6 +888,7 @@ export function useScriptAudioPlayback({
           payload.scriptCues,
           payload.durationSeconds,
           payload.displayText,
+          payload,
         );
       } catch (error) {
         scriptTextSkipRef.current?.();

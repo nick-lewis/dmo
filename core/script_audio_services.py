@@ -150,6 +150,34 @@ def runtime_script_audio_display_text(script, expected_word_count=0):
     )
 
 
+def runtime_script_audio_display_payload(script, expected_word_count=0):
+    display_slots = load_script_audio_display_slots(script)
+    if not display_slots:
+        return {
+            "displayBreaks": [],
+            "displaySlots": [],
+            "displayText": "",
+        }
+
+    expected_count = expected_word_count or script_word_count(script)
+    if expected_count and len(display_slots) != expected_count:
+        return {
+            "displayBreaks": [],
+            "displaySlots": [],
+            "displayText": "",
+        }
+
+    display_breaks = load_script_audio_display_breaks(script, len(display_slots))
+    return {
+        "displayBreaks": display_breaks,
+        "displaySlots": display_slots,
+        "displayText": script_audio_display_text_from_slots(
+            display_slots,
+            display_breaks,
+        ),
+    }
+
+
 def save_script_audio_display_slots(
     script,
     display_slots,
@@ -731,13 +759,15 @@ def cached_script_audio_payload(session, script, script_cues=None):
             )
         except (OSError, ValueError):
             script_words = []
-    display_text = runtime_script_audio_display_text(script)
+    display_payload = runtime_script_audio_display_payload(script)
 
     payload = {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/",
         "cached": True,
         "durationSeconds": audio_duration_seconds(audio_path),
-        "displayText": display_text,
+        "displayBreaks": display_payload["displayBreaks"],
+        "displaySlots": display_payload["displaySlots"],
+        "displayText": display_payload["displayText"],
         "messageId": "",
         "audioEngine": SCRIPT_AUDIO_ENGINE,
         "audioModel": script_audio_model_for_tutor(tutor_settings),
@@ -815,7 +845,7 @@ def generate_message_script_audio_payload(
         return None, error.message, error.status_code
 
     duration_seconds = audio_duration_seconds(recording.audio_path)
-    display_text = runtime_script_audio_display_text(script)
+    display_payload = runtime_script_audio_display_payload(script)
     script_words = []
     script_cues = metadata.get("scriptCues", [])
     timing_warning = ""
@@ -828,7 +858,7 @@ def generate_message_script_audio_payload(
             safety_identifier=safety_identifier,
             script=script,
         )
-        display_text = runtime_script_audio_display_text(script)
+        display_payload = runtime_script_audio_display_payload(script)
         script_cues = script_cues_with_word_times(script_cues, script_words)
         next_metadata = dict(metadata)
         next_metadata["scriptCues"] = script_cues
@@ -837,7 +867,9 @@ def generate_message_script_audio_payload(
             {
                 "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
                 "cached": recording.cached,
-                "displayText": display_text,
+                "displayBreaks": display_payload["displayBreaks"],
+                "displaySlots": display_payload["displaySlots"],
+                "displayText": display_payload["displayText"],
                 "durationSeconds": duration_seconds,
                 "messageId": str(message.id),
                 "audioEngine": SCRIPT_AUDIO_ENGINE,
@@ -857,7 +889,9 @@ def generate_message_script_audio_payload(
     return {
         "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
         "cached": recording.cached,
-        "displayText": display_text,
+        "displayBreaks": display_payload["displayBreaks"],
+        "displaySlots": display_payload["displaySlots"],
+        "displayText": display_payload["displayText"],
         "durationSeconds": duration_seconds,
         "messageId": str(message.id),
         "audioEngine": SCRIPT_AUDIO_ENGINE,

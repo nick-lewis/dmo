@@ -35,6 +35,24 @@ function clampCueProgress(value: number) {
   return Math.min(Math.max(value, 0), 1);
 }
 
+function displaySlotsFromValue(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((slot) => (slot == null ? "" : String(slot).trim()));
+}
+
+function displayBreaksFromValue(value: unknown, slotCount = 0) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => Number(item))
+    .filter(
+      (index) =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        (!slotCount || index < slotCount - 1),
+    )
+    .sort((left, right) => left - right);
+}
+
 
 export function scriptCuesFromValue(value: unknown): ScriptCue[] {
   if (!Array.isArray(value)) return [];
@@ -122,6 +140,7 @@ export function cachedScriptAudioFromMessage(
   const voice = typeof audio.voice === "string" ? audio.voice : "";
   if (!audioUrl || !realtimeModel || !voice) return null;
   const audioScriptCues = scriptCuesFromValue(audio.scriptCues);
+  const displaySlots = displaySlotsFromValue(audio.displaySlots);
 
   return {
     audioUrl,
@@ -129,6 +148,8 @@ export function cachedScriptAudioFromMessage(
       typeof audio.audioEngine === "string" ? audio.audioEngine : "",
     audioModel: typeof audio.audioModel === "string" ? audio.audioModel : "",
     cached: Boolean(audio.cached),
+    displayBreaks: displayBreaksFromValue(audio.displayBreaks, displaySlots.length),
+    displaySlots,
     displayText: typeof audio.displayText === "string" ? audio.displayText : "",
     durationSeconds:
       typeof audio.durationSeconds === "number" &&

@@ -574,6 +574,8 @@ export type MessageAudioPayload = {
   audioEngine?: string;
   audioModel?: string;
   cached: boolean;
+  displayBreaks?: number[];
+  displaySlots?: string[];
   displayText?: string;
   durationSeconds?: number | null;
   messageId: string;

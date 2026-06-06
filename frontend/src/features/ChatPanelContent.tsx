@@ -7,7 +7,10 @@ import {
 import { publicAsset } from "../assets";
 import { SendIcon } from "../components/Icons";
 import type { RealtimeStatus } from "../realtime";
-import { displayTextFromScriptAudioMessage } from "../scriptAudio";
+import {
+  cachedScriptAudioFromMessage,
+  displayTextFromScriptAudioMessage,
+} from "../scriptAudio";
 import { choiceIconBackgroundStyle } from "../uiHelpers";
 import type {
   ApiUser,
@@ -40,6 +43,133 @@ type ChatPanelContentProps = {
   turnAnchorMessageId: string | null;
   user: ApiUser | null;
 };
+
+type ScriptDisplayChunkView = {
+  active: boolean;
+  complete: boolean;
+  fullText: string;
+  id: string;
+  index: number;
+  streaming: boolean;
+  text: string;
+  visible: boolean;
+};
+
+type RenderedChatItem = {
+  author: string;
+  body: string;
+  id: string;
+  isScriptDisplayChunk: boolean;
+  streaming: boolean;
+  tone: "student" | "tutor";
+};
+
+function scriptDisplayChunksFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+) {
+  const rawChunks = metadata?.scriptDisplayChunks;
+  if (!Array.isArray(rawChunks)) return [];
+
+  return rawChunks
+    .map((rawChunk): ScriptDisplayChunkView | null => {
+      if (!rawChunk || typeof rawChunk !== "object" || Array.isArray(rawChunk)) {
+        return null;
+      }
+
+      const chunk = rawChunk as Record<string, unknown>;
+      const id = typeof chunk.id === "string" ? chunk.id : "";
+      const index = Number(chunk.index);
+      if (!id || !Number.isInteger(index)) return null;
+
+      return {
+        active: Boolean(chunk.active),
+        complete: Boolean(chunk.complete),
+        fullText:
+          typeof chunk.fullText === "string" ? chunk.fullText : "",
+        id,
+        index,
+        streaming: Boolean(chunk.streaming),
+        text: typeof chunk.text === "string" ? chunk.text : "",
+        visible: Boolean(chunk.visible),
+      };
+    })
+    .filter((chunk): chunk is ScriptDisplayChunkView => Boolean(chunk))
+    .sort((left, right) => left.index - right.index);
+}
+
+function displayBreakCountMap(breaks: number[]) {
+  const counts = new Map<number, number>();
+  breaks.forEach((breakIndex) =>
+    counts.set(breakIndex, (counts.get(breakIndex) ?? 0) + 1),
+  );
+  return counts;
+}
+
+function displayTextFromSlotRange(
+  slots: string[],
+  breaks: number[],
+  startSlot: number,
+  endSlot: number,
+) {
+  if (endSlot < startSlot) return "";
+
+  const breakCounts = displayBreakCountMap(breaks);
+  const lines = [""];
+  for (let index = startSlot; index <= endSlot; index += 1) {
+    const slotText = slots[index]?.trim() ?? "";
+    if (slotText) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]} ${slotText}`.trim();
+    }
+
+    const breakCount = breakCounts.get(index) ?? 0;
+    if (breakCount === 1 && index < endSlot) {
+      lines.push("");
+    }
+  }
+  return lines.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+function finalScriptDisplayChunksFromMessage(message: ChatMessage) {
+  const payload = cachedScriptAudioFromMessage(message);
+  const displaySlots = payload?.displaySlots ?? [];
+  const displayBreaks = payload?.displayBreaks ?? [];
+  const breakCounts = displayBreakCountMap(displayBreaks);
+  const splitAfterIndexes = [...breakCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([index]) => index)
+    .sort((left, right) => left - right);
+  if (!displaySlots.length || !splitAfterIndexes.length) return [];
+
+  const chunks: ScriptDisplayChunkView[] = [];
+  let startSlot = 0;
+  [...splitAfterIndexes, displaySlots.length - 1].forEach((endSlot) => {
+    if (endSlot < startSlot) return;
+    const textBreaks = displayBreaks.filter(
+      (breakIndex) => breakIndex >= startSlot && breakIndex < endSlot,
+    );
+    const fullText = displayTextFromSlotRange(
+      displaySlots,
+      textBreaks,
+      startSlot,
+      endSlot,
+    );
+
+    chunks.push({
+      active: false,
+      complete: true,
+      fullText,
+      id: `${message.id}:chunk:${chunks.length}`,
+      index: chunks.length,
+      streaming: false,
+      text: fullText,
+      visible: true,
+    });
+
+    startSlot = endSlot + 1;
+  });
+
+  return chunks.length > 1 ? chunks : [];
+}
 
 
 export function ChatPanelContent({
@@ -81,17 +211,65 @@ export function ChatPanelContent({
     : avatarVisible;
   const rightImagePath = rightSideImage?.imagePath.trim() ?? "";
   const rightImageVisible = Boolean(rightSideImage?.visible && rightImagePath);
+  const renderedMessages = messages.flatMap((message): RenderedChatItem[] => {
+    if (message.metadata?.scriptHidden) return [];
+
+    const tone = message.role === "user" ? "student" : "tutor";
+    const author =
+      message.role === "user"
+        ? user?.displayName || "You"
+        : message.role === "assistant"
+          ? assistantDisplayName
+          : "System";
+    const runtimeChunks = scriptDisplayChunksFromMetadata(message.metadata);
+    const chunks = runtimeChunks.length
+      ? runtimeChunks
+      : finalScriptDisplayChunksFromMessage(message);
+
+    if (chunks.length && message.role === "assistant") {
+      return chunks
+        .filter((chunk) => chunk.visible)
+        .map((chunk) => ({
+          author,
+          body:
+            chunk.text ||
+            (chunk.streaming || chunk.active ? "..." : chunk.fullText),
+          id: chunk.id,
+          isScriptDisplayChunk: true,
+          streaming: chunk.streaming,
+          tone,
+        }));
+    }
+
+    return [
+      {
+        author,
+        body:
+          (message.metadata?.streaming
+            ? message.content
+            : displayTextFromScriptAudioMessage(message)) ||
+          (message.metadata?.streaming ? "..." : ""),
+        id: message.id,
+        isScriptDisplayChunk: false,
+        streaming: Boolean(message.metadata?.streaming),
+        tone,
+      },
+    ];
+  });
   const turnAnchorMessage = turnAnchorMessageId
-    ? messages.find((message) => message.id === turnAnchorMessageId)
+    ? renderedMessages.find((message) => message.id === turnAnchorMessageId)
     : null;
   const turnAnchorIsStreaming = Boolean(
-    turnAnchorMessage?.metadata?.streaming,
+    turnAnchorMessage?.streaming,
+  );
+  const turnAnchorIsScriptDisplayChunk = Boolean(
+    turnAnchorMessage?.isScriptDisplayChunk,
   );
   const turnAnchorIsVisible = Boolean(
-    turnAnchorMessage && !turnAnchorMessage.metadata?.scriptHidden,
+    turnAnchorMessage,
   );
   const turnAnchorScrollKey = turnAnchorMessage
-    ? `${turnAnchorMessage.id}:${turnAnchorMessage.metadata?.scriptHidden ? "hidden" : "visible"}:${turnAnchorMessage.content.length}`
+    ? `${turnAnchorMessage.id}:${turnAnchorMessage.body.length}`
     : "";
   const runtimeButtonsLayoutKey = runtimeButtons
     .map(
@@ -112,6 +290,13 @@ export function ChatPanelContent({
         const target = messageRefs.current.get(turnAnchorMessageId);
         if (target) {
           if (turnAnchorIsStreaming) {
+            if (turnAnchorIsScriptDisplayChunk) {
+              messageList.scrollTo({
+                top: Math.max(0, target.offsetTop - 2),
+              });
+              return;
+            }
+
             messageList.scrollTo({
               top: Math.max(
                 0,
@@ -149,6 +334,7 @@ export function ChatPanelContent({
   }, [
     messages.length,
     runtimeButtonsLayoutKey,
+    turnAnchorIsScriptDisplayChunk,
     turnAnchorIsStreaming,
     turnAnchorIsVisible,
     turnAnchorMessageId,
@@ -215,25 +401,10 @@ export function ChatPanelContent({
           {status === "error" ? (
             <div className="chat-status error">{error}</div>
           ) : null}
-          {messages.map((message) => {
-            if (message.metadata?.scriptHidden) return null;
-
-            const tone = message.role === "user" ? "student" : "tutor";
-            const author =
-              message.role === "user"
-                ? user?.displayName || "You"
-                : message.role === "assistant"
-                  ? assistantDisplayName
-                  : "System";
-            const body =
-              (message.metadata?.streaming
-                ? message.content
-                : displayTextFromScriptAudioMessage(message)) ||
-              (message.metadata?.streaming ? "..." : "");
-
+          {renderedMessages.map((message) => {
             return (
               <div
-                className={`chat-message ${tone}`}
+                className={`chat-message ${message.tone}`}
                 key={message.id}
                 ref={(element) => {
                   if (element) {
@@ -243,8 +414,8 @@ export function ChatPanelContent({
                   }
                 }}
               >
-                <span>{author}</span>
-                <p>{body}</p>
+                <span>{message.author}</span>
+                <p>{message.body}</p>
               </div>
             );
           })}
