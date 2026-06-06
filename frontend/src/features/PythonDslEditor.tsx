@@ -500,7 +500,7 @@ const chatActionPattern =
 const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
 const chatActionDecoration = Decoration.mark({
   attributes: {
-    "aria-label": "Configure chat action",
+    "aria-label": "Ctrl-click to toggle chat action",
     role: "button",
   },
   class: "cm-dsl-chat-action",
@@ -828,7 +828,11 @@ export function PythonDslEditor({
             chatPosition === null
               ? null
               : chatActionAtPosition(view, chatPosition);
-          if (chatPosition !== null && chatAction) {
+          if (
+            chatPosition !== null &&
+            chatAction &&
+            (event.ctrlKey || event.metaKey)
+          ) {
             event.preventDefault();
             event.stopPropagation();
             view.dispatch({ selection: { anchor: chatPosition } });

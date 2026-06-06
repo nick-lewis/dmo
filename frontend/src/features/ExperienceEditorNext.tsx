@@ -17,6 +17,7 @@ import {
 } from "../api";
 import { publicAsset } from "../assets";
 import {
+  HelpIcon,
   MicIcon,
   PlayIcon,
   RefreshIcon,
@@ -2106,6 +2107,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       <section className="next-event-script-section">
         <div className="next-event-script-heading">
           <h3>On entry</h3>
+          <button
+            aria-label="On entry action help"
+            className="next-event-script-help"
+            data-tooltip="Ctrl-click chat actions to toggle on/off. Click script actions to open their panel."
+            type="button"
+          >
+            <HelpIcon />
+          </button>
         </div>
         <Suspense
           fallback={

@@ -92,6 +92,26 @@ export function MicIcon() {
   );
 }
 
+export function HelpIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M9.1 9a3 3 0 1 1 4.8 2.4c-.9.6-1.4 1.2-1.4 2.1v.4M12 18h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 export function StopIcon() {
   return (
     <svg

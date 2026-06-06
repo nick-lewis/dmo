@@ -1766,6 +1766,55 @@ button {
   letter-spacing: 0;
 }
 
+.next-event-script-help {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  background: transparent;
+}
+
+.next-event-script-help:hover,
+.next-event-script-help:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent-2) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 36%, transparent);
+  outline: 0;
+}
+
+.next-event-script-help::after {
+  position: absolute;
+  z-index: 120;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: min(280px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-border));
+  border-radius: 7px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 98%, white);
+  box-shadow: 0 14px 34px rgba(22, 74, 92, 0.14);
+  content: attr(data-tooltip);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.next-event-script-help:hover::after,
+.next-event-script-help:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .python-dsl-editor {
   position: relative;
   min-width: 0;
@@ -1880,7 +1929,13 @@ button {
 }
 
 .cm-dsl-chat-action:hover,
-.cm-focused .cm-dsl-chat-action:hover,
+.cm-focused .cm-dsl-chat-action:hover {
+  border-color: color-mix(in srgb, var(--accent-2) 22%, var(--panel-border));
+  color: color-mix(in srgb, var(--page-ink) 84%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
+  cursor: text;
+}
+
 .cm-dsl-script-action:hover,
 .cm-focused .cm-dsl-script-action:hover {
   border-color: color-mix(in srgb, var(--accent-2) 36%, var(--panel-border));
