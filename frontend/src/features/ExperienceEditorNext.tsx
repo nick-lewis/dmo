@@ -111,6 +111,11 @@ type PendingScriptTextAutosave = {
   text: string;
 };
 
+type PendingScriptDisplayDraft = {
+  displayBreaks: number[];
+  text: string;
+};
+
 type ActiveScriptAction = PythonDslScriptAction & {
   eventId: string;
 };
@@ -1051,6 +1056,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const pendingOnEntryAutosaveRef = useRef<PendingOnEntryAutosave | null>(null);
   const pendingScriptTextAutosaveRef =
     useRef<PendingScriptTextAutosave | null>(null);
+  const pendingScriptDisplayDraftsRef = useRef<
+    Record<string, PendingScriptDisplayDraft>
+  >({});
   const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1289,6 +1297,39 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   useEffect(() => {
     saveDisplayTranscriptRef.current = saveScriptAudioDisplayTranscript;
   }, [saveScriptAudioDisplayTranscript]);
+
+  useEffect(() => {
+    const item = activeScriptAudioItem;
+    if (!item || !activeScriptStep) return;
+
+    const pending = pendingScriptDisplayDraftsRef.current[activeScriptStep.id];
+    if (
+      !pending ||
+      normalizeScriptAudioText(item.script || item.preview || "") !==
+        pending.text
+    ) {
+      return;
+    }
+
+    const baseSlots = scriptAudioDisplayBaseSlots(item);
+    if (!baseSlots.length) return;
+
+    const nextBreaks = normalizeDisplayBreaks(
+      pending.displayBreaks,
+      baseSlots.length,
+    );
+    delete pendingScriptDisplayDraftsRef.current[activeScriptStep.id];
+    delete failedDisplayAutosavesRef.current[item.id];
+
+    setDisplaySlotDrafts((current) => ({
+      ...current,
+      [item.id]: baseSlots,
+    }));
+    setDisplayBreakDrafts((current) => ({
+      ...current,
+      [item.id]: nextBreaks,
+    }));
+  }, [activeScriptAudioItem, activeScriptStep]);
 
   useEffect(() => {
     const item = activeScriptAudioItem;
@@ -1703,6 +1744,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           replaceEventStep(currentEvent, payload.step),
         );
       });
+      void loadScriptAudioItems(experience.id, false);
       return true;
     } catch (saveError) {
       pendingScriptTextAutosaveRef.current = pending;
@@ -1795,6 +1837,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       activeScriptAudioItem && nextAudioScriptText === activeAudioScriptText
         ? activeScriptAudioItem.id
         : "";
+    pendingScriptDisplayDraftsRef.current[activeScriptStep.id] = {
+      displayBreaks: nextDisplayBreaks,
+      text: nextAudioScriptText,
+    };
 
     if (scriptId) {
       delete failedDisplayAutosavesRef.current[scriptId];

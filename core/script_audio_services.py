@@ -828,7 +828,7 @@ def generate_message_script_audio_payload(
             safety_identifier=safety_identifier,
             script=script,
         )
-        display_text = runtime_script_audio_display_text(script, len(script_words))
+        display_text = runtime_script_audio_display_text(script)
         script_cues = script_cues_with_word_times(script_cues, script_words)
         next_metadata = dict(metadata)
         next_metadata["scriptCues"] = script_cues

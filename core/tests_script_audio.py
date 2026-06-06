@@ -82,6 +82,7 @@ from .script_audio_services import (
     cached_script_audio_payload,
     collect_experience_script_audio_items,
     generate_experience_script_audio_payload,
+    generate_message_script_audio_payload,
     generate_voice_sample_payload,
 )
 from .script_markers import script_cues_with_word_times
@@ -658,6 +659,86 @@ class ScriptAudioCachePayloadTests(TestCase):
                 payload = cached_script_audio_payload(session, script)
 
         self.assertEqual(payload["displayText"], display_text)
+
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_message_audio_generation_keeps_display_formatting_when_timing_words_differ(self):
+        script = "First line second line."
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                tutor = self.experience.tutor_settings
+                cache_key = compute_script_audio_cache_key(
+                    assistant_name=tutor.assistant_name,
+                    realtime_model=tutor.realtime_model,
+                    script=script,
+                    audio_model=tutor.realtime_model,
+                    voice=tutor.voice,
+                    voice_instructions=tutor.voice_instructions,
+                )
+                audio_path = script_audio_audio_path(cache_key)
+                display_path = script_audio_display_path(
+                    compute_script_audio_display_key(script)
+                )
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+                with wave.open(str(audio_path), "wb") as audio_file:
+                    audio_file.setnchannels(1)
+                    audio_file.setsampwidth(2)
+                    audio_file.setframerate(24000)
+                    audio_file.writeframes(b"\x00\x00" * 2400)
+                display_path.write_text(
+                    json.dumps(
+                        {
+                            "displayBreaks": [1],
+                            "displaySlots": ["First", "line", "second", "line."],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                session = TutoringSession.objects.create(
+                    user=self.user,
+                    experience=self.experience,
+                )
+                message = SessionMessage.objects.create(
+                    session=session,
+                    role=SessionMessage.Role.ASSISTANT,
+                    content=script,
+                    sequence=1,
+                    metadata={"source": "event-action"},
+                )
+
+                with (
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio",
+                        return_value=SimpleNamespace(
+                            audio_path=audio_path,
+                            cache_key=cache_key,
+                            cached=True,
+                        ),
+                    ),
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio_words",
+                        return_value=[
+                            {"word": "First", "start": 0.1, "end": 0.3},
+                            {"word": "line-second", "start": 0.3, "end": 0.7},
+                        ],
+                    ),
+                ):
+                    payload, error, status_code = generate_message_script_audio_payload(
+                        session,
+                        message,
+                        {},
+                        "test-user",
+                    )
+
+                message.refresh_from_db()
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(error, "")
+        self.assertEqual(payload["displayText"], "First line\nsecond line.")
+        self.assertEqual(
+            message.metadata["scriptAudio"]["displayText"],
+            "First line\nsecond line.",
+        )
 
     def test_display_transcript_endpoint_requires_same_word_count(self):
         event = ExperienceEvent.objects.create(
