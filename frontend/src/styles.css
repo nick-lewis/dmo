@@ -649,9 +649,9 @@ button {
 
 .next-overview-editor {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -659,9 +659,9 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-top: 1px;
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-soft-border));
   border-radius: 999px;
   color: white;
@@ -693,20 +693,20 @@ button {
 }
 
 .overview-title-text {
-  min-height: 28px;
-  padding: 0 3px 1px;
+  min-height: 34px;
+  padding: 1px 3px 2px;
   color: var(--page-ink);
-  font-size: 1.08rem;
-  font-weight: 760;
+  font-size: 1.28rem;
+  font-weight: 770;
 }
 
 .overview-description-text {
-  min-height: 21px;
-  padding: 0 3px 1px;
+  min-height: 24px;
+  padding: 1px 3px 2px;
   color: var(--muted-ink);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 650;
-  line-height: 1.26;
+  line-height: 1.32;
   field-sizing: content;
   overflow: hidden;
   resize: none;
@@ -902,16 +902,16 @@ button {
 }
 
 .next-editor-overview-section {
-  --next-tutor-action-size: 24px;
-  --next-tutor-inline-size: 76px;
-  --next-tutor-presence-height: 58px;
+  --next-tutor-action-size: 28px;
+  --next-tutor-inline-size: 112px;
+  --next-tutor-presence-height: 82px;
 
   position: relative;
   z-index: 140;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--next-tutor-inline-size);
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
   padding: 0 0 2px;
   overflow: visible;
@@ -943,7 +943,7 @@ button {
   height: 100%;
   border-radius: 10px;
   object-fit: contain;
-  transform: scale(1.12);
+  transform: scale(1.16);
   background: transparent;
 }
 
@@ -971,13 +971,13 @@ button {
 }
 
 .next-tutor-play-button {
-  right: 1px;
-  bottom: 1px;
+  right: 2px;
+  bottom: 2px;
 }
 
 .next-tutor-settings-button {
-  top: 1px;
-  right: 1px;
+  top: 2px;
+  right: 2px;
 }
 
 .next-tutor-avatar-wrap:hover .next-tutor-play-button,
@@ -2452,12 +2452,12 @@ button {
   }
 
   .next-editor-overview-section {
-    --next-tutor-action-size: 23px;
-    --next-tutor-inline-size: 68px;
-    --next-tutor-presence-height: 52px;
+    --next-tutor-action-size: 26px;
+    --next-tutor-inline-size: 96px;
+    --next-tutor-presence-height: 72px;
 
     grid-template-columns: minmax(0, 1fr) var(--next-tutor-inline-size);
-    gap: 10px;
+    gap: 12px;
   }
 
   .next-tutor-presence {
