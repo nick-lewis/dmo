@@ -2076,13 +2076,17 @@ button {
 }
 
 .next-event-script-section {
+  position: relative;
   display: grid;
   gap: 8px;
   min-width: 0;
   margin-top: 12px;
+  overflow: visible;
 }
 
 .next-event-script-heading {
+  position: relative;
+  z-index: 320;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2099,6 +2103,7 @@ button {
 
 .next-event-script-help {
   position: relative;
+  z-index: 321;
   display: inline-grid;
   place-items: center;
   width: 22px;
@@ -2120,7 +2125,7 @@ button {
 
 .next-event-script-help::after {
   position: absolute;
-  z-index: 120;
+  z-index: 322;
   top: calc(100% + 8px);
   left: 50%;
   width: min(280px, calc(100vw - 48px));
