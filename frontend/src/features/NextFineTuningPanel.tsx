@@ -476,7 +476,12 @@ export function NextFineTuningPanel({
     return { index, lane, marker, timeSeconds };
   });
   const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
-  const waveformHeight = Math.min(260, Math.max(148, 118 + laneCount * 30));
+  const waveformMarkerTop = 68;
+  const waveformMarkerGap = 28;
+  const waveformHeight = Math.min(
+    210,
+    Math.max(124, 96 + laneCount * waveformMarkerGap),
+  );
 
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
@@ -622,7 +627,7 @@ export function NextFineTuningPanel({
               onPointerUp={endMarkerDrag}
               style={{
                 left: `${markerPercent}%`,
-                top: `${76 + lane * 30}px`,
+                top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
               }}
               type="button"
             >
