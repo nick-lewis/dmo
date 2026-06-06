@@ -2647,7 +2647,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   ]);
 
   useEffect(() => {
-    if (activeScriptDetailTab === "display" && !activeScriptAudioReady) {
+    if (
+      (activeScriptDetailTab === "display" ||
+        activeScriptDetailTab === "fine-tuning") &&
+      !activeScriptAudioReady
+    ) {
       setActiveScriptDetailTab("audio");
     }
   }, [activeScriptAudioReady, activeScriptDetailTab]);
@@ -4118,14 +4122,23 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               Slides &amp; Actions
             </button>
             <button
+              aria-disabled={activeScriptAudioReady ? "false" : "true"}
               aria-selected={
                 activeScriptDetailTab === "fine-tuning" ? "true" : "false"
               }
               className={
                 activeScriptDetailTab === "fine-tuning" ? "is-active" : ""
               }
-              onClick={() => setActiveScriptDetailTab("fine-tuning")}
+              onClick={() => {
+                if (!activeScriptAudioReady) return;
+                setActiveScriptDetailTab("fine-tuning");
+              }}
               role="tab"
+              title={
+                activeScriptAudioReady
+                  ? "Fine tune generated audio"
+                  : "Generate this audio before fine tuning."
+              }
               type="button"
             >
               Fine Tuning
