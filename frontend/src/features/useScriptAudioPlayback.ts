@@ -29,16 +29,51 @@ import type {
   TutoringSession,
 } from "../types";
 
-const scriptTextStreamFallbackMs = 12000;
-const scriptTextStreamMinMs = 1800;
+const scriptTextStreamFallbackMs = 8000;
+const scriptTextStreamMinMs = 1600;
 const scriptImmediateCueProgress = 0.001;
+export const scriptTextAudioRevealSpeedStorageKey =
+  "dlu.script-text-audio-reveal-speed.v1";
+export const defaultScriptTextAudioRevealSpeed = 1.65;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
 function scriptStreamDurationMs(text: string) {
-  return clamp(text.length * 58, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
+  return clamp(text.length * 46, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
+}
+
+export function clampScriptTextAudioRevealSpeed(value: number) {
+  if (!Number.isFinite(value)) return defaultScriptTextAudioRevealSpeed;
+  return clamp(value, 0.7, 4);
+}
+
+export function readScriptTextAudioRevealSpeed() {
+  if (typeof window === "undefined") return defaultScriptTextAudioRevealSpeed;
+
+  try {
+    return clampScriptTextAudioRevealSpeed(
+      Number.parseFloat(
+        window.localStorage.getItem(scriptTextAudioRevealSpeedStorageKey) ?? "",
+      ),
+    );
+  } catch {
+    return defaultScriptTextAudioRevealSpeed;
+  }
+}
+
+export function writeScriptTextAudioRevealSpeed(value: number) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      scriptTextAudioRevealSpeedStorageKey,
+      clampScriptTextAudioRevealSpeed(value).toFixed(2),
+    );
+  } catch {
+    // Ignore storage failures; the lab still previews the current value.
+  }
 }
 
 function scriptStreamIndexAt(text: string, progress: number) {
@@ -59,7 +94,7 @@ type ScriptTextStreamSync = {
   scriptWords?: ScriptWord[];
 };
 
-type ScriptTextBoundary = {
+export type ScriptTextBoundary = {
   index: number;
   timeSeconds: number;
 };
@@ -87,7 +122,7 @@ function scriptTextBoundaryTime(
   return durationSeconds * clamp(index / Math.max(1, text.length), 0, 1);
 }
 
-function scriptTextPauseBoundaries(
+export function scriptTextPauseBoundaries(
   text: string,
   durationSeconds: number,
   scriptWords: ScriptWord[] = [],
@@ -115,11 +150,12 @@ function scriptTextPauseBoundaries(
   return boundaries;
 }
 
-function scriptStreamIndexAtAudioTime(
+export function scriptStreamIndexAtAudioTime(
   text: string,
   audioTimeSeconds: number,
   durationSeconds: number,
   boundaries: ScriptTextBoundary[],
+  revealSpeed = defaultScriptTextAudioRevealSpeed,
 ) {
   if (!durationSeconds) return text.length;
   const currentTime = clamp(audioTimeSeconds, 0, durationSeconds);
@@ -137,7 +173,8 @@ function scriptStreamIndexAtAudioTime(
     const sectionText = text.slice(previousIndex, stop.index);
     const sectionDuration = Math.max(0.05, stop.timeSeconds - previousTimeSeconds);
     const sectionProgress = clamp(
-      (currentTime - previousTimeSeconds) / sectionDuration,
+      ((currentTime - previousTimeSeconds) / sectionDuration) *
+        clampScriptTextAudioRevealSpeed(revealSpeed),
       0,
       1,
     );
@@ -146,6 +183,28 @@ function scriptStreamIndexAtAudioTime(
   }
 
   return text.length;
+}
+
+export function scriptTextPreviewIndexAtAudioTime({
+  audioTimeSeconds,
+  durationSeconds,
+  revealSpeed,
+  scriptWords = [],
+  text,
+}: {
+  audioTimeSeconds: number;
+  durationSeconds: number;
+  revealSpeed: number;
+  scriptWords?: ScriptWord[];
+  text: string;
+}) {
+  return scriptStreamIndexAtAudioTime(
+    text,
+    audioTimeSeconds,
+    durationSeconds,
+    scriptTextPauseBoundaries(text, durationSeconds, scriptWords),
+    revealSpeed,
+  );
 }
 
 function sortedEventConversationChoices(choices: EventConversationChoice[] = []) {
@@ -353,6 +412,7 @@ export function useScriptAudioPlayback({
               sync.scriptWords,
             )
           : [];
+      const revealSpeed = readScriptTextAudioRevealSpeed();
 
       const scheduleTick = () => {
         if (sync) {
@@ -397,6 +457,7 @@ export function useScriptAudioPlayback({
               sync.audio.ended ? audioDurationSeconds : sync.audio.currentTime,
               audioDurationSeconds,
               audioBoundaries,
+              revealSpeed,
             )
           : scriptStreamIndexAt(
               fullText,

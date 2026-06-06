@@ -10665,6 +10665,182 @@ button {
   font-weight: 760;
 }
 
+.script-speed-lab-page {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.script-speed-lab {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  width: min(1320px, 96vw);
+  margin: 0 auto;
+}
+
+.script-speed-lab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.script-speed-lab-header span,
+.script-speed-control span,
+.script-speed-transport span,
+.script-speed-readout span {
+  color: var(--muted-ink);
+  font-size: 0.68rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.script-speed-lab-header h1 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 1.8rem;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.script-speed-lab-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.36fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.script-speed-lab-controls,
+.script-speed-lab-preview {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 7px;
+  background: var(--panel-bg);
+}
+
+.script-speed-lab-controls {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.script-speed-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.script-speed-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.script-speed-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.script-speed-presets button {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 16%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--page-ink) 80%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, transparent);
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.script-speed-presets button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  color: color-mix(in srgb, var(--accent) 84%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 52%, var(--panel-bg-strong));
+}
+
+.script-speed-textarea {
+  min-height: 260px;
+  resize: none;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 7px;
+  padding: 10px;
+  color: var(--page-ink);
+  background: var(--panel-bg-strong);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.script-speed-lab-preview {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+}
+
+.script-speed-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.script-speed-transport strong {
+  color: var(--page-ink);
+  font-size: 0.82rem;
+  font-weight: 830;
+}
+
+.script-speed-transport span {
+  margin-left: auto;
+}
+
+.script-speed-timeline {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+}
+
+.script-speed-timeline span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 42%, var(--accent-soft));
+}
+
+.script-speed-timeline i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+  transform: translateX(-1px);
+}
+
+.script-speed-chat-frame {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--stage-bg) 82%, var(--panel-bg-strong));
+}
+
+.script-speed-message {
+  width: min(760px, 100%);
+}
+
+.script-speed-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 760px) {
   .panel-study {
     padding: 12px;
@@ -10752,5 +10928,9 @@ button {
 
   .voice-lab-sample-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .script-speed-lab-grid {
+    grid-template-columns: 1fr;
   }
 }
