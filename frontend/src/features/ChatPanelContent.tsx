@@ -7,10 +7,7 @@ import {
 import { publicAsset } from "../assets";
 import { SendIcon } from "../components/Icons";
 import type { RealtimeStatus } from "../realtime";
-import {
-  cachedScriptAudioFromMessage,
-  displayTextFromScriptAudioMessage,
-} from "../scriptAudio";
+import { displayTextFromScriptAudioMessage } from "../scriptAudio";
 import { choiceIconBackgroundStyle } from "../uiHelpers";
 import type {
   ApiUser,
@@ -97,81 +94,6 @@ function scriptDisplayChunksFromMetadata(
     .sort((left, right) => left.index - right.index);
 }
 
-function displayBreakCountMap(breaks: number[]) {
-  const counts = new Map<number, number>();
-  breaks.forEach((breakIndex) =>
-    counts.set(breakIndex, (counts.get(breakIndex) ?? 0) + 1),
-  );
-  return counts;
-}
-
-function displayTextFromSlotRange(
-  slots: string[],
-  breaks: number[],
-  startSlot: number,
-  endSlot: number,
-) {
-  if (endSlot < startSlot) return "";
-
-  const breakCounts = displayBreakCountMap(breaks);
-  const lines = [""];
-  for (let index = startSlot; index <= endSlot; index += 1) {
-    const slotText = slots[index]?.trim() ?? "";
-    if (slotText) {
-      lines[lines.length - 1] = `${lines[lines.length - 1]} ${slotText}`.trim();
-    }
-
-    const breakCount = breakCounts.get(index) ?? 0;
-    if (breakCount === 1 && index < endSlot) {
-      lines.push("");
-    }
-  }
-  return lines.join("\n").replace(/^\n+|\n+$/g, "");
-}
-
-function finalScriptDisplayChunksFromMessage(message: ChatMessage) {
-  const payload = cachedScriptAudioFromMessage(message);
-  const displaySlots = payload?.displaySlots ?? [];
-  const displayBreaks = payload?.displayBreaks ?? [];
-  const breakCounts = displayBreakCountMap(displayBreaks);
-  const splitAfterIndexes = [...breakCounts.entries()]
-    .filter(([, count]) => count >= 2)
-    .map(([index]) => index)
-    .sort((left, right) => left - right);
-  if (!displaySlots.length || !splitAfterIndexes.length) return [];
-
-  const chunks: ScriptDisplayChunkView[] = [];
-  let startSlot = 0;
-  [...splitAfterIndexes, displaySlots.length - 1].forEach((endSlot) => {
-    if (endSlot < startSlot) return;
-    const textBreaks = displayBreaks.filter(
-      (breakIndex) => breakIndex >= startSlot && breakIndex < endSlot,
-    );
-    const fullText = displayTextFromSlotRange(
-      displaySlots,
-      textBreaks,
-      startSlot,
-      endSlot,
-    );
-
-    chunks.push({
-      active: false,
-      complete: true,
-      fullText,
-      id: `${message.id}:chunk:${chunks.length}`,
-      index: chunks.length,
-      streaming: false,
-      text: fullText,
-      visible: true,
-    });
-
-    startSlot = endSlot + 1;
-  });
-
-  return chunks.length > 1 ? chunks : [];
-}
-
-
 export function ChatPanelContent({
   assistantName,
   avatarPath,
@@ -221,10 +143,8 @@ export function ChatPanelContent({
         : message.role === "assistant"
           ? assistantDisplayName
           : "System";
-    const runtimeChunks = scriptDisplayChunksFromMetadata(message.metadata);
-    const chunks = runtimeChunks.length
-      ? runtimeChunks
-      : finalScriptDisplayChunksFromMessage(message);
+    const isStreaming = Boolean(message.metadata?.streaming);
+    const chunks = scriptDisplayChunksFromMetadata(message.metadata);
 
     if (chunks.length && message.role === "assistant") {
       return chunks
@@ -245,13 +165,13 @@ export function ChatPanelContent({
       {
         author,
         body:
-          (message.metadata?.streaming
+          (isStreaming
             ? message.content
             : displayTextFromScriptAudioMessage(message)) ||
-          (message.metadata?.streaming ? "..." : ""),
+          (isStreaming ? "..." : ""),
         id: message.id,
         isScriptDisplayChunk: false,
-        streaming: Boolean(message.metadata?.streaming),
+        streaming: isStreaming,
         tone,
       },
     ];
