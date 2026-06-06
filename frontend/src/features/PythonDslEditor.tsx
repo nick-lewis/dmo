@@ -227,32 +227,32 @@ const rootDslCompletions: Completion[] = [
 const conversationDslCompletions: Completion[] = [
   ...pythonKeywordCompletions,
   {
-    label: "choice",
-    apply: 'choice(text="Continue", destination="", icon=True)',
-    detail: "button",
-    info: "Add a learner choice button.",
+    label: "button",
+    apply: 'button(text="Continue", destination="", icon=True)',
+    detail: "conversation action",
+    info: "Add a learner button.",
     section: "Conversation",
     type: "function",
   },
   {
     label: "text",
     apply: 'text="Continue"',
-    detail: "choice label",
-    section: "Choice",
+    detail: "button label",
+    section: "Button",
     type: "property",
   },
   {
     label: "destination",
     apply: 'destination=""',
-    detail: "choice destination",
-    section: "Choice",
+    detail: "button destination",
+    section: "Button",
     type: "property",
   },
   {
     label: "icon",
     apply: "icon=True",
     detail: "show icon",
-    section: "Choice",
+    section: "Button",
     type: "property",
   },
 ];
@@ -557,7 +557,7 @@ function runHistoryShortcut(
 const chatActionPattern =
   /\bchat\s*\(\s*(?:enabled\s*=\s*)?(True|False|true|false)\s*\)/g;
 const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
-const choiceActionPattern = /\bchoice\s*\([^)]*\)/g;
+const conversationButtonActionPattern = /\b(?:button|choice)\s*\([^)]*\)/g;
 const chatActionDecoration = Decoration.mark({
   attributes: {
     "aria-label": "Ctrl-click to toggle chat action",
@@ -572,12 +572,12 @@ const scriptActionDecoration = Decoration.mark({
   },
   class: "cm-dsl-script-action",
 });
-const choiceActionDecoration = Decoration.mark({
+const conversationButtonActionDecoration = Decoration.mark({
   attributes: {
-    "aria-label": "Conversation choice",
+    "aria-label": "Conversation button",
     role: "button",
   },
-  class: "cm-dsl-choice-action",
+  class: "cm-dsl-button-action",
 });
 
 function dslActionDecorations(
@@ -596,11 +596,13 @@ function dslActionDecorations(
 
       if (!trimmed.startsWith("#")) {
         if (mode === "conversation") {
-          for (const match of lineText.matchAll(choiceActionPattern)) {
+          for (const match of lineText.matchAll(
+            conversationButtonActionPattern,
+          )) {
             if (typeof match.index !== "number") continue;
             const from = line.from + match.index;
             const to = from + match[0].length;
-            ranges.push(choiceActionDecoration.range(from, to));
+            ranges.push(conversationButtonActionDecoration.range(from, to));
           }
         } else {
           for (const match of lineText.matchAll(chatActionPattern)) {
@@ -1070,12 +1072,12 @@ export function PythonDslEditor({
     setContextMenu(null);
   }
 
-  function insertConversationChoice() {
+  function insertConversationButton() {
     const view = viewRef.current;
     if (!view) return;
 
     const destination = eventTargetsRef.current[0]?.slug ?? "";
-    const statement = `choice(text="Continue", destination="${destination}", icon=True)`;
+    const statement = `button(text="Continue", destination="${destination}", icon=True)`;
     insertStatementAtCursor(view, statement, contextMenu?.insertionPoint);
     setContextMenu(null);
   }
@@ -1135,12 +1137,12 @@ export function PythonDslEditor({
         >
           {contextMenu.mode === "conversation" ? (
             <button
-              className="python-dsl-context-action python-dsl-context-choice"
-              onClick={insertConversationChoice}
+              className="python-dsl-context-action python-dsl-context-button"
+              onClick={insertConversationButton}
               role="menuitem"
               type="button"
             >
-              Choice button
+              Button
             </button>
           ) : (
             <>

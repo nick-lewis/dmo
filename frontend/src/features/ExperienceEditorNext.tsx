@@ -477,7 +477,7 @@ function conversationChoiceDslSourceFromChoices(
   return sortedConversationChoices(choices)
     .map(
       (choice) =>
-        `choice(text=${dslStringLiteral(choice.label || "Continue")}, destination=${dslStringLiteral(
+        `button(text=${dslStringLiteral(choice.label || "Continue")}, destination=${dslStringLiteral(
           choice.triggersEvent || "",
         )}, icon=${choice.iconPath ? "True" : "False"})`,
     )
@@ -567,10 +567,13 @@ function conversationChoicesFromDslSource(
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) return;
 
-    const match = trimmed.match(/^choice\s*\((.*)\)\s*$/);
+    const match = trimmed.match(/^(?:button|choice)\s*\((.*)\)\s*$/);
     const existingChoice = existingSorted[choices.length];
     if (!match) {
-      if (trimmed.includes("choice") && existingChoice) {
+      if (
+        (trimmed.includes("button") || trimmed.includes("choice")) &&
+        existingChoice
+      ) {
         choices.push({ ...existingChoice, sortOrder: choices.length });
       }
       return;
@@ -3887,7 +3890,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                   role="menuitem"
                   type="button"
                 >
-                  Slide image
+                  Slide
                 </button>
                 <button
                   className="next-script-action-menu-item is-action"

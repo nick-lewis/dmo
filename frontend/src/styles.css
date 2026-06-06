@@ -2223,6 +2223,10 @@ button {
   grid-column: 1 / -1;
 }
 
+.python-dsl-context-button {
+  grid-column: 1 / -1;
+}
+
 .python-dsl-context-label {
   display: flex;
   align-items: center;
@@ -2259,7 +2263,7 @@ button {
 
 .cm-dsl-chat-action,
 .cm-dsl-script-action,
-.cm-dsl-choice-action {
+.cm-dsl-button-action {
   display: inline-block;
   min-height: 1.36em;
   margin: 0 1px;
@@ -2288,12 +2292,12 @@ button {
   cursor: pointer;
 }
 
-.cm-dsl-choice-action {
+.cm-dsl-button-action {
   color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
 }
 
-.cm-dsl-choice-action:hover,
-.cm-focused .cm-dsl-choice-action:hover {
+.cm-dsl-button-action:hover,
+.cm-focused .cm-dsl-button-action:hover {
   border-color: color-mix(in srgb, var(--accent-2) 30%, var(--panel-border));
   color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
   background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
