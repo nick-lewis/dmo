@@ -1651,6 +1651,10 @@ button {
   background: color-mix(in srgb, var(--accent-2) 22%, transparent);
 }
 
+.next-fine-tuning-panel {
+  min-height: min(620px, calc(100vh - 280px));
+}
+
 .next-script-view {
   min-height: min(620px, calc(100vh - 280px));
 }

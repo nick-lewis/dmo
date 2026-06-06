@@ -136,7 +136,7 @@ type ActiveScriptAction = PythonDslScriptAction & {
   eventId: string;
 };
 
-type ScriptDetailTab = "audio" | "display" | "script";
+type ScriptDetailTab = "audio" | "display" | "script" | "fine-tuning";
 
 type AudioPreparationState = {
   completed: number;
@@ -237,7 +237,11 @@ function readLocationNextEditorUiState(): PersistedNextEditorUiState {
   const scriptIndexValue = Number.parseInt(params.get("script") ?? "", 10);
   const tabValue = params.get("tab");
   const tab =
-    tabValue === "display" || tabValue === "script" ? tabValue : "audio";
+    tabValue === "display" ||
+    tabValue === "script" ||
+    tabValue === "fine-tuning"
+      ? tabValue
+      : "audio";
   return {
     activeScriptAction: Number.isInteger(scriptIndexValue)
       ? {
@@ -282,8 +286,8 @@ function writeLocationNextEditorUiState(state: PersistedNextEditorUiState) {
       action.actionIndex >= 0
     ) {
       params.set("script", String(action.actionIndex));
-      if (state.scriptDetailTab === "display") {
-        params.set("tab", "display");
+      if (state.scriptDetailTab && state.scriptDetailTab !== "audio") {
+        params.set("tab", state.scriptDetailTab);
       }
     }
   }
@@ -400,7 +404,8 @@ function scriptDetailTabFromStored(
 ): ScriptDetailTab {
   if (
     storedState.scriptDetailTab === "display" ||
-    storedState.scriptDetailTab === "script"
+    storedState.scriptDetailTab === "script" ||
+    storedState.scriptDetailTab === "fine-tuning"
   ) {
     return storedState.scriptDetailTab;
   }
@@ -3193,6 +3198,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             >
               Slides &amp; Actions
             </button>
+            <button
+              aria-selected={
+                activeScriptDetailTab === "fine-tuning" ? "true" : "false"
+              }
+              className={
+                activeScriptDetailTab === "fine-tuning" ? "is-active" : ""
+              }
+              onClick={() => setActiveScriptDetailTab("fine-tuning")}
+              role="tab"
+              type="button"
+            >
+              Fine Tuning
+            </button>
           </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
@@ -3218,6 +3236,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             previews={scriptSlidePreviews}
             text={activeScriptText}
           />
+        ) : activeScriptDetailTab === "fine-tuning" ? (
+          <div aria-label="Fine Tuning" className="next-fine-tuning-panel" />
         ) : (
           <>
             {displayTextPanel}
