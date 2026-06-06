@@ -1,4 +1,5 @@
 import {
+  type MouseEvent as ReactMouseEvent,
   type ChangeEvent,
   type KeyboardEvent,
   lazy,
@@ -40,9 +41,15 @@ import {
 } from "../uiHelpers";
 import { stringConfigValue } from "../runtimeUtils";
 import {
+  buildScriptMarker,
+  customSoundOptionValue,
   displayTranscriptSlotsFromText,
   normalizeScriptAudioText,
+  parseScriptMarkerInstances,
+  scriptSoundOptions,
   spokenTextFromMarkedScript,
+  type ScriptMarkerInstance,
+  type ScriptSlidePreview,
 } from "../scriptMarkers";
 import {
   scriptAudioItemIsReady,
@@ -57,6 +64,7 @@ import type {
   ExperienceEvent,
   ExperienceForm,
   ExperiencesPayload,
+  ResolvedSlide,
   ScriptAudioItem,
   SessionPayload,
   TutorSettings,
@@ -84,6 +92,12 @@ import {
   useTutorAutosave,
 } from "./useExperienceAutosave";
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
+import {
+  clickIndexForTextTarget,
+  isSlideMarker,
+  nextAvailableSlideRef,
+  slidePreviewKeyForDeck,
+} from "./scriptActionEditorUtils";
 import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
 import { useVoiceSample } from "./useVoiceSample";
 
@@ -121,7 +135,7 @@ type ActiveScriptAction = PythonDslScriptAction & {
   eventId: string;
 };
 
-type ScriptDetailTab = "audio" | "display";
+type ScriptDetailTab = "audio" | "display" | "script";
 
 type AudioPreparationState = {
   completed: number;
@@ -151,6 +165,28 @@ type DisplayDocumentRead = DisplayDocumentDraft & {
 
 type DisplayDocumentHistoryEntry = DisplayDocumentDraft & {
   selectionOffset: number | null;
+};
+
+type ScriptActionMenuState =
+  | {
+      insertionIndex: number;
+      mode: "insert";
+      x: number;
+      y: number;
+    }
+  | {
+      markerKey: string;
+      mode: "edit";
+      x: number;
+      y: number;
+    };
+
+type ScriptSlideRow = {
+  key: string;
+  label: string;
+  marker: ScriptMarkerInstance | null;
+  scriptText: string;
+  slideRef: string;
 };
 
 const displayDocumentHistoryLimit = 80;
@@ -190,7 +226,9 @@ function readLocationNextEditorUiState(): PersistedNextEditorUiState {
   if (!selectedEventId) return {};
 
   const scriptIndexValue = Number.parseInt(params.get("script") ?? "", 10);
-  const tab = params.get("tab") === "display" ? "display" : "audio";
+  const tabValue = params.get("tab");
+  const tab =
+    tabValue === "display" || tabValue === "script" ? tabValue : "audio";
   return {
     activeScriptAction: Number.isInteger(scriptIndexValue)
       ? {
@@ -351,7 +389,13 @@ function activeScriptActionFromStored(
 function scriptDetailTabFromStored(
   storedState: PersistedNextEditorUiState,
 ): ScriptDetailTab {
-  return storedState.scriptDetailTab === "display" ? "display" : "audio";
+  if (
+    storedState.scriptDetailTab === "display" ||
+    storedState.scriptDetailTab === "script"
+  ) {
+    return storedState.scriptDetailTab;
+  }
+  return "audio";
 }
 
 function replaceEventStep(
@@ -385,6 +429,127 @@ function displayTextFromSlots(slots: string[], breaks: number[] = []) {
   });
 
   return lines.join("\n").replace(/\n+$/, "");
+}
+
+function markerEditKey(marker: ScriptMarkerInstance) {
+  return `${marker.start}:${marker.end}:${marker.marker}`;
+}
+
+function markerStyleType(marker: ScriptMarkerInstance) {
+  return isSlideMarker(marker) ? "slide" : "action";
+}
+
+function insertScriptMarkerAt(text: string, insertionIndex: number, marker: string) {
+  const safeIndex = Math.min(Math.max(0, insertionIndex), text.length);
+  const before = text.slice(0, safeIndex);
+  const after = text.slice(safeIndex);
+  const prefix = before && !/\s$/.test(before) ? " " : "";
+  const suffix = after && !/^\s/.test(after) ? " " : "";
+  return `${before}${prefix}${marker}${suffix}${after}`;
+}
+
+function replaceScriptMarker(
+  text: string,
+  marker: ScriptMarkerInstance,
+  nextMarker: string,
+) {
+  return `${text.slice(0, marker.start)}${nextMarker}${text.slice(marker.end)}`;
+}
+
+function removeScriptMarker(text: string, marker: ScriptMarkerInstance) {
+  return `${text.slice(0, marker.start)}${text.slice(marker.end)}`
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .trim();
+}
+
+function wordInsertionIndex(text: string, wordIndex: number) {
+  if (wordIndex <= 0) return 0;
+
+  const pattern = /\S+/g;
+  let index = 0;
+  for (const match of text.matchAll(pattern)) {
+    index += 1;
+    if (index === wordIndex) {
+      return (match.index ?? 0) + match[0].length;
+    }
+  }
+  return text.length;
+}
+
+function mergeMarkersIntoSpokenText(
+  spokenText: string,
+  markers: ScriptMarkerInstance[],
+) {
+  const markerInserts = markers.map((marker, index) => ({
+    index,
+    insertionIndex: wordInsertionIndex(spokenText, marker.wordIndex),
+    marker: marker.marker,
+  }));
+
+  return markerInserts
+    .sort((left, right) =>
+      left.insertionIndex === right.insertionIndex
+        ? right.index - left.index
+        : right.insertionIndex - left.insertionIndex,
+    )
+    .reduce(
+      (currentText, markerInsert) =>
+        insertScriptMarkerAt(
+          currentText,
+          markerInsert.insertionIndex,
+          markerInsert.marker,
+        ),
+      spokenText,
+    );
+}
+
+function slideRowsFromScript(text: string, markers: ScriptMarkerInstance[]) {
+  const slideMarkers = markers.filter(isSlideMarker);
+  if (!slideMarkers.length) {
+    const scriptText = spokenTextFromMarkedScript(text);
+    return scriptText
+      ? [
+          {
+            key: "script",
+            label: "No slide",
+            marker: null,
+            scriptText,
+            slideRef: "",
+          },
+        ]
+      : [];
+  }
+
+  const rows: ScriptSlideRow[] = [];
+  const firstSlide = slideMarkers[0];
+  const preSlideText = spokenTextFromMarkedScript(text.slice(0, firstSlide.start));
+  if (preSlideText) {
+    rows.push({
+      key: "before",
+      label: "Before slide",
+      marker: null,
+      scriptText: preSlideText,
+      slideRef: "",
+    });
+  }
+
+  slideMarkers.forEach((marker, index) => {
+    const nextMarker = slideMarkers[index + 1] ?? null;
+    const scriptText = spokenTextFromMarkedScript(
+      text.slice(marker.end, nextMarker?.start ?? text.length),
+    );
+    const slideRef = marker.argList[0]?.trim() || "1";
+    rows.push({
+      key: markerEditKey(marker),
+      label: `Slide ${slideRef}`,
+      marker,
+      scriptText,
+      slideRef,
+    });
+  });
+
+  return rows;
 }
 
 function scriptAudioItemForScriptText(
@@ -1020,6 +1185,185 @@ function DisplayTextEditor({
   );
 }
 
+function ScriptActionReadOnlyView({
+  deckUrl,
+  displayBreaks,
+  markers,
+  onOpenInsert,
+  onOpenMarker,
+  onRemoveMarker,
+  previews,
+  slideRows,
+  text,
+}: {
+  deckUrl: string;
+  displayBreaks: number[];
+  markers: ScriptMarkerInstance[];
+  onOpenInsert: (
+    insertionIndex: number,
+    event: ReactMouseEvent<HTMLElement>,
+  ) => void;
+  onOpenMarker: (
+    marker: ScriptMarkerInstance,
+    event: ReactMouseEvent<HTMLElement>,
+  ) => void;
+  onRemoveMarker: (marker: ScriptMarkerInstance) => void;
+  previews: Record<string, ScriptSlidePreview>;
+  slideRows: ScriptSlideRow[];
+  text: string;
+}) {
+  const breakCounts = new Map<number, number>();
+  normalizeDisplayBreaks(displayBreaks).forEach((breakIndex) => {
+    breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
+  });
+
+  const nodes: Array<JSX.Element | string> = [];
+  let cursor = 0;
+  let wordIndex = 0;
+
+  function appendTextSegment(segment: string, offset: number, keyPrefix: string) {
+    const pieces = segment.match(/\s+|\S+/g) ?? [];
+    let pieceOffset = 0;
+    pieces.forEach((piece, index) => {
+      const pieceStart = offset + pieceOffset;
+      pieceOffset += piece.length;
+
+      if (/^\s+$/.test(piece)) {
+        nodes.push(piece);
+        return;
+      }
+
+      const beforeIndex = pieceStart;
+      const afterIndex = pieceStart + piece.length;
+      nodes.push(
+        <span
+          className="next-script-view-word"
+          data-insert-after={afterIndex}
+          data-insert-before={beforeIndex}
+          key={`${keyPrefix}-word-${index}-${beforeIndex}`}
+        >
+          {piece}
+        </span>,
+      );
+
+      const lineBreakCount = breakCounts.get(wordIndex) ?? 0;
+      for (let breakIndex = 0; breakIndex < lineBreakCount; breakIndex += 1) {
+        nodes.push(
+          <br key={`${keyPrefix}-break-${index}-${breakIndex}-${beforeIndex}`} />,
+        );
+      }
+      wordIndex += 1;
+    });
+  }
+
+  markers.forEach((marker, index) => {
+    if (marker.start > cursor) {
+      appendTextSegment(text.slice(cursor, marker.start), cursor, `text-${index}`);
+    }
+    nodes.push(
+      <button
+        className={[
+          "next-script-action-token",
+          markerStyleType(marker) === "slide" ? "is-slide" : "is-action",
+        ].join(" ")}
+        key={markerEditKey(marker)}
+        onClick={(event) => onOpenMarker(marker, event)}
+        onContextMenu={(event) => onOpenMarker(marker, event)}
+        onKeyDown={(event) => {
+          if (event.key !== "Backspace" && event.key !== "Delete") return;
+          event.preventDefault();
+          onRemoveMarker(marker);
+        }}
+        title={marker.marker}
+        type="button"
+      >
+        {isSlideMarker(marker)
+          ? `Slide ${marker.argList[0]?.trim() || "1"}`
+          : marker.label}
+      </button>,
+    );
+    cursor = marker.end;
+  });
+
+  if (cursor < text.length) {
+    appendTextSegment(text.slice(cursor), cursor, "tail");
+  }
+
+  function handleScriptClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest(".next-script-action-token")) return;
+
+    const insertTarget = target.closest<HTMLElement>("[data-insert-before]");
+    if (!insertTarget) {
+      onOpenInsert(text.length, event);
+      return;
+    }
+
+    const beforeIndex = Number(insertTarget.dataset.insertBefore);
+    const afterIndex = Number(insertTarget.dataset.insertAfter);
+    onOpenInsert(
+      clickIndexForTextTarget(
+        insertTarget,
+        Number.isFinite(beforeIndex) ? beforeIndex : 0,
+        Number.isFinite(afterIndex) ? afterIndex : text.length,
+        event.clientX,
+      ),
+      event,
+    );
+  }
+
+  return (
+    <div className="next-script-view">
+      <div
+        aria-label="Script view"
+        className="next-script-view-document"
+        onClick={handleScriptClick}
+      >
+        {nodes.length ? nodes : (
+          <button
+            className="next-script-view-empty"
+            onClick={(event) => onOpenInsert(0, event)}
+            type="button"
+          />
+        )}
+      </div>
+      <div className="next-script-slide-table" role="table">
+        {slideRows.map((row) => {
+          const previewKey = row.slideRef
+            ? slidePreviewKeyForDeck(deckUrl, row.slideRef)
+            : "";
+          const preview = previewKey ? previews[previewKey] : null;
+
+          return (
+            <div className="next-script-slide-row" key={row.key} role="row">
+              <div className="next-script-slide-copy" role="cell">
+                <span>{row.label}</span>
+                <p>{row.scriptText}</p>
+              </div>
+              <div className="next-script-slide-preview" role="cell">
+                {row.slideRef && preview?.status === "ready" && preview.imageUrl ? (
+                  <img alt={row.label} src={preview.imageUrl} />
+                ) : (
+                  <span>
+                    {!row.slideRef
+                      ? ""
+                      : !deckUrl.trim()
+                        ? "Deck URL needed"
+                        : preview?.status === "loading"
+                          ? "Loading"
+                          : preview?.detail || "Slide unavailable"}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ExperienceEditorNext({ experienceId }: { experienceId: string }) {
   const [user, setUser] = useState<ApiUser | null>(null);
   const [experience, setExperience] = useState<Experience | null>(null);
@@ -1047,6 +1391,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   >({});
   const [audioPreparation, setAudioPreparation] =
     useState<AudioPreparationState | null>(null);
+  const [scriptActionMenu, setScriptActionMenu] =
+    useState<ScriptActionMenuState | null>(null);
+  const [scriptSlidePreviews, setScriptSlidePreviews] = useState<
+    Record<string, ScriptSlidePreview>
+  >({});
   const [savingDisplayTextId, setSavingDisplayTextId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [onEntryDrafts, setOnEntryDrafts] = useState<Record<string, string>>({});
@@ -1061,6 +1410,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     Record<string, PendingScriptDisplayDraft>
   >({});
   const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
+  const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const tutorAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1122,6 +1472,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const activeScriptText = activeScriptStep
     ? stringConfigValue(activeScriptStep.config, "text")
     : "";
+  const activeScriptDeckUrl = activeScriptStep
+    ? stringConfigValue(activeScriptStep.config, "deckUrl")
+    : "";
+  const activeScriptMarkers = parseScriptMarkerInstances(activeScriptText);
+  const activeScriptSlideRows = slideRowsFromScript(
+    activeScriptText,
+    activeScriptMarkers,
+  );
   const activeAudioScriptText = spokenTextFromMarkedScript(activeScriptText);
   const activeScriptAudioItem = scriptAudioItemForScriptText(
     scriptAudioItems,
@@ -1297,6 +1655,99 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     void loadScriptAudioItems(experience.id, false);
   }, [experience?.id, status]);
+
+  useEffect(() => {
+    setScriptActionMenu(null);
+  }, [activeScriptStep?.id]);
+
+  useEffect(() => {
+    if (!scriptActionMenu) return;
+
+    function closeIfOutside(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (target && scriptActionMenuRef.current?.contains(target)) return;
+      setScriptActionMenu(null);
+    }
+
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setScriptActionMenu(null);
+    }
+
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [scriptActionMenu]);
+
+  useEffect(() => {
+    if (activeScriptDetailTab !== "script") return;
+
+    const deckUrl = activeScriptDeckUrl.trim();
+    const slideRefs = Array.from(
+      new Set(
+        activeScriptSlideRows
+          .map((row) => row.slideRef.trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!deckUrl || !slideRefs.length) return;
+
+    let isCancelled = false;
+    slideRefs.forEach((slideRef) => {
+      const previewKey = slidePreviewKeyForDeck(deckUrl, slideRef);
+      const currentPreview = scriptSlidePreviews[previewKey];
+      if (
+        currentPreview?.status === "loading" ||
+        currentPreview?.status === "ready"
+      ) {
+        return;
+      }
+
+      setScriptSlidePreviews((current) => ({
+        ...current,
+        [previewKey]: { status: "loading" },
+      }));
+
+      void apiFetch<ResolvedSlide>("/api/slides/resolve/", {
+        method: "POST",
+        body: JSON.stringify({ deckUrl, slideRef }),
+      })
+        .then((payload) => {
+          if (isCancelled) return;
+          setScriptSlidePreviews((current) => ({
+            ...current,
+            [previewKey]: {
+              imageUrl: payload.imageUrl,
+              status: "ready",
+            },
+          }));
+        })
+        .catch((error) => {
+          if (isCancelled) return;
+          setScriptSlidePreviews((current) => ({
+            ...current,
+            [previewKey]: {
+              detail:
+                error instanceof Error
+                  ? error.message
+                  : "Could not load slide.",
+              status: "error",
+            },
+          }));
+        });
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    activeScriptDeckUrl,
+    activeScriptDetailTab,
+    activeScriptText,
+    scriptSlidePreviews,
+  ]);
 
   useEffect(() => {
     if (activeScriptDetailTab === "display" && !activeScriptAudioReady) {
@@ -1838,32 +2289,38 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
   }
 
-  function updateActiveScriptText(value: string) {
+  function queueActiveScriptTextChange(
+    nextMarkedScriptText: string,
+    displayTextForBreaks?: string,
+  ) {
     if (!experience || !selectedEvent || !activeScriptStep) return;
 
-    const nextAudioScriptText = normalizeScriptAudioText(value);
-    const nextDisplayBreaks = displayBreaksFromText(value);
+    const nextAudioScriptText = spokenTextFromMarkedScript(nextMarkedScriptText);
     const scriptId =
       activeScriptAudioItem && nextAudioScriptText === activeAudioScriptText
         ? activeScriptAudioItem.id
         : "";
-    pendingScriptDisplayDraftsRef.current[activeScriptStep.id] = {
-      displayBreaks: nextDisplayBreaks,
-      text: nextAudioScriptText,
-    };
 
-    if (scriptId) {
-      delete failedDisplayAutosavesRef.current[scriptId];
-      setDisplayBreakDrafts((current) => ({
-        ...current,
-        [scriptId]: nextDisplayBreaks,
-      }));
+    if (displayTextForBreaks !== undefined) {
+      const nextDisplayBreaks = displayBreaksFromText(displayTextForBreaks);
+      pendingScriptDisplayDraftsRef.current[activeScriptStep.id] = {
+        displayBreaks: nextDisplayBreaks,
+        text: nextAudioScriptText,
+      };
+
+      if (scriptId) {
+        delete failedDisplayAutosavesRef.current[scriptId];
+        setDisplayBreakDrafts((current) => ({
+          ...current,
+          [scriptId]: nextDisplayBreaks,
+        }));
+      }
     }
 
     pendingScriptTextAutosaveRef.current = {
       eventId: selectedEvent.id,
       stepId: activeScriptStep.id,
-      text: nextAudioScriptText,
+      text: nextMarkedScriptText,
     };
 
     setExperience((current) => {
@@ -1883,7 +2340,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         current,
         replaceEventStep(currentEvent, {
           ...currentStep,
-          config: { ...currentStep.config, text: nextAudioScriptText },
+          config: { ...currentStep.config, text: nextMarkedScriptText },
         }),
       );
     });
@@ -1892,6 +2349,83 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     scriptTextAutosaveTimerRef.current = window.setTimeout(() => {
       void flushScriptTextAutosave();
     }, experienceAutosaveDelayMs);
+  }
+
+  function updateActiveScriptText(value: string) {
+    const nextAudioScriptText = normalizeScriptAudioText(value);
+    const nextMarkedScriptText = mergeMarkersIntoSpokenText(
+      nextAudioScriptText,
+      activeScriptMarkers,
+    );
+    queueActiveScriptTextChange(nextMarkedScriptText, value);
+  }
+
+  function updateActiveScriptMarkedText(value: string) {
+    queueActiveScriptTextChange(value);
+  }
+
+  function openScriptInsertMenu(
+    insertionIndex: number,
+    event: ReactMouseEvent<HTMLElement>,
+  ) {
+    if (!activeScriptStep) return;
+
+    setScriptActionMenu({
+      insertionIndex,
+      mode: "insert",
+      x: Math.min(event.clientX, window.innerWidth - 260),
+      y: Math.min(event.clientY, window.innerHeight - 240),
+    });
+  }
+
+  function openScriptMarkerMenu(
+    marker: ScriptMarkerInstance,
+    event: ReactMouseEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setScriptActionMenu({
+      markerKey: markerEditKey(marker),
+      mode: "edit",
+      x: Math.min(event.clientX, window.innerWidth - 320),
+      y: Math.min(event.clientY, window.innerHeight - 260),
+    });
+  }
+
+  function insertScriptAction(type: "slide" | "sound") {
+    if (!activeScriptStep || scriptActionMenu?.mode !== "insert") return;
+
+    const marker =
+      type === "slide"
+        ? buildScriptMarker("gslide", [nextAvailableSlideRef(activeScriptMarkers)])
+        : buildScriptMarker("play_sound", [scriptSoundOptions[0].path, "0.5"]);
+    updateActiveScriptMarkedText(
+      insertScriptMarkerAt(
+        activeScriptText,
+        scriptActionMenu.insertionIndex,
+        marker,
+      ),
+    );
+    setActiveScriptDetailTab("script");
+    setScriptActionMenu(null);
+  }
+
+  function replaceScriptActionMarker(
+    marker: ScriptMarkerInstance,
+    args: string[],
+  ) {
+    updateActiveScriptMarkedText(
+      replaceScriptMarker(
+        activeScriptText,
+        marker,
+        buildScriptMarker(marker.type, args),
+      ),
+    );
+  }
+
+  function removeScriptActionMarker(marker: ScriptMarkerInstance) {
+    updateActiveScriptMarkedText(removeScriptMarker(activeScriptText, marker));
+    setScriptActionMenu(null);
   }
 
   function updateDisplayDocumentDraft(draft: DisplayDocumentDraft) {
@@ -2374,6 +2908,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       : activeScriptAudioItem?.audioUrl
         ? "has-audio"
         : "is-empty";
+  const editingScriptMarker =
+    scriptActionMenu?.mode === "edit"
+      ? (activeScriptMarkers.find(
+          (marker) => markerEditKey(marker) === scriptActionMenu.markerKey,
+        ) ?? null)
+      : null;
   const displayTextPanel = activeScriptAudioItem ? (
     <DisplayTextEditor
       baseSlots={activeDisplayBaseSlots}
@@ -2428,6 +2968,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               Audio script
             </button>
             <button
+              aria-selected={activeScriptDetailTab === "script" ? "true" : "false"}
+              className={activeScriptDetailTab === "script" ? "is-active" : ""}
+              onClick={() => setActiveScriptDetailTab("script")}
+              role="tab"
+              title="Place script actions"
+              type="button"
+            >
+              Script View
+            </button>
+            <button
               aria-disabled={activeScriptAudioReady ? "false" : "true"}
               aria-selected={activeScriptDetailTab === "display" ? "true" : "false"}
               className={activeScriptDetailTab === "display" ? "is-active" : ""}
@@ -2458,6 +3008,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             spellCheck
             value={activeAudioScriptVisualText}
           />
+        ) : activeScriptDetailTab === "script" ? (
+          <ScriptActionReadOnlyView
+            deckUrl={activeScriptDeckUrl}
+            displayBreaks={activeDisplayBreaks}
+            markers={activeScriptMarkers}
+            onOpenInsert={openScriptInsertMenu}
+            onOpenMarker={openScriptMarkerMenu}
+            onRemoveMarker={removeScriptActionMarker}
+            previews={scriptSlidePreviews}
+            slideRows={activeScriptSlideRows}
+            text={activeScriptText}
+          />
         ) : (
           <>
             {displayTextPanel}
@@ -2468,6 +3030,148 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             ) : null}
           </>
         )}
+        {scriptActionMenu ? (
+          <div
+            className="next-script-action-popover"
+            ref={scriptActionMenuRef}
+            role="menu"
+            style={{ left: scriptActionMenu.x, top: scriptActionMenu.y }}
+          >
+            {scriptActionMenu.mode === "insert" ? (
+              <>
+                <button
+                  className="next-script-action-menu-item is-slide"
+                  onClick={() => insertScriptAction("slide")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Slide image
+                </button>
+                <button
+                  className="next-script-action-menu-item is-action"
+                  onClick={() => insertScriptAction("sound")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Sound
+                </button>
+              </>
+            ) : editingScriptMarker ? (
+              <div className="next-script-action-editor">
+                <div className="next-script-action-editor-head">
+                  <strong>{editingScriptMarker.label}</strong>
+                  <button
+                    onClick={() => removeScriptActionMarker(editingScriptMarker)}
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                </div>
+                {isSlideMarker(editingScriptMarker) ? (
+                  <label>
+                    <span>Slide</span>
+                    <input
+                      aria-label="Slide reference"
+                      onChange={(event) =>
+                        replaceScriptActionMarker(editingScriptMarker, [
+                          event.target.value,
+                        ])
+                      }
+                      value={editingScriptMarker.argList[0] ?? ""}
+                    />
+                  </label>
+                ) : editingScriptMarker.type === "play_sound" ? (
+                  <>
+                    <label>
+                      <span>Sound</span>
+                      <select
+                        aria-label="Sound effect"
+                        onChange={(event) => {
+                          const currentVolume =
+                            editingScriptMarker.argList[1]?.trim() || "0.5";
+                          replaceScriptActionMarker(editingScriptMarker, [
+                            event.target.value === customSoundOptionValue
+                              ? editingScriptMarker.argList[0] || ""
+                              : event.target.value,
+                            currentVolume,
+                          ]);
+                        }}
+                        value={
+                          scriptSoundOptions.some(
+                            (option) =>
+                              option.path === editingScriptMarker.argList[0],
+                          )
+                            ? editingScriptMarker.argList[0]
+                            : customSoundOptionValue
+                        }
+                      >
+                        {scriptSoundOptions.map((option) => (
+                          <option key={option.path} value={option.path}>
+                            {option.label}
+                          </option>
+                        ))}
+                        <option value={customSoundOptionValue}>Custom</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Volume</span>
+                      <input
+                        aria-label="Sound volume"
+                        max="1"
+                        min="0"
+                        onChange={(event) =>
+                          replaceScriptActionMarker(editingScriptMarker, [
+                            editingScriptMarker.argList[0] ||
+                              scriptSoundOptions[0].path,
+                            event.target.value,
+                          ])
+                        }
+                        step="0.05"
+                        type="number"
+                        value={editingScriptMarker.argList[1] ?? "0.5"}
+                      />
+                    </label>
+                    {!scriptSoundOptions.some(
+                      (option) =>
+                        option.path === editingScriptMarker.argList[0],
+                    ) ? (
+                      <label>
+                        <span>Path</span>
+                        <input
+                          aria-label="Custom sound path"
+                          onChange={(event) =>
+                            replaceScriptActionMarker(editingScriptMarker, [
+                              event.target.value,
+                              editingScriptMarker.argList[1] || "0.5",
+                            ])
+                          }
+                          value={editingScriptMarker.argList[0] ?? ""}
+                        />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <label>
+                    <span>Args</span>
+                    <input
+                      aria-label="Action arguments"
+                      onChange={(event) =>
+                        replaceScriptActionMarker(
+                          editingScriptMarker,
+                          event.target.value
+                            .split(",")
+                            .map((value) => value.trim())
+                            .filter(Boolean),
+                        )
+                      }
+                      value={editingScriptMarker.args}
+                    />
+                  </label>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     ) : null;
 

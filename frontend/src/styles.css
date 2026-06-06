@@ -1651,6 +1651,218 @@ button {
   background: color-mix(in srgb, var(--accent-2) 22%, transparent);
 }
 
+.next-script-view {
+  display: grid;
+  grid-template-rows: minmax(180px, auto) minmax(160px, 1fr);
+  gap: 12px;
+  min-height: min(620px, calc(100vh - 280px));
+}
+
+.next-script-view-document {
+  min-height: 180px;
+  max-height: min(360px, calc(48vh - 120px));
+  overflow: auto;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 78%, transparent);
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--muted-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 58%, transparent);
+  font-size: 0.9rem;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.next-script-view-word {
+  border-radius: 4px;
+  cursor: text;
+}
+
+.next-script-view-word:hover {
+  background: color-mix(in srgb, var(--accent-2-soft) 44%, transparent);
+}
+
+.next-script-view-empty {
+  width: 100%;
+  min-height: 120px;
+  border: 1px dotted color-mix(in srgb, var(--muted-ink) 40%, transparent);
+  border-radius: 7px;
+  background: transparent;
+}
+
+.next-script-action-token {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 3px;
+  padding: 1px 7px 2px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 780;
+  line-height: 1;
+  vertical-align: 0.08em;
+}
+
+.next-script-action-token.is-slide {
+  color: color-mix(in srgb, var(--accent) 84%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 48%, transparent);
+}
+
+.next-script-action-token.is-action {
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-2-soft) 44%, transparent);
+}
+
+.next-script-action-token:hover,
+.next-script-action-token:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  outline-offset: 2px;
+}
+
+.next-script-slide-table {
+  overflow: auto;
+  border-top: 1px solid color-mix(in srgb, var(--panel-soft-border) 72%, transparent);
+}
+
+.next-script-slide-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 28%);
+  min-height: 118px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-soft-border) 58%, transparent);
+}
+
+.next-script-slide-copy {
+  min-width: 0;
+  padding: 12px 12px 12px 2px;
+}
+
+.next-script-slide-copy span {
+  display: block;
+  margin-bottom: 6px;
+  color: color-mix(in srgb, var(--muted-ink) 80%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.next-script-slide-copy p {
+  margin: 0;
+  color: color-mix(in srgb, var(--page-ink) 86%, var(--muted-ink));
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.next-script-slide-preview {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 10px 0 10px 12px;
+}
+
+.next-script-slide-preview img {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.next-script-slide-preview span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 92px;
+  border: 1px dotted color-mix(in srgb, var(--panel-soft-border) 88%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted-ink) 76%, transparent);
+  font-size: 0.72rem;
+}
+
+.next-script-action-popover {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  gap: 7px;
+  width: min(290px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 96%, white);
+  box-shadow: 0 18px 48px rgba(31, 41, 55, 0.14);
+}
+
+.next-script-action-menu-item {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 780;
+}
+
+.next-script-action-menu-item.is-slide {
+  color: color-mix(in srgb, var(--accent) 82%, var(--page-ink));
+}
+
+.next-script-action-menu-item.is-action {
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+}
+
+.next-script-action-menu-item:hover,
+.next-script-action-menu-item:focus-visible {
+  border-color: color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  outline: 0;
+}
+
+.next-script-action-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.next-script-action-editor-head,
+.next-script-action-editor label {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.next-script-action-editor-head strong,
+.next-script-action-editor label span {
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.next-script-action-editor-head button {
+  justify-self: end;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent) 82%, var(--page-ink));
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.next-script-action-editor input,
+.next-script-action-editor select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 82%, transparent);
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
 .next-display-text-editor {
   position: relative;
   width: 100%;
