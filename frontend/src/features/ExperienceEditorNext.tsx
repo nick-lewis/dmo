@@ -20,13 +20,16 @@ import { defaultChoiceIconPath } from "../tutorAssets";
 import {
   HelpIcon,
   MicIcon,
-  PlayIcon,
   RefreshIcon,
   SettingsIcon,
   StopIcon,
   TrashIcon,
 } from "../components/Icons";
-import { writeSelectedExperienceId } from "../persistence";
+import {
+  readCheckpointRecordingMode,
+  writeCheckpointRecordingMode,
+  writeSelectedExperienceId,
+} from "../persistence";
 import {
   type RealtimeModelId,
   type RealtimeVoiceId,
@@ -58,6 +61,7 @@ import {
 } from "../scriptAudio";
 import type {
   ApiUser,
+  CheckpointRecordingMode,
   ClassificationModelId,
   EventActionStep,
   EventConversationChoice,
@@ -2136,6 +2140,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   >({});
   const [audioPreparation, setAudioPreparation] =
     useState<AudioPreparationState | null>(null);
+  const [checkpointRecordingMode, setCheckpointRecordingMode] =
+    useState<CheckpointRecordingMode>(() => readCheckpointRecordingMode());
+  const [runningEventId, setRunningEventId] = useState("");
   const [scriptActionMenu, setScriptActionMenu] =
     useState<ScriptActionMenuState | null>(null);
   const [scriptSlidePreviews, setScriptSlidePreviews] = useState<
@@ -2310,6 +2317,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     isReady: status === "ready",
     restorePath: experienceNextEditPath,
   });
+
+  useEffect(() => {
+    writeCheckpointRecordingMode(checkpointRecordingMode);
+  }, [checkpointRecordingMode]);
 
   useEffect(() => {
     const stepId = activeScriptStep?.id ?? "";
@@ -3611,26 +3622,38 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     window.location.assign("/experiences");
   }
 
-  async function runExperience() {
-    if (!experience) return;
+  async function runEvent(eventId: string) {
+    if (!experience || runningEventId) return;
 
+    setRunningEventId(eventId);
     const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
+    if (!didSave) {
+      setRunningEventId("");
+      return;
+    }
 
     const preparedAudioTotal = await generateMissingAudioBeforeRun();
-    if (preparedAudioTotal === null) return;
+    if (preparedAudioTotal === null) {
+      setRunningEventId("");
+      return;
+    }
 
     try {
       await apiFetch<SessionPayload>("/api/sessions/", {
         method: "POST",
-        body: JSON.stringify({ experienceId: experience.id }),
+        body: JSON.stringify({
+          eventId,
+          experienceId: experience.id,
+          recordingMode: checkpointRecordingMode,
+        }),
       });
     } catch (runError) {
       setError(
         runError instanceof Error
           ? runError.message
-          : "Could not start a fresh run.",
+          : "Could not start from this event.",
       );
+      setRunningEventId("");
       return;
     }
 
@@ -4280,16 +4303,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         {experience ? (
           <section className="next-editor-overview-section">
             <div className="next-overview-editor">
-              <button
-                aria-label="Run experience"
-                className="next-overview-run-button"
-                disabled={!experience || Boolean(audioPreparation)}
-                onClick={() => void runExperience()}
-                title="Run experience"
-                type="button"
-              >
-                <PlayIcon />
-              </button>
               <div className="overview-editor">
                 <input
                   aria-label="Experience title"
@@ -4471,14 +4484,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
         {experience ? (
           <ExperienceEventFlow
+            checkpointRecordingMode={checkpointRecordingMode}
             detailPanel={actionDetailPanel}
             events={experience.events}
             experienceId={experience.id}
             inspector={eventInspector}
             isCreatingEvent={isCreatingEvent}
+            onCheckpointRecordingModeChange={setCheckpointRecordingMode}
             onCreateEvent={() => void createEvent()}
             onDeleteEvent={(eventId) => void deleteEvent(eventId)}
+            onRunEvent={(eventId) => void runEvent(eventId)}
             onSelectEvent={setSelectedEventId}
+            runningEventId={runningEventId}
             selectedEventId={selectedEventId}
           />
         ) : null}

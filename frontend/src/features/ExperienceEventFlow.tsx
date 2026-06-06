@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type ChangeEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -10,13 +11,17 @@ import {
   useState,
 } from "react";
 
-import { MinusIcon, PlusIcon } from "../components/Icons";
+import { MinusIcon, PlayIcon, PlusIcon } from "../components/Icons";
 import {
   eventOutgoingLinks,
   eventTargetForRoute,
   isDynamicRouteTarget,
 } from "../eventGraph";
-import type { EventOutgoingLink, ExperienceEvent } from "../types";
+import type {
+  CheckpointRecordingMode,
+  EventOutgoingLink,
+  ExperienceEvent,
+} from "../types";
 
 type ViewportDragState = {
   clientX: number;
@@ -425,7 +430,9 @@ function EventFlowCard({
   isDisconnected = false,
   isReference = false,
   onOpenContextMenu,
+  onRunEvent,
   onSelectEvent,
+  runningEventId,
   selectedEventId,
 }: {
   event: ExperienceEvent;
@@ -433,14 +440,39 @@ function EventFlowCard({
   isDisconnected?: boolean;
   isReference?: boolean;
   onOpenContextMenu: (eventId: string, event: MouseEvent) => void;
+  onRunEvent: (eventId: string) => void;
   onSelectEvent: (eventId: string) => void;
+  runningEventId: string;
   selectedEventId: string;
 }) {
   const isSelected = event.id === selectedEventId;
   const description = eventDescription(event);
+  const isRunning = runningEventId === event.id;
+  const isRunDisabled = Boolean(runningEventId);
+  const title = event.title || event.slug || "Untitled event";
+
+  function selectEvent() {
+    onSelectEvent(event.id);
+  }
+
+  function handleKeyDown(keyEvent: KeyboardEvent<HTMLDivElement>) {
+    if (keyEvent.target instanceof HTMLElement && keyEvent.target.closest("button")) {
+      return;
+    }
+    if (keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
+
+    keyEvent.preventDefault();
+    selectEvent();
+  }
+
+  function runEvent(mouseEvent: MouseEvent<HTMLButtonElement>) {
+    mouseEvent.preventDefault();
+    mouseEvent.stopPropagation();
+    onRunEvent(event.id);
+  }
 
   return (
-    <button
+    <div
       aria-pressed={isSelected}
       className={flowNodeClassName({
         event,
@@ -449,30 +481,51 @@ function EventFlowCard({
         isReference,
         isSelected,
       })}
-      onClick={() => onSelectEvent(event.id)}
+      onClick={selectEvent}
       onContextMenu={(contextMenuEvent) =>
         onOpenContextMenu(event.id, contextMenuEvent)
       }
-      type="button"
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
     >
-      <h3>{event.title || event.slug || "Untitled event"}</h3>
+      <h3>{title}</h3>
       {description ? <p>{description}</p> : null}
-    </button>
+      <button
+        aria-label={`Run from ${title}`}
+        className={[
+          "next-flow-card-run-button",
+          isRunning ? "is-running" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        disabled={isRunDisabled}
+        onClick={runEvent}
+        title={isRunning ? "Starting event" : `Run from ${title}`}
+        type="button"
+      >
+        <PlayIcon />
+      </button>
+    </div>
   );
 }
 
 function EventFlowBranch({
   events,
   onOpenContextMenu,
+  onRunEvent,
   onSelectEvent,
   route,
+  runningEventId,
   selectedEventId,
   visitedEventIds,
 }: {
   events: ExperienceEvent[];
   onOpenContextMenu: (eventId: string, event: MouseEvent) => void;
+  onRunEvent: (eventId: string) => void;
   onSelectEvent: (eventId: string) => void;
   route: FlowRoute;
+  runningEventId: string;
   selectedEventId: string;
   visitedEventIds: Set<string>;
 }) {
@@ -488,7 +541,9 @@ function EventFlowBranch({
           events={events}
           isReference
           onOpenContextMenu={onOpenContextMenu}
+          onRunEvent={onRunEvent}
           onSelectEvent={onSelectEvent}
+          runningEventId={runningEventId}
           selectedEventId={selectedEventId}
         />
       ) : (
@@ -496,7 +551,9 @@ function EventFlowBranch({
           events={events}
           event={route.target}
           onOpenContextMenu={onOpenContextMenu}
+          onRunEvent={onRunEvent}
           onSelectEvent={onSelectEvent}
+          runningEventId={runningEventId}
           selectedEventId={selectedEventId}
           visitedEventIds={visitedEventIds}
         />
@@ -509,14 +566,18 @@ function EventFlowPath({
   events,
   event,
   onOpenContextMenu,
+  onRunEvent,
   onSelectEvent,
+  runningEventId,
   selectedEventId,
   visitedEventIds,
 }: {
   events: ExperienceEvent[];
   event: ExperienceEvent;
   onOpenContextMenu: (eventId: string, event: MouseEvent) => void;
+  onRunEvent: (eventId: string) => void;
   onSelectEvent: (eventId: string) => void;
+  runningEventId: string;
   selectedEventId: string;
   visitedEventIds: Set<string>;
 }) {
@@ -546,7 +607,9 @@ function EventFlowPath({
             events={events}
             key={flowEvent.id}
             onOpenContextMenu={onOpenContextMenu}
+            onRunEvent={onRunEvent}
             onSelectEvent={onSelectEvent}
+            runningEventId={runningEventId}
             selectedEventId={selectedEventId}
           />
         ))}
@@ -556,7 +619,9 @@ function EventFlowPath({
             events={events}
             isReference
             onOpenContextMenu={onOpenContextMenu}
+            onRunEvent={onRunEvent}
             onSelectEvent={onSelectEvent}
+            runningEventId={runningEventId}
             selectedEventId={selectedEventId}
           />
         ) : null}
@@ -573,7 +638,9 @@ function EventFlowPath({
                 .map((link) => link.sourceItemId || link.source || link.kind)
                 .join("-")}`}
               onOpenContextMenu={onOpenContextMenu}
+              onRunEvent={onRunEvent}
               onSelectEvent={onSelectEvent}
+              runningEventId={runningEventId}
               route={route}
               selectedEventId={selectedEventId}
               visitedEventIds={localVisited}
@@ -586,24 +653,32 @@ function EventFlowPath({
 }
 
 export function ExperienceEventFlow({
+  checkpointRecordingMode,
   detailPanel,
   events,
   experienceId,
   inspector,
   isCreatingEvent,
   onCreateEvent,
+  onCheckpointRecordingModeChange,
   onDeleteEvent,
+  onRunEvent,
   onSelectEvent,
+  runningEventId,
   selectedEventId,
 }: {
+  checkpointRecordingMode: CheckpointRecordingMode;
   detailPanel?: ReactNode;
   events: ExperienceEvent[];
   experienceId: string;
   inspector?: ReactNode;
   isCreatingEvent: boolean;
   onCreateEvent: () => void;
+  onCheckpointRecordingModeChange: (mode: CheckpointRecordingMode) => void;
   onDeleteEvent: (eventId: string) => void;
+  onRunEvent: (eventId: string) => void;
   onSelectEvent: (eventId: string) => void;
+  runningEventId: string;
   selectedEventId: string;
 }) {
   const flowCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -735,7 +810,9 @@ export function ExperienceEventFlow({
     if (event.button !== 0) return;
 
     const target = event.target as HTMLElement | null;
-    if (target?.closest("button, a, input, select, textarea")) return;
+    if (target?.closest("button, a, input, select, textarea, [role='button']")) {
+      return;
+    }
 
     const viewport = flowViewportRef.current;
     if (!viewport) return;
@@ -984,6 +1061,13 @@ export function ExperienceEventFlow({
     setEventContextMenu(null);
   }
 
+  function changeCheckpointRecordingMode(event: ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value;
+    if (value !== "off" && value !== "structural" && value !== "full") return;
+
+    onCheckpointRecordingModeChange(value);
+  }
+
   function handleDetailResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "ArrowLeft") {
       event.preventDefault();
@@ -1048,6 +1132,18 @@ export function ExperienceEventFlow({
             <PlusIcon />
           </button>
           <h2>Events</h2>
+          <label className="next-flow-recording-mode">
+            <span>Recording</span>
+            <select
+              aria-label="Checkpoint recording mode"
+              onChange={changeCheckpointRecordingMode}
+              value={checkpointRecordingMode}
+            >
+              <option value="off">Off</option>
+              <option value="structural">Structural</option>
+              <option value="full">Full</option>
+            </select>
+          </label>
         </div>
 
         <div
@@ -1067,8 +1163,10 @@ export function ExperienceEventFlow({
                 <EventFlowPath
                   event={startEvent}
                   events={orderedEvents}
+                  onRunEvent={onRunEvent}
                   onOpenContextMenu={openEventContextMenu}
                   onSelectEvent={onSelectEvent}
+                  runningEventId={runningEventId}
                   selectedEventId={selectedEventId}
                   visitedEventIds={new Set()}
                 />
@@ -1089,7 +1187,9 @@ export function ExperienceEventFlow({
                             isDisconnected
                             key={event.id}
                             onOpenContextMenu={openEventContextMenu}
+                            onRunEvent={onRunEvent}
                             onSelectEvent={onSelectEvent}
+                            runningEventId={runningEventId}
                             selectedEventId={selectedEventId}
                           />
                         ))}
