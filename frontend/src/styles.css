@@ -1695,7 +1695,12 @@ button {
 }
 
 .next-script-slide-row.has-no-slide {
+  grid-template-columns: minmax(0, 1fr);
   background: color-mix(in srgb, var(--panel-bg-strong) 40%, transparent);
+}
+
+.next-script-slide-row.has-no-slide .next-script-slide-preview {
+  display: none;
 }
 
 .next-script-slide-script {
