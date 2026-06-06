@@ -155,6 +155,11 @@ type AudioPreparationState = {
   total: number;
 };
 
+type AudioScriptDraft = {
+  stepId: string;
+  text: string;
+};
+
 type PersistedNextEditorUiState = {
   activeScriptAction?: {
     actionIndex?: number;
@@ -1192,7 +1197,10 @@ function alignDisplayWordsToBase(displayWords: string[], baseSlots: string[]) {
     Array.from({ length: columnCount }, () => Number.POSITIVE_INFINITY),
   );
   const operations = Array.from({ length: rowCount }, () =>
-    Array.from<"delete" | "insert" | "slot" | "">({ length: columnCount }, () => ""),
+    Array.from(
+      { length: columnCount },
+      (): "delete" | "insert" | "slot" | "" => "",
+    ),
   );
 
   costs[0][0] = 0;
@@ -2154,6 +2162,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [conversationDrafts, setConversationDrafts] = useState<
     Record<string, string>
   >({});
+  const [audioScriptDraft, setAudioScriptDraft] = useState<AudioScriptDraft>({
+    stepId: "",
+    text: "",
+  });
   const eventAutosaveTimerRef = useRef<number | null>(null);
   const onEntryAutosaveTimerRef = useRef<number | null>(null);
   const conversationAutosaveTimerRef = useRef<number | null>(null);
@@ -2172,6 +2184,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionRedoStackRef = useRef<string[]>([]);
   const scriptActionUndoStackRef = useRef<string[]>([]);
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const audioScriptTextareaFocusedRef = useRef(false);
+  const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const tutorAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2299,6 +2313,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           activeDisplayBreaks,
         )
       : activeAudioScriptText;
+  const activeAudioScriptDraftStepId = activeScriptStep?.id ?? "";
+  const activeAudioScriptTextareaValue =
+    audioScriptDraft.stepId === activeAudioScriptDraftStepId
+      ? audioScriptDraft.text
+      : activeAudioScriptVisualText;
   const snapshotContextMenu = useExperienceSnapshotContextMenu({
     actions: [
       {
@@ -2321,6 +2340,40 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   useEffect(() => {
     writeCheckpointRecordingMode(checkpointRecordingMode);
   }, [checkpointRecordingMode]);
+
+  useEffect(() => {
+    setAudioScriptDraft((current) => {
+      if (!activeAudioScriptDraftStepId) {
+        return current.stepId || current.text
+          ? { stepId: "", text: "" }
+          : current;
+      }
+
+      const isFocusedDraft =
+        current.stepId === activeAudioScriptDraftStepId &&
+        audioScriptTextareaFocusedRef.current &&
+        document.activeElement === audioScriptTextareaRef.current &&
+        normalizeScriptAudioText(current.text) === activeAudioScriptText;
+
+      if (isFocusedDraft) return current;
+
+      if (
+        current.stepId === activeAudioScriptDraftStepId &&
+        current.text === activeAudioScriptVisualText
+      ) {
+        return current;
+      }
+
+      return {
+        stepId: activeAudioScriptDraftStepId,
+        text: activeAudioScriptVisualText,
+      };
+    });
+  }, [
+    activeAudioScriptDraftStepId,
+    activeAudioScriptText,
+    activeAudioScriptVisualText,
+  ]);
 
   useEffect(() => {
     const stepId = activeScriptStep?.id ?? "";
@@ -3344,6 +3397,31 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }, experienceAutosaveDelayMs);
   }
 
+  function focusActiveScriptText(value: string) {
+    audioScriptTextareaFocusedRef.current = true;
+    if (!activeAudioScriptDraftStepId) return;
+
+    setAudioScriptDraft((current) =>
+      current.stepId === activeAudioScriptDraftStepId
+        ? current
+        : { stepId: activeAudioScriptDraftStepId, text: value },
+    );
+  }
+
+  function blurActiveScriptText() {
+    audioScriptTextareaFocusedRef.current = false;
+  }
+
+  function changeActiveScriptText(value: string) {
+    if (activeAudioScriptDraftStepId) {
+      setAudioScriptDraft({
+        stepId: activeAudioScriptDraftStepId,
+        text: value,
+      });
+    }
+    updateActiveScriptText(value);
+  }
+
   function updateActiveScriptText(value: string) {
     const nextAudioScriptText = normalizeScriptAudioText(value);
     const nextMarkedScriptText = mergeMarkersIntoSpokenText(
@@ -4059,11 +4137,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             aria-label="Audio script text"
             className="next-script-textarea"
             disabled={!activeScriptStep}
-            onChange={(event) => updateActiveScriptText(event.target.value)}
+            onBlur={blurActiveScriptText}
+            onChange={(event) => changeActiveScriptText(event.target.value)}
             onContextMenu={(event) => event.stopPropagation()}
+            onFocus={(event) => focusActiveScriptText(event.currentTarget.value)}
             placeholder="No script text yet."
+            ref={audioScriptTextareaRef}
             spellCheck
-            value={activeAudioScriptVisualText}
+            value={activeAudioScriptTextareaValue}
           />
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView

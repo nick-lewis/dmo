@@ -731,12 +731,13 @@ export function ExperienceEventFlow({
   useEffect(() => {
     const canvas = flowCanvasRef.current;
     if (!canvas) return undefined;
+    const observedCanvas = canvas;
 
     function updateCanvasSize() {
-      const rect = canvas.getBoundingClientRect();
+      const rect = observedCanvas.getBoundingClientRect();
       setFlowCanvasSize({
-        height: canvas.offsetHeight || rect.height,
-        width: canvas.offsetWidth || rect.width,
+        height: observedCanvas.offsetHeight || rect.height,
+        width: observedCanvas.offsetWidth || rect.width,
       });
     }
 
@@ -747,7 +748,7 @@ export function ExperienceEventFlow({
     }
 
     const observer = new ResizeObserver(updateCanvasSize);
-    observer.observe(canvas);
+    observer.observe(observedCanvas);
     return () => observer.disconnect();
   }, [orderedEvents.length, disconnectedEvents.length, selectedEventId]);
 
