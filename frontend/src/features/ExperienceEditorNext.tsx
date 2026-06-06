@@ -225,6 +225,7 @@ type ScriptSourceWordRange = {
 
 const displayDocumentHistoryLimit = 80;
 const scriptActionHistoryLimit = 80;
+const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -375,6 +376,44 @@ function sortedScriptSteps(event: ExperienceEvent) {
   return sortedEventSteps(event.steps).filter(
     (step) => step.actionType === "script",
   );
+}
+
+function firstTopLevelScriptActionFromDsl(
+  source: string,
+): PythonDslScriptAction | null {
+  const normalizedSource = source.replace(/\r\n?/g, "\n");
+  let lineStart = 0;
+
+  for (const [lineIndex, line] of normalizedSource.split("\n").entries()) {
+    const trimmed = line.trimStart();
+    if (trimmed && !/^\s/.test(line) && !trimmed.startsWith("#")) {
+      onEntryScriptActionPattern.lastIndex = 0;
+      const match = onEntryScriptActionPattern.exec(line);
+      if (match?.[0] && typeof match.index === "number") {
+        const from = lineStart + match.index;
+        return {
+          actionIndex: 0,
+          from,
+          lineNumber: lineIndex + 1,
+          source: match[0],
+          to: from + match[0].length,
+        };
+      }
+    }
+
+    lineStart += line.length + 1;
+  }
+
+  return null;
+}
+
+function scriptActionAutoOpenKey(
+  eventId: string,
+  action: PythonDslScriptAction | null,
+) {
+  return action
+    ? `${eventId}:${action.actionIndex}:${action.lineNumber}:${action.from}:${action.source}`
+    : "";
 }
 
 function selectedEventIdFromStored(
@@ -2180,6 +2219,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     Record<string, PendingScriptDisplayDraft>
   >({});
   const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
+  const autoOpenedScriptActionKeyRef = useRef("");
   const scriptActionHistoryStepIdRef = useRef("");
   const scriptActionRedoStackRef = useRef<string[]>([]);
   const scriptActionUndoStackRef = useRef<string[]>([]);
@@ -3933,6 +3973,45 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         selectedEvent.conversationChoices ?? [],
       ))
     : "";
+  const firstSelectedEventScriptAction = useMemo(
+    () => firstTopLevelScriptActionFromDsl(selectedEventOnEntrySource),
+    [selectedEventOnEntrySource],
+  );
+  const firstSelectedEventScriptActionKey = selectedEvent
+    ? scriptActionAutoOpenKey(selectedEvent.id, firstSelectedEventScriptAction)
+    : "";
+
+  useEffect(() => {
+    if (!selectedEvent || status !== "ready") return;
+
+    if (activeScriptAction?.eventId === selectedEvent.id) {
+      autoOpenedScriptActionKeyRef.current = firstSelectedEventScriptActionKey;
+      return;
+    }
+
+    if (
+      !firstSelectedEventScriptAction ||
+      !firstSelectedEventScriptActionKey ||
+      !sortedScriptSteps(selectedEvent)[
+        firstSelectedEventScriptAction.actionIndex
+      ] ||
+      autoOpenedScriptActionKeyRef.current === firstSelectedEventScriptActionKey
+    ) {
+      return;
+    }
+
+    autoOpenedScriptActionKeyRef.current = firstSelectedEventScriptActionKey;
+    setActiveScriptAction({
+      ...firstSelectedEventScriptAction,
+      eventId: selectedEvent.id,
+    });
+  }, [
+    activeScriptAction?.eventId,
+    firstSelectedEventScriptAction,
+    firstSelectedEventScriptActionKey,
+    selectedEvent,
+    status,
+  ]);
 
   const eventInspector = selectedEvent ? (
     <div className="next-event-inspector">
