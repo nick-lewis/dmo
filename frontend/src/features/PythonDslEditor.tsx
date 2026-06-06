@@ -342,8 +342,9 @@ function eventTargetCompletions(eventTargets: PythonDslEventTarget[]) {
   });
 }
 
-function createDslCompletionSource(eventTargets: PythonDslEventTarget[]) {
-  const eventCompletions = eventTargetCompletions(eventTargets);
+function createDslCompletionSource(
+  getEventTargets: () => PythonDslEventTarget[],
+) {
   const chatArgumentCompletions: Completion[] = [
     {
       label: "enabled=True",
@@ -364,6 +365,7 @@ function createDslCompletionSource(eventTargets: PythonDslEventTarget[]) {
   return function dslCompletionSource(
     context: CompletionContext,
   ): CompletionResult | null {
+    const eventCompletions = eventTargetCompletions(getEventTargets());
     const currentLine = context.state.doc.lineAt(context.pos);
     const prefix = currentLine.text.slice(0, context.pos - currentLine.from);
     const routeTargetMatch =
@@ -461,6 +463,29 @@ function formatView(view: EditorView) {
     scrollIntoView: true,
     selection: { anchor: Math.min(view.state.selection.main.head, formatted.length) },
   });
+  return true;
+}
+
+function runHistoryShortcut(
+  event: globalThis.KeyboardEvent,
+  view: EditorView,
+) {
+  if ((!event.ctrlKey && !event.metaKey) || event.altKey) return false;
+
+  const key = event.key.toLowerCase();
+  const command =
+    key === "z" && event.shiftKey
+      ? redo
+      : key === "z"
+        ? undo
+        : key === "y"
+          ? redo
+          : null;
+  if (!command) return false;
+
+  event.preventDefault();
+  event.stopPropagation();
+  command(view);
   return true;
 }
 
@@ -690,6 +715,7 @@ export function PythonDslEditor({
   value,
 }: PythonDslEditorProps) {
   const editorParentRef = useRef<HTMLDivElement | null>(null);
+  const eventTargetsRef = useRef(eventTargets);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onOpenScriptActionRef = useRef(onOpenScriptAction);
@@ -704,6 +730,10 @@ export function PythonDslEditor({
   useEffect(() => {
     onOpenScriptActionRef.current = onOpenScriptAction;
   }, [onOpenScriptAction]);
+
+  useEffect(() => {
+    eventTargetsRef.current = eventTargets;
+  }, [eventTargets]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -733,7 +763,7 @@ export function PythonDslEditor({
       basicSetup,
       pythonLanguage,
       pythonLanguage.data.of({
-        autocomplete: createDslCompletionSource(eventTargets),
+        autocomplete: createDslCompletionSource(() => eventTargetsRef.current),
       }),
       autocompletion({ activateOnTyping: true, closeOnBlur: true }),
       indentUnit.of(indent),
@@ -749,6 +779,9 @@ export function PythonDslEditor({
         spellcheck: "false",
       }),
       EditorView.domEventHandlers({
+        keydown(event, view) {
+          return runHistoryShortcut(event, view);
+        },
         click(event, view) {
           const clickedChatAction = explicitDslActionTarget(
             event,
@@ -832,7 +865,7 @@ export function PythonDslEditor({
         indentWithTab,
       ]),
     ],
-    [ariaLabel, eventTargets],
+    [ariaLabel],
   );
 
   useEffect(() => {
