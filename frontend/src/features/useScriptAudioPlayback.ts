@@ -25,11 +25,12 @@ import type {
   EventConversationChoice,
   MessageAudioPayload,
   ScriptCue,
+  ScriptWord,
   TutoringSession,
 } from "../types";
 
-const scriptTextStreamFallbackMs = 7000;
-const scriptTextStreamMinMs = 1400;
+const scriptTextStreamFallbackMs = 12000;
+const scriptTextStreamMinMs = 1800;
 const scriptImmediateCueProgress = 0.001;
 
 function clamp(value: number, min: number, max: number) {
@@ -37,7 +38,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function scriptStreamDurationMs(text: string) {
-  return clamp(text.length * 42, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
+  return clamp(text.length * 58, scriptTextStreamMinMs, scriptTextStreamFallbackMs);
 }
 
 function scriptStreamIndexAt(text: string, progress: number) {
@@ -50,6 +51,101 @@ function scriptStreamIndexAt(text: string, progress: number) {
   }
 
   return rawIndex;
+}
+
+type ScriptTextStreamSync = {
+  audio: HTMLAudioElement;
+  durationSeconds: number;
+  scriptWords?: ScriptWord[];
+};
+
+type ScriptTextBoundary = {
+  index: number;
+  timeSeconds: number;
+};
+
+function textWordCountBefore(text: string, index: number) {
+  return text.slice(0, index).match(/\S+/g)?.length ?? 0;
+}
+
+function scriptTextBoundaryTime(
+  text: string,
+  index: number,
+  durationSeconds: number,
+  scriptWords: ScriptWord[] = [],
+) {
+  if (!durationSeconds) return 0;
+
+  const wordCount = textWordCountBefore(text, index);
+  if (scriptWords.length && wordCount > 0) {
+    const word = scriptWords[Math.min(wordCount - 1, scriptWords.length - 1)];
+    if (word && Number.isFinite(word.end)) {
+      return clamp(word.end, 0, durationSeconds);
+    }
+  }
+
+  return durationSeconds * clamp(index / Math.max(1, text.length), 0, 1);
+}
+
+function scriptTextPauseBoundaries(
+  text: string,
+  durationSeconds: number,
+  scriptWords: ScriptWord[] = [],
+) {
+  if (!durationSeconds) return [];
+
+  const boundaries: ScriptTextBoundary[] = [];
+  const boundaryPattern = /\n[ \t]*\n+/g;
+  let match: RegExpExecArray | null;
+  let minimumTimeSeconds = 0;
+
+  while ((match = boundaryPattern.exec(text))) {
+    const index = match.index + match[0].length;
+    if (index <= 0 || index >= text.length) continue;
+
+    const timeSeconds = clamp(
+      scriptTextBoundaryTime(text, index, durationSeconds, scriptWords),
+      minimumTimeSeconds + 0.05,
+      Math.max(minimumTimeSeconds + 0.05, durationSeconds - 0.05),
+    );
+    minimumTimeSeconds = timeSeconds;
+    boundaries.push({ index, timeSeconds });
+  }
+
+  return boundaries;
+}
+
+function scriptStreamIndexAtAudioTime(
+  text: string,
+  audioTimeSeconds: number,
+  durationSeconds: number,
+  boundaries: ScriptTextBoundary[],
+) {
+  if (!durationSeconds) return text.length;
+  const currentTime = clamp(audioTimeSeconds, 0, durationSeconds);
+  const stops = [...boundaries, { index: text.length, timeSeconds: durationSeconds }];
+  let previousIndex = 0;
+  let previousTimeSeconds = 0;
+
+  for (const stop of stops) {
+    if (currentTime + 0.015 >= stop.timeSeconds) {
+      previousIndex = stop.index;
+      previousTimeSeconds = stop.timeSeconds;
+      continue;
+    }
+
+    const sectionText = text.slice(previousIndex, stop.index);
+    const sectionDuration = Math.max(0.05, stop.timeSeconds - previousTimeSeconds);
+    const sectionProgress = clamp(
+      (currentTime - previousTimeSeconds) / sectionDuration,
+      0,
+      1,
+    );
+
+    return previousIndex + scriptStreamIndexAt(sectionText, sectionProgress);
+  }
+
+  return text.length;
 }
 
 function sortedEventConversationChoices(choices: EventConversationChoice[] = []) {
@@ -217,6 +313,7 @@ export function useScriptAudioPlayback({
     message: ChatMessage,
     durationMs: number,
     displayText = "",
+    sync?: ScriptTextStreamSync,
   ) {
     const fullText = displayText.trim() || message.content;
     if (!fullText.trim()) return Promise.resolve();
@@ -239,13 +336,37 @@ export function useScriptAudioPlayback({
 
     return new Promise<void>((resolve) => {
       let timeoutId = 0;
+      let animationFrame = 0;
       let isDone = false;
       const startedAt = performance.now();
+      const audioDurationSeconds =
+        sync && sync.durationSeconds > 0
+          ? sync.durationSeconds
+          : sync
+            ? durationMs / 1000
+            : 0;
+      const audioBoundaries =
+        sync && audioDurationSeconds
+          ? scriptTextPauseBoundaries(
+              fullText,
+              audioDurationSeconds,
+              sync.scriptWords,
+            )
+          : [];
+
+      const scheduleTick = () => {
+        if (sync) {
+          animationFrame = window.requestAnimationFrame(tick);
+          return;
+        }
+        timeoutId = window.setTimeout(tick, 50);
+      };
 
       const finish = () => {
         if (isDone) return;
         isDone = true;
         window.clearTimeout(timeoutId);
+        window.cancelAnimationFrame(animationFrame);
         if (scriptTextSkipRef.current === finish) {
           scriptTextSkipRef.current = null;
         }
@@ -270,9 +391,17 @@ export function useScriptAudioPlayback({
       const tick = () => {
         if (isDone) return;
 
-        const elapsed = performance.now() - startedAt;
-        const progress = Math.min(1, elapsed / durationMs);
-        const nextIndex = scriptStreamIndexAt(fullText, progress);
+        const nextIndex = sync
+          ? scriptStreamIndexAtAudioTime(
+              fullText,
+              sync.audio.ended ? audioDurationSeconds : sync.audio.currentTime,
+              audioDurationSeconds,
+              audioBoundaries,
+            )
+          : scriptStreamIndexAt(
+              fullText,
+              Math.min(1, (performance.now() - startedAt) / durationMs),
+            );
 
         setMessages((current) =>
           current.map((currentMessage) =>
@@ -290,12 +419,12 @@ export function useScriptAudioPlayback({
           ),
         );
 
-        if (progress >= 1) {
+        if (nextIndex >= fullText.length) {
           finish();
           return;
         }
 
-        timeoutId = window.setTimeout(tick, 40);
+        scheduleTick();
       };
 
       scriptTextSkipRef.current = finish;
@@ -422,6 +551,7 @@ export function useScriptAudioPlayback({
     cueValue?: unknown,
     durationSeconds?: number | null,
     displayText = "",
+    scriptWords: ScriptWord[] = [],
   ) {
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
@@ -443,7 +573,11 @@ export function useScriptAudioPlayback({
       (cue) => cue.progress > scriptImmediateCueProgress,
     );
     await Promise.all([
-      streamScriptMessageText(message, durationMs, messageDisplayText),
+      streamScriptMessageText(message, durationMs, messageDisplayText, {
+        audio,
+        durationSeconds: fallbackDurationSeconds,
+        scriptWords,
+      }),
       playPreparedScriptAudio(
         audio,
         cues,
@@ -522,6 +656,7 @@ export function useScriptAudioPlayback({
           payload.scriptCues,
           payload.durationSeconds,
           payload.displayText,
+          payload.scriptWords ?? [],
         );
       } catch (error) {
         scriptTextSkipRef.current?.();

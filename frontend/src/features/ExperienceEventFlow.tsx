@@ -1124,14 +1124,30 @@ export function ExperienceEventFlow({
       <div className="next-flow-pane">
         <div className="next-flow-toolbar">
           <button
-            aria-label={isCreatingEvent ? "Creating event" : "Create event"}
-            className="next-flow-create-button"
-            disabled={isCreatingEvent}
-            onClick={onCreateEvent}
-            title={isCreatingEvent ? "Creating event" : "Create event"}
+            aria-label={
+              startEvent
+                ? `Run from ${eventListLabel(orderedEvents, startEvent)}`
+                : "Run experience"
+            }
+            className={[
+              "next-flow-run-button",
+              runningEventId === startEvent?.id ? "is-running" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            disabled={!startEvent || Boolean(runningEventId)}
+            onClick={() => {
+              if (!startEvent) return;
+              onRunEvent(startEvent.id);
+            }}
+            title={
+              startEvent
+                ? `Run from ${eventListLabel(orderedEvents, startEvent)}`
+                : "No start event"
+            }
             type="button"
           >
-            <PlusIcon />
+            <PlayIcon />
           </button>
           <h2>Events</h2>
           <label className="next-flow-recording-mode">
@@ -1146,6 +1162,16 @@ export function ExperienceEventFlow({
               <option value="full">Full</option>
             </select>
           </label>
+          <button
+            aria-label={isCreatingEvent ? "Creating event" : "Create event"}
+            className="next-flow-create-button"
+            disabled={isCreatingEvent}
+            onClick={onCreateEvent}
+            title={isCreatingEvent ? "Creating event" : "Create event"}
+            type="button"
+          >
+            <PlusIcon />
+          </button>
         </div>
 
         <div
