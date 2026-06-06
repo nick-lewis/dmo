@@ -5,7 +5,6 @@ import {
   useState,
 } from "react";
 
-import { publicAsset } from "../assets";
 import { MicIcon, StopIcon } from "../components/Icons";
 import {
   appendScriptMarkerTimelineArg,
@@ -266,6 +265,12 @@ export function NextFineTuningPanel({
       if (markerTime(marker, index) <= visibleTime + 0.001) active = marker;
     }
     return active;
+  }
+
+  function slidePreviewForMarker(marker: ScriptMarkerInstance) {
+    const markerSlideRef = marker.argList[0]?.trim() || "";
+    if (!markerSlideRef || !deckUrl.trim()) return null;
+    return previews[slidePreviewKeyForDeck(deckUrl, markerSlideRef)] ?? null;
   }
 
   function togglePlayback() {
@@ -567,37 +572,78 @@ export function NextFineTuningPanel({
           className="next-fine-playhead"
           style={{ left: `${progressPercent}%` }}
         />
-        {timelineMarkers.map(({ index, lane, marker, timeSeconds }) => (
-          <button
-            className={[
-              "next-fine-marker",
-              isSlideMarker(marker) ? "is-slide" : "is-action",
-            ].join(" ")}
-            key={markerEditKey(marker)}
-            onClick={(event) => {
-              if (ignoreMarkerClickRef.current) {
-                event.preventDefault();
+        {timelineMarkers.map(({ index, lane, marker, timeSeconds }) => {
+          const markerPercent = clamp(
+            (timeSeconds / durationForLayout) * 100,
+            0,
+            100,
+          );
+          const slideMarkerForPreview = isSlideMarker(marker);
+          const markerPreview = slideMarkerForPreview
+            ? slidePreviewForMarker(marker)
+            : null;
+          const previewImageUrl =
+            markerPreview?.status === "ready" ? markerPreview.imageUrl : "";
+          const previewLabel =
+            markerPreview?.status === "loading"
+              ? "Loading"
+              : markerPreview?.detail || markerLabel(marker);
+
+          return (
+            <button
+              aria-label={`${markerLabel(marker)} at ${formatTimelineSeconds(
+                timeSeconds,
+              )}`}
+              className={[
+                "next-fine-marker",
+                slideMarkerForPreview ? "is-slide" : "is-action",
+                slideMarkerForPreview ? "has-preview" : "",
+                markerPercent < 28
+                  ? "is-preview-left"
+                  : markerPercent > 72
+                    ? "is-preview-right"
+                    : "is-preview-center",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={markerEditKey(marker)}
+              onClick={(event) => {
+                if (ignoreMarkerClickRef.current) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return;
+                }
                 event.stopPropagation();
-                return;
-              }
-              event.stopPropagation();
-              seek(timeSeconds);
-            }}
-            onPointerCancel={endMarkerDrag}
-            onPointerDown={(event) => beginMarkerDrag(event, index, timeSeconds)}
-            onPointerMove={updateMarkerDrag}
-            onPointerUp={endMarkerDrag}
-            style={{
-              left: `${clamp((timeSeconds / durationForLayout) * 100, 0, 100)}%`,
-              top: `${76 + lane * 30}px`,
-            }}
-            title={`${markerLabel(marker)} at ${formatTimelineSeconds(timeSeconds)}`}
-            type="button"
-          >
-            <span>{scriptMarkerIcon(marker.type)}</span>
-            <strong>{markerLabel(marker)}</strong>
-          </button>
-        ))}
+                seek(timeSeconds);
+              }}
+              onPointerCancel={endMarkerDrag}
+              onPointerDown={(event) => beginMarkerDrag(event, index, timeSeconds)}
+              onPointerMove={updateMarkerDrag}
+              onPointerUp={endMarkerDrag}
+              style={{
+                left: `${markerPercent}%`,
+                top: `${76 + lane * 30}px`,
+              }}
+              type="button"
+            >
+              {slideMarkerForPreview ? null : (
+                <span className="next-fine-marker-icon">
+                  {scriptMarkerIcon(marker.type)}
+                </span>
+              )}
+              <strong>{markerLabel(marker)}</strong>
+              {slideMarkerForPreview ? (
+                <span aria-hidden="true" className="next-fine-marker-preview">
+                  {previewImageUrl ? (
+                    <img alt="" src={previewImageUrl} />
+                  ) : (
+                    <span>{previewLabel}</span>
+                  )}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

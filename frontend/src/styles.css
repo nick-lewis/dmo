@@ -1804,7 +1804,7 @@ button {
   align-self: end;
   min-width: 0;
   max-height: 260px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
   border-radius: 7px;
   background: color-mix(in srgb, var(--page-bg) 70%, var(--panel-bg-strong));
@@ -1883,9 +1883,11 @@ button {
   line-height: 1;
   touch-action: none;
   transform: translateX(-50%);
+  z-index: 2;
 }
 
 .next-fine-marker.is-slide {
+  grid-template-columns: minmax(0, 1fr);
   color: color-mix(in srgb, var(--accent) 84%, var(--page-ink));
   background: color-mix(in srgb, var(--accent-soft) 52%, var(--panel-bg-strong));
 }
@@ -1899,9 +1901,10 @@ button {
 .next-fine-marker:focus-visible {
   outline: 2px solid color-mix(in srgb, currentColor 20%, transparent);
   outline-offset: 2px;
+  z-index: 8;
 }
 
-.next-fine-marker span {
+.next-fine-marker-icon {
   font-size: 0.66rem;
   font-weight: 880;
 }
@@ -1912,6 +1915,61 @@ button {
   font-weight: 820;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.next-fine-marker-preview {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  display: none;
+  width: min(210px, 62vw);
+  aspect-ratio: 16 / 10;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 86%, var(--page-bg));
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--page-ink) 16%, transparent);
+  color: color-mix(in srgb, var(--muted-ink) 88%, var(--page-ink));
+  pointer-events: none;
+}
+
+.next-fine-marker.has-preview:hover .next-fine-marker-preview,
+.next-fine-marker.has-preview:focus-visible .next-fine-marker-preview {
+  display: grid;
+  place-items: center;
+}
+
+.next-fine-marker.is-preview-left .next-fine-marker-preview {
+  left: 0;
+  transform: translateX(0);
+}
+
+.next-fine-marker.is-preview-center .next-fine-marker-preview {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.next-fine-marker.is-preview-right .next-fine-marker-preview {
+  right: 0;
+  transform: translateX(0);
+}
+
+.next-fine-marker-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.next-fine-marker-preview span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 1px dotted color-mix(in srgb, var(--panel-soft-border) 86%, transparent);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 780;
 }
 
 .next-script-view {
