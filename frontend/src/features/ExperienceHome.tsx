@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-import { apiFetch, experienceEditPath, experienceRunPath } from "../api";
+import {
+  apiFetch,
+  experienceEditPath,
+  experienceNextEditPath,
+  experienceRunPath,
+} from "../api";
 import { PlusIcon, TrashIcon } from "../components/Icons";
 import { readSelectedExperienceId, writeSelectedExperienceId } from "../persistence";
 import type { ApiUser, Experience, ExperienceForm, ExperiencesPayload, SessionPayload } from "../types";
@@ -217,6 +222,14 @@ export function ExperienceHome() {
     window.location.assign(experienceEditPath(experience.id));
   }
 
+  async function editExperienceNext(experience: Experience) {
+    const didSave = await flushExperienceAutosave(experience);
+    if (!didSave) return;
+
+    writeSelectedExperienceId(experience.id);
+    window.location.assign(experienceNextEditPath(experience.id));
+  }
+
   async function deleteExperience(experience: Experience) {
     const didConfirm = window.confirm(`Delete "${experience.title}"?`);
     if (!didConfirm) return;
@@ -403,6 +416,13 @@ export function ExperienceHome() {
                   />
                 </div>
                 <div className="experience-row-actions">
+                  <button
+                    className="header-action secondary"
+                    onClick={() => void editExperienceNext(experience)}
+                    type="button"
+                  >
+                    New editor
+                  </button>
                   <button
                     className="header-action secondary"
                     onClick={() => void editExperience(experience)}

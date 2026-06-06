@@ -1,3 +1,7 @@
+from uuid import uuid4
+
+from django.conf import settings
+from django.core.files.storage import FileSystemStorage
 from django.http import JsonResponse
 from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -16,6 +20,14 @@ from .http_utils import auth_required_response, parse_json_body
 from .models import Experience
 from .serializers import experience_export_payload, serialize_experience
 from .validation import experience_validation_summary
+
+TUTOR_AVATAR_CONTENT_TYPES = {
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+TUTOR_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 
 
 @require_http_methods(["GET", "POST"])
@@ -80,6 +92,44 @@ def update_experience(request, experience_id):
     if error:
         return JsonResponse({"detail": error}, status=400)
     return JsonResponse({"experience": serialize_experience(experience)})
+
+
+@require_POST
+def upload_tutor_avatar(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    uploaded_file = request.FILES.get("image")
+    if not uploaded_file:
+        return JsonResponse({"detail": "Choose an image to upload."}, status=400)
+
+    content_type = str(uploaded_file.content_type or "").lower()
+    extension = TUTOR_AVATAR_CONTENT_TYPES.get(content_type)
+    if not extension:
+        return JsonResponse(
+            {"detail": "Use a PNG, JPG, WebP, or GIF image."},
+            status=400,
+        )
+
+    if uploaded_file.size > TUTOR_AVATAR_MAX_BYTES:
+        return JsonResponse(
+            {"detail": "Use an image smaller than 5 MB."},
+            status=400,
+        )
+
+    storage = FileSystemStorage(location=settings.MEDIA_ROOT)
+    saved_name = storage.save(
+        f"tutor-avatars/{uuid4().hex}{extension}",
+        uploaded_file,
+    )
+    media_url = settings.MEDIA_URL.strip("/")
+    avatar_path = f"{media_url}/{saved_name}".replace("\\", "/")
+    return JsonResponse({"avatarPath": avatar_path})
 
 
 @require_GET

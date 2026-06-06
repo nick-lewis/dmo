@@ -5,7 +5,7 @@ import {
   useState,
 } from "react";
 import { publicAsset } from "../assets";
-import { PlayIcon } from "../components/Icons";
+import { MicIcon } from "../components/Icons";
 import {
   type RealtimeModelId,
   type RealtimeStatus,
@@ -186,7 +186,7 @@ export function TutorControls({
               title={sampleActionLabel}
               type="button"
             >
-              <PlayIcon />
+              <MicIcon />
             </button>
           ) : null}
         </div>

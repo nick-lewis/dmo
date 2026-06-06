@@ -261,28 +261,31 @@ export function useTutorAutosave({
     field: K,
     value: TutorSettings[K],
   ) {
-    const nextDraft = {
-      ...tutorForm,
-      [field]: value,
-    };
+    setTutorForm((current) => {
+      const nextDraft = {
+        ...current,
+        [field]: value,
+      };
 
-    setTutorForm(nextDraft);
-    queueTutorAutosave(nextDraft);
+      queueTutorAutosave(nextDraft);
+      return nextDraft;
+    });
   }
 
   function updateTutorModelDraft(realtimeModel: RealtimeModelId) {
-    const supportedVoice =
-      isRealtimeVoiceSupported(realtimeModel, tutorForm.voice)
-        ? tutorForm.voice
-        : (realtimeVoiceOptionsForModel(realtimeModel)[0]?.id ?? tutorForm.voice);
-    const nextDraft = {
-      ...tutorForm,
-      realtimeModel,
-      voice: supportedVoice,
-    };
+    setTutorForm((current) => {
+      const supportedVoice = isRealtimeVoiceSupported(realtimeModel, current.voice)
+        ? current.voice
+        : (realtimeVoiceOptionsForModel(realtimeModel)[0]?.id ?? current.voice);
+      const nextDraft = {
+        ...current,
+        realtimeModel,
+        voice: supportedVoice,
+      };
 
-    setTutorForm(nextDraft);
-    queueTutorAutosave(nextDraft);
+      queueTutorAutosave(nextDraft);
+      return nextDraft;
+    });
   }
 
   return {

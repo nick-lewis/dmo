@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { apiFetch } from "../api";
-import { PlayIcon, StopIcon, TrashIcon } from "../components/Icons";
+import { MicIcon, StopIcon, TrashIcon } from "../components/Icons";
 import {
   type RealtimeModelId,
   type RealtimeVoiceId,
@@ -497,7 +497,7 @@ export function VoicePersonalityLab() {
                     title={sample.error || sampleStatus}
                     type="button"
                   >
-                    {isPlaying ? <StopIcon /> : <PlayIcon />}
+                    {isPlaying ? <StopIcon /> : <MicIcon />}
                     <span>{voiceLabel(sample.voice)}</span>
                     <small>{sampleStatus}</small>
                   </button>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { RefreshIcon, PlayIcon, StopIcon } from "../components/Icons";
+import { MicIcon, RefreshIcon, StopIcon } from "../components/Icons";
 import { scriptAudioPlaybackRateOptions } from "../scriptAudio";
 import type { ScriptAudioDisplayPayload, ScriptAudioItem } from "../types";
 import {
@@ -461,7 +461,7 @@ export function ScriptAudioPanel({
                   }
                   type="button"
                 >
-                  {isPlaying ? <StopIcon /> : <PlayIcon />}
+                  {isPlaying ? <StopIcon /> : <MicIcon />}
                 </button>
                 <button
                   aria-label={

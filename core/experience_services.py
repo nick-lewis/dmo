@@ -294,6 +294,7 @@ def duplicate_experience_for_user(source, user):
                 title=source_event.title,
                 slug=source_event.slug,
                 description=source_event.description,
+                on_entry_dsl_source=source_event.on_entry_dsl_source,
                 chat_instructions=source_event.chat_instructions,
                 conversation_choices=clone_json(
                     normalize_conversation_choices(source_event.conversation_choices),
@@ -699,6 +700,12 @@ def create_experience_from_export_payload(user, payload):
                         max_length=4000,
                         strip=False,
                     ),
+                    on_entry_dsl_source=import_string(
+                        event_data.get("onEntryDslSource"),
+                        "",
+                        max_length=12000,
+                        strip=False,
+                    ),
                     chat_instructions=import_string(
                         event_data.get("chatInstructions"),
                         "",
@@ -747,6 +754,12 @@ def create_experience_event_from_payload(experience, event_data):
             event_data.get("description"),
             "",
             max_length=4000,
+            strip=False,
+        ),
+        on_entry_dsl_source=import_string(
+            event_data.get("onEntryDslSource"),
+            "",
+            max_length=12000,
             strip=False,
         ),
         chat_instructions=import_string(

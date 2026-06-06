@@ -17,8 +17,18 @@ export function experienceEditPath(experienceId: string) {
   return `/experiences/${encodeURIComponent(experienceId)}/edit`;
 }
 
+export function experienceNextEditPath(experienceId: string) {
+  return `/experiences/${encodeURIComponent(experienceId)}/next`;
+}
+
+export function experienceEditorMockupsPath(experienceId: string) {
+  return `/experiences/${encodeURIComponent(experienceId)}/mockups`;
+}
+
 export function routeExperience(pathname: string) {
-  const match = pathname.match(/^\/experiences\/([^/]+)(?:\/(run|edit))?\/?$/);
+  const match = pathname.match(
+    /^\/experiences\/([^/]+)(?:\/(run|edit|next|mockups))?\/?$/,
+  );
   if (!match) return { experienceId: "", mode: "" };
 
   return {
@@ -34,7 +44,11 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}) {
 
   if (method !== "GET" && method !== "HEAD") {
     headers.set("X-CSRFToken", getCookie("csrftoken"));
-    if (options.body && !headers.has("Content-Type")) {
+    if (
+      options.body &&
+      !headers.has("Content-Type") &&
+      !(options.body instanceof FormData)
+    ) {
       headers.set("Content-Type", "application/json");
     }
   }

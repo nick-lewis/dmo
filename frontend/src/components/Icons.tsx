@@ -38,6 +38,26 @@ export function InspectorIcon() {
   );
 }
 
+export function SettingsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5ZM19.4 15a8 8 0 0 0 .1-1.3 8 8 0 0 0-.1-1.4l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.4-1.4L14.3 4h-4.6l-.4 2.9A7.7 7.7 0 0 0 7 8.3l-2.5-1-2 3.5 2 1.5a8 8 0 0 0-.1 1.4c0 .4 0 .9.1 1.3l-2 1.6 2 3.4L7 19a7.7 7.7 0 0 0 2.3 1.4l.4 2.9h4.6l.4-2.9A7.7 7.7 0 0 0 17 19l2.5 1 2-3.4-2.1-1.6Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 export function PlayIcon() {
   return (
     <svg
@@ -48,6 +68,26 @@ export function PlayIcon() {
       width="13"
     >
       <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+export function MicIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
     </svg>
   );
 }
@@ -151,6 +191,25 @@ export function PlusIcon() {
     >
       <path
         d="M12 5v14M5 12h14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+export function MinusIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path
+        d="M5 12h14"
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="2"

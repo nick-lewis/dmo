@@ -143,6 +143,12 @@ def update_experience_event_from_data(experience, event, data):
             raise EventServiceError("Event description is too long.")
         event.description = description
 
+    if "onEntryDslSource" in data:
+        on_entry_dsl_source = str(data.get("onEntryDslSource", ""))
+        if len(on_entry_dsl_source) > 12000:
+            raise EventServiceError("On entry script is too long.")
+        event.on_entry_dsl_source = on_entry_dsl_source
+
     if "chatInstructions" in data:
         chat_instructions = str(data.get("chatInstructions", "")).strip()
         if len(chat_instructions) > 12000:

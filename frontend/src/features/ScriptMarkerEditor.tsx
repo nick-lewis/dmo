@@ -14,7 +14,7 @@ import {
 } from "../scriptMarkers";
 import { tutorAvatarOptions } from "../tutorAssets";
 import {
-  PlayIcon,
+  MicIcon,
   StopIcon,
   TrashIcon,
 } from "../components/Icons";
@@ -145,7 +145,7 @@ export function ScriptMarkerEditor({
           title={isPreviewingSound ? "Stop sound preview" : "Play sound preview"}
           type="button"
         >
-          {isPreviewingSound ? <StopIcon /> : <PlayIcon />}
+          {isPreviewingSound ? <StopIcon /> : <MicIcon />}
         </button>
         {!isKnownSound ? (
           <>

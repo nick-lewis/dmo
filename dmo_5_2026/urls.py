@@ -4,6 +4,8 @@ URL configuration for dmo_5_2026 project.
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/6.0/topics/http/urls/
 """
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path, re_path
 
@@ -22,6 +24,7 @@ from core.experience_lifecycle_views import (
     experience_validation,
     experiences,
     update_experience,
+    upload_tutor_avatar,
 )
 from core.experience_snapshot_views import (
     delete_experience_snapshot,
@@ -104,6 +107,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/",
         update_experience,
         name="update-experience",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/tutor-avatar/",
+        upload_tutor_avatar,
+        name="upload-tutor-avatar",
     ),
     path(
         "api/experiences/<uuid:experience_id>/duplicate/",
@@ -316,3 +324,10 @@ urlpatterns = [
     path("", frontend_index, name="frontend-index"),
     re_path(r"^(?!api/|admin/|accounts/).*$", frontend_index, name="frontend-fallback"),
 ]
+
+if settings.DEBUG:
+    media_url = f"/{settings.MEDIA_URL.strip('/')}/"
+    urlpatterns = urlpatterns[:-1] + static(
+        media_url,
+        document_root=settings.MEDIA_ROOT,
+    ) + urlpatterns[-1:]

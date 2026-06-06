@@ -194,6 +194,7 @@ export type ExperienceEvent = {
   title: string;
   slug: string;
   description: string;
+  onEntryDslSource: string;
   chatInstructions: string;
   conversationChoices: EventConversationChoice[];
   isStart: boolean;

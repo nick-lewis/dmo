@@ -17,6 +17,7 @@ export default defineConfig(({ command }) => {
       proxy: {
         "/api": apiProxyTarget,
         "/accounts": apiProxyTarget,
+        "/media": apiProxyTarget,
       },
     },
   };

@@ -1,0 +1,978 @@
+import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import { indentWithTab, redo, toggleLineComment, undo } from "@codemirror/commands";
+import { pythonLanguage } from "@codemirror/lang-python";
+import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { EditorState, type Extension } from "@codemirror/state";
+import {
+  Decoration,
+  EditorView,
+  keymap,
+  ViewPlugin,
+  type DecorationSet,
+  type ViewUpdate,
+} from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+import { basicSetup } from "codemirror";
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+
+type PythonDslEditorProps = {
+  ariaLabel: string;
+  eventTargets?: PythonDslEventTarget[];
+  onChange: (value: string) => void;
+  onOpenScriptAction?: (action: PythonDslScriptAction) => void;
+  value: string;
+};
+
+export type PythonDslScriptAction = {
+  actionIndex: number;
+  from: number;
+  lineNumber: number;
+  source: string;
+  to: number;
+};
+
+type PythonDslChatAction = {
+  enabled: boolean;
+  from: number;
+  lineNumber: number;
+  source: string;
+  to: number;
+};
+
+export type PythonDslEventTarget = {
+  description?: string;
+  id: string;
+  slug?: string;
+  title: string;
+};
+
+type DslContextMenuState = {
+  chatTarget?: PythonDslChatAction;
+  x: number;
+  y: number;
+};
+
+const indent = "    ";
+
+const rootDslCompletions: Completion[] = [
+  {
+    label: "if",
+    apply: "if condition:\n    ",
+    detail: "condition",
+    section: "Python",
+    type: "keyword",
+  },
+  {
+    label: "elif",
+    apply: "elif condition:\n    ",
+    detail: "condition",
+    section: "Python",
+    type: "keyword",
+  },
+  {
+    label: "else",
+    apply: "else:\n    ",
+    detail: "condition",
+    section: "Python",
+    type: "keyword",
+  },
+  {
+    label: "for",
+    apply: "for item in items:\n    ",
+    detail: "loop",
+    section: "Python",
+    type: "keyword",
+  },
+  {
+    label: "while",
+    apply: "while condition:\n    ",
+    detail: "loop",
+    section: "Python",
+    type: "keyword",
+  },
+  { label: "and", section: "Python", type: "keyword" },
+  { label: "or", section: "Python", type: "keyword" },
+  { label: "not", section: "Python", type: "keyword" },
+  { label: "True", section: "Python", type: "constant" },
+  { label: "False", section: "Python", type: "constant" },
+  { label: "None", section: "Python", type: "constant" },
+  { label: "pass", section: "Python", type: "keyword" },
+  { label: "return", section: "Python", type: "keyword" },
+  {
+    label: "event",
+    detail: "current event",
+    info: "Current event data for this On entry script.",
+    section: "Runtime",
+    type: "variable",
+  },
+  {
+    label: "learner",
+    detail: "learner data",
+    info: "Learner state available while this event starts.",
+    section: "Runtime",
+    type: "variable",
+  },
+  {
+    label: "state",
+    detail: "experience state",
+    info: "Shared experience state for reading and writing values.",
+    section: "Runtime",
+    type: "variable",
+  },
+  {
+    label: "context",
+    detail: "runtime context",
+    info: "Runtime context for the current session.",
+    section: "Runtime",
+    type: "variable",
+  },
+  {
+    label: "goto",
+    apply: 'goto("event_id")',
+    detail: "route",
+    info: "Route to another event.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "chat_on",
+    apply: "chat(enabled=True)",
+    detail: "chat on",
+    displayLabel: "chat on",
+    info: "Enable learner typing.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "chat_off",
+    apply: "chat(enabled=False)",
+    detail: "chat off",
+    displayLabel: "chat off",
+    info: "Disable learner typing.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "chat",
+    apply: "chat(enabled=True)",
+    detail: "availability",
+    info: "Set whether the learner can type in chat.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "script",
+    apply: "script()",
+    detail: "action",
+    info: "Open script action details.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "say",
+    apply: 'say("...")',
+    detail: "voice",
+    info: "Queue spoken tutor text.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "set_state",
+    apply: 'set_state("key", value)',
+    detail: "state write",
+    info: "Store a value in experience state.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "get_state",
+    apply: 'get_state("key")',
+    detail: "state read",
+    info: "Read a value from experience state.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "choice",
+    apply: 'choice("label", target="event_id")',
+    detail: "branch",
+    info: "Create or expose a branch choice.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "emit",
+    apply: 'emit("event_name")',
+    detail: "signal",
+    info: "Emit a named runtime signal.",
+    section: "Actions",
+    type: "function",
+  },
+];
+
+const memberCompletions: Record<string, Completion[]> = {
+  context: [
+    { label: "attempt", detail: "number", section: "context", type: "property" },
+    { label: "input", detail: "latest learner input", section: "context", type: "property" },
+    { label: "now", detail: "timestamp", section: "context", type: "property" },
+    { label: "session_id", detail: "session", section: "context", type: "property" },
+  ],
+  event: [
+    { label: "description", detail: "text", section: "event", type: "property" },
+    { label: "id", detail: "id", section: "event", type: "property" },
+    { label: "name", detail: "text", section: "event", type: "property" },
+    { label: "title", detail: "text", section: "event", type: "property" },
+  ],
+  learner: [
+    { label: "answer", detail: "latest answer", section: "learner", type: "property" },
+    { label: "level", detail: "current level", section: "learner", type: "property" },
+    { label: "score", detail: "number", section: "learner", type: "property" },
+    { label: "streak", detail: "number", section: "learner", type: "property" },
+  ],
+  state: [
+    { label: "clear", apply: 'clear("key")', detail: "delete value", section: "state", type: "method" },
+    { label: "get", apply: 'get("key")', detail: "read value", section: "state", type: "method" },
+    { label: "has", apply: 'has("key")', detail: "check value", section: "state", type: "method" },
+    { label: "set", apply: 'set("key", value)', detail: "write value", section: "state", type: "method" },
+  ],
+};
+
+const pythonDslHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--dl-purple-s50)", fontWeight: "700" },
+  { tag: tags.atom, color: "var(--accent)" },
+  { tag: tags.bool, color: "var(--accent)" },
+  { tag: tags.number, color: "var(--dl-blue)", fontWeight: "680" },
+  { tag: tags.string, color: "var(--dl-secondary-s47)" },
+  { tag: tags.comment, color: "var(--muted-ink)", fontStyle: "italic" },
+  { tag: tags.definition(tags.variableName), color: "var(--page-ink)", fontWeight: "720" },
+  { tag: tags.function(tags.variableName), color: "var(--accent-2)", fontWeight: "720" },
+  { tag: tags.operator, color: "color-mix(in srgb, var(--page-ink) 70%, var(--accent-2))" },
+  { tag: tags.punctuation, color: "color-mix(in srgb, var(--page-ink) 72%, var(--muted-ink))" },
+]);
+
+const pythonDslTheme = EditorView.theme({
+  "&": {
+    background: "transparent",
+    color: "var(--page-ink)",
+    minHeight: "260px",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "color-mix(in srgb, var(--accent-soft) 34%, transparent)",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "color-mix(in srgb, var(--accent-soft) 42%, transparent)",
+    color: "var(--page-ink)",
+  },
+  ".cm-completionDetail": {
+    color: "var(--muted-ink)",
+    fontSize: "0.68rem",
+  },
+  ".cm-completionIcon": {
+    opacity: "0.72",
+  },
+  ".cm-content": {
+    caretColor: "var(--accent-2)",
+    padding: "10px 0",
+  },
+  ".cm-cursor": {
+    borderLeftColor: "var(--accent-2)",
+  },
+  ".cm-focused": {
+    outline: "0",
+  },
+  ".cm-foldGutter span": {
+    color: "color-mix(in srgb, var(--muted-ink) 60%, transparent)",
+  },
+  ".cm-gutters": {
+    backgroundColor: "color-mix(in srgb, var(--page-bg) 72%, var(--panel-bg-strong))",
+    borderRight: "1px solid color-mix(in srgb, var(--panel-soft-border) 84%, transparent)",
+    color: "color-mix(in srgb, var(--muted-ink) 54%, transparent)",
+  },
+  ".cm-line": {
+    padding: "0 12px",
+  },
+  ".cm-matchingBracket": {
+    backgroundColor: "color-mix(in srgb, var(--accent-2) 16%, transparent)",
+    outline: "1px solid color-mix(in srgb, var(--accent-2) 30%, transparent)",
+  },
+  ".cm-scroller": {
+    fontFamily: "var(--mono-font)",
+    fontSize: "0.78rem",
+    fontWeight: "650",
+    lineHeight: "1.6",
+    minHeight: "260px",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "color-mix(in srgb, var(--accent-2) 22%, transparent) !important",
+  },
+  ".cm-tooltip": {
+    backgroundColor: "color-mix(in srgb, var(--panel-bg-strong) 98%, white)",
+    border: "1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-border))",
+    borderRadius: "8px",
+    boxShadow: "0 16px 44px rgba(22, 74, 92, 0.16)",
+    color: "var(--page-ink)",
+  },
+  ".cm-tooltip-autocomplete ul": {
+    fontFamily: "var(--mono-font)",
+    fontSize: "0.74rem",
+    lineHeight: "1.45",
+    maxHeight: "230px",
+  },
+  ".cm-tooltip-autocomplete ul li": {
+    padding: "4px 8px",
+  },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    backgroundColor: "color-mix(in srgb, var(--accent-soft) 58%, var(--panel-bg-strong))",
+    color: "var(--page-ink)",
+  },
+});
+
+function eventTargetCompletions(eventTargets: PythonDslEventTarget[]) {
+  return eventTargets.map((event): Completion => {
+    const label = event.title.trim() || event.slug || event.id;
+    return {
+      apply: event.id,
+      boost: 20,
+      detail: event.slug ? `event: ${event.slug}` : "event",
+      info: event.description || event.id,
+      label,
+      section: "Events",
+      type: "constant",
+    };
+  });
+}
+
+function createDslCompletionSource(eventTargets: PythonDslEventTarget[]) {
+  const eventCompletions = eventTargetCompletions(eventTargets);
+  const chatArgumentCompletions: Completion[] = [
+    {
+      label: "enabled=True",
+      detail: "chat on",
+      info: "Enable learner typing.",
+      section: "Chat",
+      type: "constant",
+    },
+    {
+      label: "enabled=False",
+      detail: "chat off",
+      info: "Disable learner typing.",
+      section: "Chat",
+      type: "constant",
+    },
+  ];
+
+  return function dslCompletionSource(
+    context: CompletionContext,
+  ): CompletionResult | null {
+    const currentLine = context.state.doc.lineAt(context.pos);
+    const prefix = currentLine.text.slice(0, context.pos - currentLine.from);
+    const routeTargetMatch =
+      /(?:\bgoto\s*\(\s*["']|\btarget\s*=\s*["'])([^"']*)$/.exec(prefix);
+    if (routeTargetMatch && eventCompletions.length) {
+      return {
+        from: context.pos - routeTargetMatch[1].length,
+        options: eventCompletions,
+        validFor: /^[^"']*$/,
+      };
+    }
+
+    const chatArgumentMatch = /\bchat\s*\(\s*([A-Za-z_=]*)$/.exec(prefix);
+    if (chatArgumentMatch) {
+      return {
+        from: context.pos - chatArgumentMatch[1].length,
+        options: chatArgumentCompletions,
+        validFor: /^[A-Za-z_=]*$/,
+      };
+    }
+
+    const memberMatch = context.matchBefore(/[A-Za-z_]\w*\.(?:[A-Za-z_]\w*)?$/);
+    if (memberMatch) {
+      const [objectName, memberPrefix = ""] = memberMatch.text.split(".");
+      const options = memberCompletions[objectName];
+      if (!options) return null;
+
+      return {
+        from: memberMatch.to - memberPrefix.length,
+        options,
+        validFor: /^\w*$/,
+      };
+    }
+
+    const word = context.matchBefore(/\w*/);
+    if (!word || (word.from === word.to && !context.explicit)) return null;
+
+    return {
+      from: word.from,
+      options: rootDslCompletions,
+      validFor: /^\w*$/,
+    };
+  };
+}
+
+function isBlockStarter(line: string) {
+  return /:\s*(#.*)?$/.test(line) && !line.trimStart().startsWith("#");
+}
+
+function isDedentStarter(line: string) {
+  return /^(elif|else|except|finally)\b/.test(line);
+}
+
+function formatPythonDsl(source: string) {
+  const normalized = source.replace(/\t/g, indent).replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
+  const formatted: string[] = [];
+  let depth = 0;
+  let blankCount = 0;
+
+  for (const rawLine of lines) {
+    const trimmedRight = rawLine.replace(/[ \t]+$/g, "");
+    const trimmed = trimmedRight.trimStart();
+
+    if (!trimmed) {
+      blankCount += 1;
+      if (blankCount <= 1 && formatted.length) {
+        formatted.push("");
+      }
+      continue;
+    }
+
+    blankCount = 0;
+    if (isDedentStarter(trimmed)) {
+      depth = Math.max(0, depth - 1);
+    }
+
+    formatted.push(`${indent.repeat(depth)}${trimmed}`);
+
+    if (isBlockStarter(trimmed)) {
+      depth += 1;
+    }
+  }
+
+  return formatted.join("\n").trimEnd();
+}
+
+function formatView(view: EditorView) {
+  const source = view.state.doc.toString();
+  const formatted = formatPythonDsl(source);
+  if (formatted === source) return true;
+
+  view.dispatch({
+    changes: { from: 0, insert: formatted, to: source.length },
+    scrollIntoView: true,
+    selection: { anchor: Math.min(view.state.selection.main.head, formatted.length) },
+  });
+  return true;
+}
+
+const chatActionPattern =
+  /\bchat\s*\(\s*(?:enabled\s*=\s*)?(True|False|true|false)\s*\)/g;
+const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const chatActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Configure chat action",
+    role: "button",
+  },
+  class: "cm-dsl-chat-action",
+});
+const scriptActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Open script action",
+    role: "button",
+  },
+  class: "cm-dsl-script-action",
+});
+
+function dslActionDecorations(view: EditorView): DecorationSet {
+  const ranges = [];
+
+  for (const visibleRange of view.visibleRanges) {
+    let position = visibleRange.from;
+
+    while (position <= visibleRange.to) {
+      const line = view.state.doc.lineAt(position);
+      const lineText = line.text;
+      const trimmed = lineText.trimStart();
+
+      if (!trimmed.startsWith("#")) {
+        for (const match of lineText.matchAll(chatActionPattern)) {
+          if (typeof match.index !== "number") continue;
+          const from = line.from + match.index;
+          const to = from + match[0].length;
+          ranges.push(chatActionDecoration.range(from, to));
+        }
+
+        for (const match of lineText.matchAll(scriptActionPattern)) {
+          if (typeof match.index !== "number") continue;
+          const from = line.from + match.index;
+          const to = from + match[0].length;
+          ranges.push(scriptActionDecoration.range(from, to));
+        }
+      }
+
+      if (line.to >= visibleRange.to) break;
+      position = line.to + 1;
+    }
+  }
+
+  return Decoration.set(ranges, true);
+}
+
+const scriptActionPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = dslActionDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = dslActionDecorations(update.view);
+      }
+    }
+  },
+  {
+    decorations: (plugin) => plugin.decorations,
+  },
+);
+
+function explicitDslActionTarget(
+  event: globalThis.MouseEvent | MouseEvent,
+  view: EditorView,
+  className: string,
+) {
+  const target = event.target;
+  if (!(target instanceof Element)) return null;
+
+  const actionTarget = target.closest(`.${className}`);
+  if (!actionTarget || !view.dom.contains(actionTarget)) return null;
+
+  return actionTarget;
+}
+
+function chatActionAtPosition(
+  view: EditorView,
+  position: number,
+): PythonDslChatAction | null {
+  const line = view.state.doc.lineAt(position);
+  const trimmed = line.text.trimStart();
+  if (trimmed.startsWith("#")) return null;
+
+  for (const match of line.text.matchAll(chatActionPattern)) {
+    if (typeof match.index !== "number") continue;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (position < from || position > to) continue;
+
+    return {
+      enabled: match[1].toLowerCase() === "true",
+      from,
+      lineNumber: line.number,
+      source: match[0],
+      to,
+    };
+  }
+
+  return null;
+}
+
+function scriptActionAtPosition(
+  view: EditorView,
+  position: number,
+): PythonDslScriptAction | null {
+  const line = view.state.doc.lineAt(position);
+  const trimmed = line.text.trimStart();
+  if (trimmed.startsWith("#")) return null;
+  let actionIndex = 0;
+
+  for (let lineNumber = 1; lineNumber < line.number; lineNumber += 1) {
+    const precedingLine = view.state.doc.line(lineNumber);
+    if (precedingLine.text.trimStart().startsWith("#")) continue;
+
+    actionIndex += Array.from(
+      precedingLine.text.matchAll(scriptActionPattern),
+    ).length;
+  }
+
+  for (const match of line.text.matchAll(scriptActionPattern)) {
+    if (typeof match.index !== "number") continue;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (position >= from && position <= to) {
+      return {
+        actionIndex,
+        from,
+        lineNumber: line.number,
+        source: match[0],
+        to,
+      };
+    }
+
+    actionIndex += 1;
+  }
+
+  return null;
+}
+
+function insertStatementAtCursor(
+  view: EditorView,
+  statement: string,
+): PythonDslScriptAction {
+  const selection = view.state.selection.main;
+  const line = view.state.doc.lineAt(selection.from);
+  const lineText = line.text;
+  const indentation = lineText.match(/^\s*/)?.[0] ?? "";
+  const isLineEmpty = lineText.trim().length === 0;
+  const from = isLineEmpty ? line.from : line.to;
+  const to = isLineEmpty ? line.to : line.to;
+  const insertion = `${isLineEmpty ? "" : "\n"}${indentation}${statement}`;
+  const statementFrom = from + (isLineEmpty ? 0 : 1) + indentation.length;
+  const statementTo = statementFrom + statement.length;
+
+  view.dispatch({
+    changes: { from, insert: insertion, to },
+    scrollIntoView: true,
+    selection: { anchor: from + insertion.length },
+  });
+  view.focus();
+
+  const scriptAction = scriptActionAtPosition(view, statementFrom);
+  if (scriptAction) return scriptAction;
+
+  return {
+    actionIndex: 0,
+    from: statementFrom,
+    lineNumber: view.state.doc.lineAt(statementFrom).number,
+    source: statement,
+    to: statementTo,
+  };
+}
+
+function toggleChatAction(view: EditorView, chatAction: PythonDslChatAction) {
+  const statement = chatAction.enabled
+    ? "chat(enabled=False)"
+    : "chat(enabled=True)";
+
+  view.dispatch({
+    changes: { from: chatAction.from, insert: statement, to: chatAction.to },
+    scrollIntoView: true,
+    selection: { anchor: chatAction.from + statement.length },
+  });
+  view.focus();
+}
+
+function contextMenuPosition(clientX: number, clientY: number) {
+  return {
+    x: Math.min(clientX, window.innerWidth - 196),
+    y: Math.min(clientY, window.innerHeight - 116),
+  };
+}
+
+function selectContextMenuPosition(
+  view: EditorView,
+  event: { clientX: number; clientY: number },
+) {
+  const position = view.posAtCoords({
+    x: event.clientX,
+    y: event.clientY,
+  });
+  view.dispatch({
+    selection: { anchor: position ?? view.state.doc.length },
+  });
+  return position;
+}
+
+export function PythonDslEditor({
+  ariaLabel,
+  eventTargets = [],
+  onChange,
+  onOpenScriptAction,
+  value,
+}: PythonDslEditorProps) {
+  const editorParentRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const onChangeRef = useRef(onChange);
+  const onOpenScriptActionRef = useRef(onOpenScriptAction);
+  const [contextMenu, setContextMenu] = useState<DslContextMenuState | null>(
+    null,
+  );
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    onOpenScriptActionRef.current = onOpenScriptAction;
+  }, [onOpenScriptAction]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+
+    function closeMenu() {
+      setContextMenu(null);
+    }
+
+    function closeMenuOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", closeMenuOnEscape);
+    window.addEventListener("resize", closeMenu);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", closeMenuOnEscape);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [contextMenu]);
+
+  const extensions = useMemo<Extension[]>(
+    () => [
+      basicSetup,
+      pythonLanguage,
+      pythonLanguage.data.of({
+        autocomplete: createDslCompletionSource(eventTargets),
+      }),
+      autocompletion({ activateOnTyping: true, closeOnBlur: true }),
+      indentUnit.of(indent),
+      EditorState.tabSize.of(4),
+      syntaxHighlighting(pythonDslHighlightStyle),
+      pythonDslTheme,
+      scriptActionPlugin,
+      EditorView.contentAttributes.of({
+        "aria-label": ariaLabel,
+        autocapitalize: "off",
+        autocomplete: "off",
+        autocorrect: "off",
+        spellcheck: "false",
+      }),
+      EditorView.domEventHandlers({
+        click(event, view) {
+          const clickedChatAction = explicitDslActionTarget(
+            event,
+            view,
+            "cm-dsl-chat-action",
+          );
+          const chatPosition = clickedChatAction
+            ? view.posAtCoords({
+                x: event.clientX,
+                y: event.clientY,
+              })
+            : null;
+          const chatAction =
+            chatPosition === null
+              ? null
+              : chatActionAtPosition(view, chatPosition);
+          if (chatPosition !== null && chatAction) {
+            event.preventDefault();
+            event.stopPropagation();
+            view.dispatch({ selection: { anchor: chatPosition } });
+            toggleChatAction(view, chatAction);
+            setContextMenu(null);
+            return true;
+          }
+
+          const clickedScriptAction = explicitDslActionTarget(
+            event,
+            view,
+            "cm-dsl-script-action",
+          );
+          const scriptPosition = clickedScriptAction
+            ? view.posAtCoords({
+                x: event.clientX,
+                y: event.clientY,
+              })
+            : null;
+          const scriptAction =
+            scriptPosition === null
+              ? null
+              : scriptActionAtPosition(view, scriptPosition);
+          if (scriptPosition === null || !scriptAction) return false;
+
+          event.preventDefault();
+          event.stopPropagation();
+          view.dispatch({ selection: { anchor: scriptPosition } });
+          view.focus();
+          onOpenScriptActionRef.current?.(scriptAction);
+          return true;
+        },
+        contextmenu(event, view) {
+          event.preventDefault();
+          event.stopPropagation();
+          const position = selectContextMenuPosition(view, event);
+          const clickedChatAction = explicitDslActionTarget(
+            event,
+            view,
+            "cm-dsl-chat-action",
+          );
+          const chatAction =
+            position === null || !clickedChatAction
+              ? null
+              : chatActionAtPosition(view, position);
+          view.focus();
+          setContextMenu({
+            chatTarget: chatAction ?? undefined,
+            ...contextMenuPosition(event.clientX, event.clientY),
+          });
+          return true;
+        },
+      }),
+      EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return;
+        onChangeRef.current(update.state.doc.toString());
+      }),
+      keymap.of([
+        { key: "Mod-z", run: undo },
+        { key: "Mod-Shift-z", run: redo },
+        { key: "Mod-y", run: redo },
+        { key: "Mod-Shift-f", run: formatView },
+        { key: "Mod-/", run: toggleLineComment },
+        indentWithTab,
+      ]),
+    ],
+    [ariaLabel, eventTargets],
+  );
+
+  useEffect(() => {
+    if (!editorParentRef.current) return;
+
+    const view = new EditorView({
+      parent: editorParentRef.current,
+      state: EditorState.create({
+        doc: value,
+        extensions,
+      }),
+    });
+    viewRef.current = view;
+
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, [extensions]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const currentValue = view.state.doc.toString();
+    if (value === currentValue) return;
+
+    view.dispatch({
+      changes: { from: 0, insert: value, to: currentValue.length },
+    });
+  }, [value]);
+
+  function insertChatAction(choice: "on" | "off") {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const statement =
+      choice === "on" ? "chat(enabled=True)" : "chat(enabled=False)";
+    if (contextMenu?.chatTarget) {
+      view.dispatch({
+        changes: {
+          from: contextMenu.chatTarget.from,
+          insert: statement,
+          to: contextMenu.chatTarget.to,
+        },
+        scrollIntoView: true,
+        selection: {
+          anchor: contextMenu.chatTarget.from + statement.length,
+        },
+      });
+      view.focus();
+    } else {
+      insertStatementAtCursor(view, statement);
+    }
+    setContextMenu(null);
+  }
+
+  function insertScriptAction() {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const scriptAction = insertStatementAtCursor(view, "script()");
+    onOpenScriptActionRef.current?.(scriptAction);
+    setContextMenu(null);
+  }
+
+  function openContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const view = viewRef.current;
+    if (view) {
+      const position = selectContextMenuPosition(view, event);
+      const clickedChatAction = explicitDslActionTarget(
+        event,
+        view,
+        "cm-dsl-chat-action",
+      );
+      const chatAction =
+        position === null || !clickedChatAction
+          ? null
+          : chatActionAtPosition(view, position);
+      view.focus();
+      setContextMenu({
+        chatTarget: chatAction ?? undefined,
+        ...contextMenuPosition(event.clientX, event.clientY),
+      });
+      return;
+    }
+
+    setContextMenu({
+      ...contextMenuPosition(event.clientX, event.clientY),
+    });
+  }
+
+  return (
+    <div
+      className="python-dsl-editor"
+      onContextMenu={openContextMenu}
+    >
+      <div className="python-dsl-codemirror" ref={editorParentRef} />
+      {contextMenu ? (
+        <div
+          className="python-dsl-context-menu"
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="python-dsl-context-action python-dsl-context-script"
+            onClick={insertScriptAction}
+            role="menuitem"
+            type="button"
+          >
+            Script
+          </button>
+          <div className="python-dsl-context-label">
+            Chat
+          </div>
+          <div className="python-dsl-context-options" role="group">
+            <button
+              data-chat-state="on"
+              onClick={() => insertChatAction("on")}
+              role="menuitem"
+              type="button"
+            >
+              On
+            </button>
+            <button
+              data-chat-state="off"
+              onClick={() => insertChatAction("off")}
+              role="menuitem"
+              type="button"
+            >
+              Off
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

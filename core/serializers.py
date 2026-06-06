@@ -228,6 +228,7 @@ def serialize_experience_event(event):
         "title": event.title,
         "slug": event.slug,
         "description": event.description,
+        "onEntryDslSource": event.on_entry_dsl_source,
         "chatInstructions": event.chat_instructions,
         "conversationChoices": normalize_conversation_choices(
             event.conversation_choices

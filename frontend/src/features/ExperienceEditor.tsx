@@ -6,6 +6,7 @@ import {
 import {
   getMainPanelAppDefinition,
 } from "../mainPanelApps";
+import { experienceEditPath, experienceNextEditPath } from "../api";
 import { publicAsset } from "../assets";
 import {
   defaultChoiceIconBackground,
@@ -21,7 +22,6 @@ import type {
   ExperienceForm,
   TutorSettings,
 } from "../types";
-import { ExperienceSnapshotsPanel } from "./ExperienceSnapshotsPanel";
 import { EventOutlinePanel } from "./EventOutlinePanel";
 import { EventEntryStepList } from "./EventEntryStepList";
 import { EventWorkspaceHeader } from "./EventWorkspaceHeader";
@@ -49,6 +49,7 @@ import { useEditorScriptAudio } from "./useEditorScriptAudio";
 import { useExperienceRunActions } from "./useExperienceRunActions";
 import { useExperienceEditorLoader } from "./useExperienceEditorLoader";
 import { useExperienceSnapshots } from "./useExperienceSnapshots";
+import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
 import { useExperienceValidation } from "./useExperienceValidation";
 import { useSelectedEventPersistence } from "./useSelectedEventPersistence";
 import { useVoiceSample } from "./useVoiceSample";
@@ -233,29 +234,24 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
   });
   const {
     checkpointRecordingMode,
-    createExperienceSnapshot,
-    deleteExperienceSnapshot,
-    deletingSnapshotId,
     eventCheckpointError,
     eventCheckpointStatus,
     eventCheckpoints,
-    experienceSnapshots,
-    exportExperienceSnapshot,
-    exportingSnapshotId,
-    isCreatingSnapshot,
-    isLoadingSnapshots,
     loadEventCheckpoints,
     loadExperienceSnapshots,
     resetSnapshotsAndCheckpoints,
-    restoreExperienceSnapshot,
-    restoringSnapshotId,
     setCheckpointRecordingMode,
-    snapshotError,
   } = useExperienceSnapshots({
     experience,
     flushEditorAutosave,
     isReady: status === "ready",
     selectedEventId,
+  });
+  const snapshotContextMenu = useExperienceSnapshotContextMenu({
+    experience,
+    flushEditorAutosave,
+    isReady: status === "ready",
+    restorePath: experienceEditPath,
   });
   const {
     isSigningOut,
@@ -596,11 +592,21 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
     await flushTutorAutosave();
   }
 
+  async function openNextEditor() {
+    if (!experience) return;
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) return;
+
+    window.location.assign(experienceNextEditPath(experience.id));
+  }
+
   return (
     <main
       className="panel-study experience-editor-page"
       data-color-theme="glass-dl"
       data-font-theme="manrope"
+      onContextMenu={snapshotContextMenu.onContextMenu}
     >
       <header className="study-header">
         <div className="study-actions">
@@ -615,6 +621,14 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
         </div>
         <div className="study-actions">
           {user ? <span className="study-user">{user.displayName}</span> : null}
+          <button
+            className="header-action secondary"
+            disabled={!experience}
+            onClick={() => void openNextEditor()}
+            type="button"
+          >
+            New editor
+          </button>
           <button
             className="header-action"
             disabled={!experience}
@@ -719,23 +733,6 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
                 onPlaybackRateChange={setScriptAudioPlaybackRate}
                 onSaveDisplayTranscript={saveScriptAudioDisplayTranscript}
                 status={scriptAudioStatus}
-              />
-            </section>
-
-            <section className="editor-section snapshot-section">
-              <ExperienceSnapshotsPanel
-                deletingId={deletingSnapshotId}
-                error={snapshotError}
-                exportingId={exportingSnapshotId}
-                isCreating={isCreatingSnapshot}
-                isLoading={isLoadingSnapshots}
-                onCreate={() => void createExperienceSnapshot()}
-                onDelete={(snapshot) => void deleteExperienceSnapshot(snapshot)}
-                onExport={(snapshot) => void exportExperienceSnapshot(snapshot)}
-                onRefresh={() => void loadExperienceSnapshots(experience.id)}
-                onRestore={(snapshot) => void restoreExperienceSnapshot(snapshot)}
-                restoringId={restoringSnapshotId}
-                snapshots={experienceSnapshots}
               />
             </section>
 
@@ -935,6 +932,7 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
           </>
         ) : null}
       </section>
+      {snapshotContextMenu.menu}
     </main>
   );
 }

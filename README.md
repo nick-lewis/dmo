@@ -60,6 +60,7 @@ the Compose `db` service instead of any separate host Postgres process.
 More detail:
 
 - [Architecture map](docs/architecture.md)
+- [Next editor voyage notes](docs/next-editor-voyage.md)
 - [Verification and Postgres notes](docs/verification.md)
 
 ## Google Sign-In

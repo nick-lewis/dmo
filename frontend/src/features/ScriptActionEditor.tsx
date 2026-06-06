@@ -37,6 +37,7 @@ import {
 import { resizeTextareaToContent } from "../uiHelpers";
 import type { ResolvedSlide, ScriptAudioItem } from "../types";
 import {
+  MicIcon,
   PlayIcon,
   PlusIcon,
   StopIcon,
@@ -1084,7 +1085,7 @@ export function ScriptActionEditor({
             title={timelineIsPlaying ? "Pause timeline audio" : "Play timeline audio"}
             type="button"
           >
-            {timelineIsPlaying ? <StopIcon /> : <PlayIcon />}
+            {timelineIsPlaying ? <StopIcon /> : <MicIcon />}
           </button>
           <div
             aria-label="Timeline playback position"

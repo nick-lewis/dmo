@@ -257,6 +257,7 @@ class SerializerShapeContractTests(TestCase):
                 "id",
                 "experienceId",
                 "isStart",
+                "onEntryDslSource",
                 "slug",
                 "sortOrder",
                 "steps",

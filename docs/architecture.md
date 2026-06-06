@@ -2,6 +2,8 @@
 
 DMO is organized around behavior islands. Keep new work close to the feature or domain it changes, and avoid growing `frontend/src/App.tsx`, `core/views.py`, or `core/tests.py` back into catch-all files.
 
+For the experimental next editor's product direction, use [Next editor voyage notes](next-editor-voyage.md) as the design memory. It frames the legacy editor as reference material, the event graph as a map, and the emerging DSL/log system as the translation layer between cognitive task analysis and runnable tutoring behavior.
+
 ## Frontend
 
 - `frontend/src/App.tsx`: route selection and top-level composition only.
