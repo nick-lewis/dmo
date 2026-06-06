@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { MicIcon, RefreshIcon, StopIcon } from "../components/Icons";
-import { scriptAudioPlaybackRateOptions } from "../scriptAudio";
+import {
+  scriptAudioItemIsReady,
+  scriptAudioItemNeedsGeneration,
+  scriptAudioPlaybackRateOptions,
+} from "../scriptAudio";
 import type { ScriptAudioDisplayPayload, ScriptAudioItem } from "../types";
 import {
   displayBreaksAreEqual,
@@ -56,14 +60,6 @@ function scriptAudioSourceList(item: ScriptAudioItem) {
     .filter(Boolean);
   if (!normalizedSources.length && item.source) return [item.source];
   return [...new Set(normalizedSources)];
-}
-
-function scriptAudioItemIsReady(item: ScriptAudioItem) {
-  return item.cached && item.wordsCached;
-}
-
-function scriptAudioItemNeedsGeneration(item: ScriptAudioItem) {
-  return item.canGenerate && !scriptAudioItemIsReady(item);
 }
 
 function scriptAudioArtifactTags(item: ScriptAudioItem) {

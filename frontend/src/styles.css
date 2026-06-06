@@ -746,6 +746,12 @@ button {
   box-shadow: 0 18px 48px rgba(22, 74, 92, 0.18);
 }
 
+.app-context-menu-separator {
+  height: 1px;
+  margin: 3px 4px;
+  background: color-mix(in srgb, var(--panel-soft-border) 78%, transparent);
+}
+
 .app-context-menu button {
   width: 100%;
   min-width: 0;
@@ -1489,6 +1495,43 @@ button {
   gap: 4px;
   min-width: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--panel-soft-border) 82%, transparent);
+}
+
+.next-script-tabbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.next-script-audio-preview-button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 1px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 14%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--accent-2) 78%, var(--page-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 54%, transparent);
+}
+
+.next-script-audio-preview-button:hover:not(:disabled),
+.next-script-audio-preview-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 28%, var(--panel-border));
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  outline: 0;
+}
+
+.next-script-audio-preview-button.is-playing {
+  color: color-mix(in srgb, var(--accent) 72%, var(--page-ink));
+}
+
+.next-script-audio-preview-button:disabled {
+  cursor: default;
+  opacity: 0.44;
 }
 
 .next-script-tabs button {
@@ -7156,6 +7199,72 @@ button {
 .experience-state.error {
   color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
   background: color-mix(in srgb, var(--accent-soft) 46%, var(--panel-bg-strong));
+}
+
+.next-audio-prep-overlay {
+  position: fixed;
+  z-index: 260;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--page-bg) 58%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.next-audio-prep-dialog {
+  display: grid;
+  gap: 8px;
+  width: min(360px, 100%);
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-border));
+  border-radius: 8px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 96%, white);
+  box-shadow: 0 22px 60px rgba(22, 74, 92, 0.18);
+}
+
+.next-audio-prep-dialog span {
+  font-size: 0.86rem;
+  font-weight: 820;
+}
+
+.next-audio-prep-dialog strong {
+  color: var(--muted-ink);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.next-audio-prep-meter {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-soft-border) 70%, transparent);
+}
+
+.next-audio-prep-meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 18px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent-2) 68%, var(--accent-soft));
+  transition: width 160ms ease;
+}
+
+.next-audio-prep-meter.is-indeterminate i {
+  width: 42%;
+  animation: next-audio-prep-scan 980ms ease-in-out infinite;
+}
+
+@keyframes next-audio-prep-scan {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
 }
 
 .study-user {

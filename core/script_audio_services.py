@@ -615,6 +615,8 @@ def generate_experience_script_audio_payload(experience, data, safety_identifier
     for item in items:
         if target_id and item["id"] != target_id:
             continue
+        if not target_id and not item.get("canGenerate"):
+            continue
         try:
             did_generate, item_error = generate_script_audio_item(
                 tutor_settings,

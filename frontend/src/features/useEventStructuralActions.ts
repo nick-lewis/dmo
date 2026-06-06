@@ -39,7 +39,7 @@ export function useEventStructuralActions({
   eventStructuralUndoStack: EventStructuralHistoryItem[];
   eventUndoStack: EventDraft[];
   experience: Experience | null;
-  loadScriptAudioItems: (experienceId: string, showLoading?: boolean) => Promise<void>;
+  loadScriptAudioItems: (experienceId: string, showLoading?: boolean) => Promise<unknown>;
   redoEventEdit: () => void;
   resetStructuralEditorState: (event: ExperienceEvent | null) => void;
   selectedEventId: string;

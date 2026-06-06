@@ -20,7 +20,7 @@ export function useExperienceEditorLoader({
   applyExperience: (experience: Experience) => void;
   experienceId: string;
   loadExperienceSnapshots: (experienceId: string) => Promise<void>;
-  loadScriptAudioItems: (experienceId: string) => Promise<void>;
+  loadScriptAudioItems: (experienceId: string) => Promise<unknown>;
   setError: Dispatch<SetStateAction<string>>;
   setStatus: Dispatch<SetStateAction<"loading" | "ready" | "error">>;
   setUser: Dispatch<SetStateAction<ApiUser | null>>;

@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   MessageAudioPayload,
   ScriptCue,
+  ScriptAudioItem,
   ScriptWord,
 } from "./types";
 
@@ -18,6 +19,17 @@ export const scriptAudioSources = new Set([
   "classifier-group-action",
 ]);
 
+export function scriptAudioItemIsReady(item: ScriptAudioItem) {
+  return item.cached && item.wordsCached;
+}
+
+export function scriptAudioItemNeedsGeneration(item: ScriptAudioItem) {
+  return item.canGenerate && !scriptAudioItemIsReady(item);
+}
+
+export function scriptAudioMissingItems(items: ScriptAudioItem[]) {
+  return items.filter(scriptAudioItemNeedsGeneration);
+}
 
 function clampCueProgress(value: number) {
   return Math.min(Math.max(value, 0), 1);

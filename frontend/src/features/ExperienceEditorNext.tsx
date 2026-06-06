@@ -22,6 +22,7 @@ import {
   PlayIcon,
   RefreshIcon,
   SettingsIcon,
+  StopIcon,
   TrashIcon,
 } from "../components/Icons";
 import { writeSelectedExperienceId } from "../persistence";
@@ -43,6 +44,10 @@ import {
   normalizeScriptAudioText,
   spokenTextFromMarkedScript,
 } from "../scriptMarkers";
+import {
+  scriptAudioItemNeedsGeneration,
+  scriptAudioMissingItems,
+} from "../scriptAudio";
 import type {
   ApiUser,
   ClassificationModelId,
@@ -111,6 +116,12 @@ type ActiveScriptAction = PythonDslScriptAction & {
 };
 
 type ScriptDetailTab = "audio" | "display";
+
+type AudioPreparationState = {
+  completed: number;
+  message: string;
+  total: number;
+};
 
 type PersistedNextEditorUiState = {
   activeScriptAction?: {
@@ -1028,6 +1039,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [displayBreakDrafts, setDisplayBreakDrafts] = useState<
     Record<string, number[]>
   >({});
+  const [audioPreparation, setAudioPreparation] =
+    useState<AudioPreparationState | null>(null);
   const [savingDisplayTextId, setSavingDisplayTextId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [onEntryDrafts, setOnEntryDrafts] = useState<Record<string, string>>({});
@@ -1058,11 +1071,15 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     setExperienceForm,
   });
   const {
+    generateScriptAudio,
     loadScriptAudioItems,
+    playScriptAudioPreview,
+    playingScriptAudioId,
     saveScriptAudioDisplayTranscript,
     scriptAudioError,
     scriptAudioItems,
     scriptAudioStatus,
+    stopScriptAudioPreview,
   } = useEditorScriptAudio({
     experience,
     flushEditorAutosave: flushNextEditorAutosave,
@@ -1101,6 +1118,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     scriptAudioItems,
     activeAudioScriptText,
   );
+  const activeScriptAudioNeedsGeneration = activeScriptAudioItem
+    ? scriptAudioItemNeedsGeneration(activeScriptAudioItem)
+    : false;
+  const isActiveScriptAudioPlaying =
+    Boolean(activeScriptAudioItem) &&
+    playingScriptAudioId === activeScriptAudioItem?.id;
+  const missingScriptAudioCount =
+    scriptAudioMissingItems(scriptAudioItems).length;
   const activeDisplayBreaks = displayBreakDraftForItem(
     activeScriptAudioItem,
     displayBreakDrafts,
@@ -1113,6 +1138,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         )
       : activeAudioScriptText;
   const snapshotContextMenu = useExperienceSnapshotContextMenu({
+    actions: [
+      {
+        disabled: scriptAudioStatus === "generating" || !experience,
+        label:
+          scriptAudioStatus === "generating"
+            ? "Generating audio..."
+            : missingScriptAudioCount
+              ? `Generate all audio (${missingScriptAudioCount} missing)`
+              : "Generate all audio",
+        onSelect: generateAllExperienceAudio,
+      },
+    ],
     experience,
     flushEditorAutosave: flushNextEditorAutosave,
     isReady: status === "ready",
@@ -1833,6 +1870,105 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }));
   }
 
+  async function generateAllExperienceAudio() {
+    const payload = await generateScriptAudio();
+    if (payload?.errors?.length) {
+      setError(payload.errors.join(" "));
+    }
+  }
+
+  async function playOrGenerateActiveScriptAudio() {
+    const item = activeScriptAudioItem;
+    if (!item) return;
+
+    if (isActiveScriptAudioPlaying) {
+      stopScriptAudioPreview();
+      return;
+    }
+
+    if (item.audioUrl) {
+      playScriptAudioPreview(item);
+      return;
+    }
+
+    if (!item.canGenerate || scriptAudioStatus === "generating") return;
+
+    const payload = await generateScriptAudio(item.id);
+    const nextItem = payload?.scripts.find(
+      (candidate) => candidate.id === item.id,
+    );
+    if (nextItem?.audioUrl) {
+      playScriptAudioPreview(nextItem);
+      return;
+    }
+
+    setError(
+      payload?.errors?.join(" ") ||
+        item.generationReason ||
+        "Could not generate this script's audio.",
+    );
+  }
+
+  async function generateMissingAudioBeforeRun() {
+    if (!experience) return null;
+
+    setAudioPreparation({
+      completed: 0,
+      message: "Generating missing audio",
+      total: 0,
+    });
+
+    const inventoryPayload = await loadScriptAudioItems(experience.id, false);
+    if (!inventoryPayload) {
+      setAudioPreparation(null);
+      setError("Could not check scripted audio before starting.");
+      return null;
+    }
+
+    const inventoryItems = inventoryPayload.scripts;
+    const missingItems = scriptAudioMissingItems(inventoryItems);
+    if (!missingItems.length) {
+      setAudioPreparation(null);
+      return 0;
+    }
+
+    setAudioPreparation({
+      completed: 0,
+      message: "Generating missing audio",
+      total: missingItems.length,
+    });
+
+    const payload = await generateScriptAudio("", false);
+    if (!payload) {
+      setAudioPreparation(null);
+      setError("Could not generate missing audio before starting.");
+      return null;
+    }
+
+    const remainingCount = scriptAudioMissingItems(payload.scripts).length;
+    const completedCount = Math.max(0, missingItems.length - remainingCount);
+    setAudioPreparation({
+      completed: remainingCount ? completedCount : missingItems.length,
+      message: remainingCount
+        ? "Generating missing audio"
+        : "Preparing experience",
+      total: missingItems.length,
+    });
+
+    if (payload.errors?.length || remainingCount) {
+      setAudioPreparation(null);
+      setError(
+        payload.errors?.join(" ") ||
+          `Could not generate ${remainingCount} audio item${
+            remainingCount === 1 ? "" : "s"
+          }.`,
+      );
+      return null;
+    }
+
+    return missingItems.length;
+  }
+
   async function flushNextEditorAutosave() {
     const didSaveOverview = await flushOverviewAutosave();
     const didSaveTutor = await flushTutorAutosave();
@@ -1881,6 +2017,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const didSave = await flushNextEditorAutosave();
     if (!didSave) return;
 
+    const preparedAudioTotal = await generateMissingAudioBeforeRun();
+    if (preparedAudioTotal === null) return;
+
     try {
       await apiFetch<SessionPayload>("/api/sessions/", {
         method: "POST",
@@ -1895,6 +2034,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       return;
     }
 
+    setAudioPreparation({
+      completed: preparedAudioTotal,
+      message: "Preparing experience",
+      total: preparedAudioTotal,
+    });
     writeSelectedExperienceId(experience.id);
     window.location.assign(experienceRunPath(experience.id));
   }
@@ -2157,6 +2301,17 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         activeDisplayBaseSlots,
       )
     : true;
+  const activeScriptAudioPreviewDisabled =
+    !activeScriptAudioItem ||
+    scriptAudioStatus === "generating" ||
+    (!activeScriptAudioItem.audioUrl && !activeScriptAudioItem.canGenerate);
+  const activeScriptAudioPreviewLabel = isActiveScriptAudioPlaying
+    ? "Stop audio script preview"
+    : activeScriptAudioItem?.audioUrl
+      ? "Play audio script preview"
+      : activeScriptAudioNeedsGeneration
+        ? "Generate and play audio script"
+        : "Audio script preview unavailable";
   const displayTextPanel = activeScriptAudioItem ? (
     <DisplayTextEditor
       baseSlots={activeDisplayBaseSlots}
@@ -2179,29 +2334,46 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const actionDetailPanel =
     activeScriptAction && selectedEvent?.id === activeScriptAction.eventId ? (
       <div aria-label="Spoken voice script" className="next-event-action-detail">
-        <div
-          aria-label="Script detail views"
-          className="next-script-tabs"
-          role="tablist"
-        >
+        <div className="next-script-tabbar">
           <button
-            aria-selected={activeScriptDetailTab === "audio" ? "true" : "false"}
-            className={activeScriptDetailTab === "audio" ? "is-active" : ""}
-            onClick={() => setActiveScriptDetailTab("audio")}
-            role="tab"
+            aria-label={activeScriptAudioPreviewLabel}
+            className={[
+              "next-script-audio-preview-button",
+              isActiveScriptAudioPlaying ? "is-playing" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            disabled={activeScriptAudioPreviewDisabled}
+            onClick={() => void playOrGenerateActiveScriptAudio()}
+            title={activeScriptAudioPreviewLabel}
             type="button"
           >
-            Audio script
+            {isActiveScriptAudioPlaying ? <StopIcon /> : <MicIcon />}
           </button>
-          <button
-            aria-selected={activeScriptDetailTab === "display" ? "true" : "false"}
-            className={activeScriptDetailTab === "display" ? "is-active" : ""}
-            onClick={() => setActiveScriptDetailTab("display")}
-            role="tab"
-            type="button"
+          <div
+            aria-label="Script detail views"
+            className="next-script-tabs"
+            role="tablist"
           >
-            Display Text
-          </button>
+            <button
+              aria-selected={activeScriptDetailTab === "audio" ? "true" : "false"}
+              className={activeScriptDetailTab === "audio" ? "is-active" : ""}
+              onClick={() => setActiveScriptDetailTab("audio")}
+              role="tab"
+              type="button"
+            >
+              Audio script
+            </button>
+            <button
+              aria-selected={activeScriptDetailTab === "display" ? "true" : "false"}
+              className={activeScriptDetailTab === "display" ? "is-active" : ""}
+              onClick={() => setActiveScriptDetailTab("display")}
+              role="tab"
+              type="button"
+            >
+              Display Text
+            </button>
+          </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
           <textarea
@@ -2234,6 +2406,43 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       data-font-theme="manrope"
       onContextMenu={snapshotContextMenu.onContextMenu}
     >
+      {audioPreparation ? (
+        <div
+          aria-label="Generating missing audio"
+          aria-live="polite"
+          className="next-audio-prep-overlay"
+          role="status"
+        >
+          <div className="next-audio-prep-dialog">
+            <span>{audioPreparation.message}</span>
+            <strong>
+              {audioPreparation.total
+                ? `${audioPreparation.completed}/${audioPreparation.total}`
+                : "Checking audio"}
+            </strong>
+            <div
+              className={[
+                "next-audio-prep-meter",
+                audioPreparation.total ? "" : "is-indeterminate",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <i
+                style={{
+                  width: audioPreparation.total
+                    ? `${Math.round(
+                        (audioPreparation.completed /
+                          audioPreparation.total) *
+                          100,
+                      )}%`
+                    : undefined,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header className="study-header">
         <div className="study-actions">
           <button
@@ -2287,7 +2496,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               <button
                 aria-label="Run experience"
                 className="next-overview-run-button"
-                disabled={!experience}
+                disabled={!experience || Boolean(audioPreparation)}
                 onClick={() => void runExperience()}
                 title="Run experience"
                 type="button"

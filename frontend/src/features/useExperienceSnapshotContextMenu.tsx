@@ -21,10 +21,17 @@ type SnapshotMenuState = {
 };
 
 type UseExperienceSnapshotContextMenuOptions = {
+  actions?: SnapshotContextMenuAction[];
   experience: Experience | null;
   flushEditorAutosave: () => Promise<boolean>;
   isReady: boolean;
   restorePath: (experienceId: string) => string;
+};
+
+type SnapshotContextMenuAction = {
+  disabled?: boolean;
+  label: string;
+  onSelect: () => void | Promise<void>;
 };
 
 function snapshotDateTime(value = new Date()) {
@@ -50,6 +57,7 @@ function snapshotCreatedAtText(value: string) {
 }
 
 export function useExperienceSnapshotContextMenu({
+  actions = [],
   experience,
   flushEditorAutosave,
   isReady,
@@ -198,6 +206,13 @@ export function useExperienceSnapshotContextMenu({
     void loadSnapshots();
   }
 
+  function runAction(action: SnapshotContextMenuAction) {
+    if (action.disabled) return;
+
+    closeMenu();
+    void action.onSelect();
+  }
+
   useEffect(() => {
     if (!menuState) return;
 
@@ -233,6 +248,18 @@ export function useExperienceSnapshotContextMenu({
     >
       {view === "root" ? (
         <>
+          {actions.map((action) => (
+            <button
+              disabled={action.disabled}
+              key={action.label}
+              onClick={() => runAction(action)}
+              role="menuitem"
+              type="button"
+            >
+              {action.label}
+            </button>
+          ))}
+          {actions.length ? <div className="app-context-menu-separator" /> : null}
           <button
             onClick={() => setView("save")}
             role="menuitem"

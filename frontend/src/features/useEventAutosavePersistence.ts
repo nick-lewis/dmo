@@ -68,7 +68,7 @@ type UseEventAutosavePersistenceParams = {
   loadScriptAudioItems: (
     targetExperienceId?: string,
     showLoading?: boolean,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   setError: Dispatch<SetStateAction<string>>;
   setEventDraft: Dispatch<SetStateAction<EventDraft>>;
   setExperience: Dispatch<SetStateAction<Experience | null>>;

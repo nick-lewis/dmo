@@ -81,6 +81,7 @@ from .runtime_execution import run_action_sequence
 from .script_audio_services import (
     cached_script_audio_payload,
     collect_experience_script_audio_items,
+    generate_experience_script_audio_payload,
     generate_voice_sample_payload,
 )
 from .script_markers import script_cues_with_word_times
@@ -818,3 +819,44 @@ class ScriptAudioCachePayloadTests(TestCase):
             items[0]["sources"],
             ["Start / First use", "Start / Second use"],
         )
+
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_generate_all_script_audio_skips_dynamic_scripts(self):
+        event = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            config={"text": "Static line."},
+            label="Static",
+            sort_order=0,
+        )
+        EventActionStep.objects.create(
+            event=event,
+            action_type=EventActionStep.ActionType.SCRIPT,
+            config={"text": "Hello {{ learner.name }}."},
+            label="Dynamic",
+            sort_order=1,
+        )
+
+        with patch(
+            "core.script_audio_services.generate_script_audio_item",
+            return_value=(False, ""),
+        ) as generate_item:
+            payload, error, status_code = generate_experience_script_audio_payload(
+                self.experience,
+                {"force": False, "scriptId": ""},
+                "test-user",
+            )
+
+        generated_item = generate_item.call_args[0][1]
+        self.assertEqual(status_code, 200)
+        self.assertEqual(error, "")
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(generate_item.call_count, 1)
+        self.assertEqual(generated_item["script"], "Static line.")
+        self.assertTrue(generated_item["canGenerate"])

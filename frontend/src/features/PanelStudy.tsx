@@ -26,6 +26,7 @@ import {
   routeExperience,
 } from "../api";
 import { publicAsset } from "../assets";
+import { scriptAudioMissingItems } from "../scriptAudio";
 import {
   readSelectedExperienceId,
   readSlideSettings,
@@ -69,6 +70,7 @@ import type {
   RuntimeUiState,
   RuntimeUiTrigger,
   SessionPayload,
+  ScriptAudioPayload,
   SlideStatus,
   StartEventPayload,
   TutorSettings,
@@ -95,6 +97,12 @@ import { useRealtimeChat } from "./useRealtimeChat";
 import { useScriptAudioPlayback } from "./useScriptAudioPlayback";
 const sampleSlideDeckUrl =
   "https://docs.google.com/presentation/d/1laLiG097c6sTnRqTEMYSclNNgGPRqkvTVM_6BSUuj3k/";
+
+type RuntimeAudioPreparationState = {
+  completed: number;
+  message: string;
+  total: number;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -189,6 +197,8 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
   const [chatError, setChatError] = useState("");
   const [experienceError, setExperienceError] = useState("");
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [audioPreparation, setAudioPreparation] =
+    useState<RuntimeAudioPreparationState | null>(null);
   const [isCreatingExperience, setIsCreatingExperience] = useState(false);
   const [isSavingExperience, setIsSavingExperience] = useState(false);
   const [isSavingTutor, setIsSavingTutor] = useState(false);
@@ -1329,15 +1339,87 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     }
   }
 
+  async function generateMissingAudioBeforeSession(experienceId: string) {
+    if (!experienceId) return false;
+
+    setAudioPreparation({
+      completed: 0,
+      message: "Generating missing audio",
+      total: 0,
+    });
+
+    try {
+      const inventory = await apiFetch<ScriptAudioPayload>(
+        `/api/experiences/${encodeURIComponent(experienceId)}/script-audio/`,
+      );
+      const missingItems = scriptAudioMissingItems(inventory.scripts);
+      if (!missingItems.length) {
+        setAudioPreparation(null);
+        return true;
+      }
+
+      setAudioPreparation({
+        completed: 0,
+        message: "Generating missing audio",
+        total: missingItems.length,
+      });
+
+      const payload = await apiFetch<ScriptAudioPayload>(
+        `/api/experiences/${encodeURIComponent(experienceId)}/script-audio/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ force: false, scriptId: "" }),
+        },
+      );
+      const remainingCount = scriptAudioMissingItems(payload.scripts).length;
+      setAudioPreparation({
+        completed: remainingCount
+          ? Math.max(0, missingItems.length - remainingCount)
+          : missingItems.length,
+        message: remainingCount
+          ? "Generating missing audio"
+          : "Preparing experience",
+        total: missingItems.length,
+      });
+
+      if (payload.errors?.length || remainingCount) {
+        setAudioPreparation(null);
+        setChatError(
+          payload.errors?.join(" ") ||
+            `Could not generate ${remainingCount} audio item${
+              remainingCount === 1 ? "" : "s"
+            }.`,
+        );
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      setAudioPreparation(null);
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : "Could not generate missing audio.",
+      );
+      return false;
+    }
+  }
+
   async function createNewSession() {
     setIsCreatingSession(true);
     setChatError("");
 
     try {
+      const didPrepareAudio = await generateMissingAudioBeforeSession(
+        selectedExperienceId,
+      );
+      if (!didPrepareAudio) return;
+
       const payload = await apiFetch<SessionPayload>("/api/sessions/", {
         method: "POST",
         body: JSON.stringify({ experienceId: selectedExperienceId }),
       });
+      setAudioPreparation(null);
       setSession(payload.session);
       setMessages(payload.messages);
       setTurnAnchorMessageId(null);
@@ -1347,6 +1429,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         setIsLeftOpen(false);
       }
     } catch (error) {
+      setAudioPreparation(null);
       setChatStatus("error");
       setChatError(
         error instanceof Error ? error.message : "Could not create session.",
@@ -1375,6 +1458,43 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       data-color-theme="glass-dl"
       data-font-theme="manrope"
     >
+      {audioPreparation ? (
+        <div
+          aria-label="Generating missing audio"
+          aria-live="polite"
+          className="next-audio-prep-overlay"
+          role="status"
+        >
+          <div className="next-audio-prep-dialog">
+            <span>{audioPreparation.message}</span>
+            <strong>
+              {audioPreparation.total
+                ? `${audioPreparation.completed}/${audioPreparation.total}`
+                : "Checking audio"}
+            </strong>
+            <div
+              className={[
+                "next-audio-prep-meter",
+                audioPreparation.total ? "" : "is-indeterminate",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <i
+                style={{
+                  width: audioPreparation.total
+                    ? `${Math.round(
+                        (audioPreparation.completed /
+                          audioPreparation.total) *
+                          100,
+                      )}%`
+                    : undefined,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header className="study-header">
         <p className="study-kicker">
           {selectedExperience?.title || "Tutoring workspace"}

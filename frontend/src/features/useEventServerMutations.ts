@@ -53,7 +53,7 @@ type UseEventServerMutationsParams = {
   loadScriptAudioItems: (
     targetExperienceId?: string,
     showLoading?: boolean,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   normalizedEventSearch: string;
   openExpandedItem: (itemId: string) => void;
   persistedDraftForUndo: (selectedEvent: ExperienceEvent) => EventDraft;

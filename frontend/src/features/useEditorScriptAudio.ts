@@ -28,7 +28,7 @@ export function useEditorScriptAudio({
     targetExperienceId = experience?.id ?? "",
     showLoading = true,
   ) {
-    if (!targetExperienceId) return;
+    if (!targetExperienceId) return null;
 
     if (showLoading) {
       setScriptAudioStatus("loading");
@@ -39,12 +39,14 @@ export function useEditorScriptAudio({
         `/api/experiences/${targetExperienceId}/script-audio/`,
       );
       setScriptAudioItems(payload.scripts);
+      return payload;
     } catch (loadError) {
       setScriptAudioError(
         loadError instanceof Error
           ? loadError.message
           : "Could not load scripted audio.",
       );
+      return null;
     } finally {
       if (showLoading) {
         setScriptAudioStatus("idle");
@@ -53,10 +55,10 @@ export function useEditorScriptAudio({
   }
 
   async function generateScriptAudio(scriptId = "", force = false) {
-    if (!experience) return;
+    if (!experience) return null;
 
     const didSave = await flushEditorAutosave();
-    if (!didSave) return;
+    if (!didSave) return null;
 
     setScriptAudioStatus("generating");
     setScriptAudioError("");
@@ -75,12 +77,14 @@ export function useEditorScriptAudio({
       if (payload.errors?.length) {
         setScriptAudioError(payload.errors.join(" "));
       }
+      return payload;
     } catch (generateError) {
       setScriptAudioError(
         generateError instanceof Error
           ? generateError.message
           : "Could not generate scripted audio.",
       );
+      return null;
     } finally {
       setScriptAudioStatus("idle");
     }
