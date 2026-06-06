@@ -1727,9 +1727,11 @@ button {
 }
 
 .next-script-segment-document {
-  color: color-mix(in srgb, var(--page-ink) 88%, var(--muted-ink));
-  font-size: 0.9rem;
-  line-height: 1.75;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  font-family: var(--ui-font);
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.62;
   white-space: pre-wrap;
 }
 
