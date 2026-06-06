@@ -260,9 +260,6 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         timing_words = words
         timing_word_count = len(words)
         timing_preview = words[:12]
-        if words:
-            display_base_slots = [str(word["word"]) for word in words]
-            display_base_text = " ".join(display_base_slots)
         timed_marker_count = sum(
             1
             for marker in script_cues_with_word_times(markers, words)
@@ -288,7 +285,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "displayBaseSlots": display_base_slots,
         "displayBaseText": display_base_text,
         "displayBreaks": display_breaks,
-        "displayExpectedWordCount": len(timing_words) or script_word_count(script),
+        "displayExpectedWordCount": len(display_base_slots),
         "displayKey": display_key,
         "displaySlotCount": len(display_slots) if display_slots else 0,
         "displaySlots": display_slots,
@@ -734,7 +731,7 @@ def cached_script_audio_payload(session, script, script_cues=None):
             )
         except (OSError, ValueError):
             script_words = []
-    display_text = runtime_script_audio_display_text(script, len(script_words))
+    display_text = runtime_script_audio_display_text(script)
 
     payload = {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/",

@@ -1505,6 +1505,7 @@ button {
 }
 
 .next-script-audio-preview-button {
+  position: relative;
   display: inline-grid;
   place-items: center;
   width: 30px;
@@ -1515,6 +1516,10 @@ button {
   border-radius: 999px;
   color: color-mix(in srgb, var(--accent-2) 78%, var(--page-ink));
   background: color-mix(in srgb, var(--panel-bg-strong) 54%, transparent);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .next-script-audio-preview-button:hover:not(:disabled),
@@ -1529,9 +1534,50 @@ button {
   color: color-mix(in srgb, var(--accent) 72%, var(--page-ink));
 }
 
+.next-script-audio-preview-button.is-empty {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--muted-ink) 34%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--muted-ink) 78%, var(--page-ink));
+  background: transparent;
+}
+
+.next-script-audio-preview-button.has-audio {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--panel-border));
+  color: color-mix(in srgb, var(--accent) 82%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 44%, var(--panel-bg-strong));
+}
+
+.next-script-audio-preview-button.is-generating {
+  overflow: visible;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  color: color-mix(in srgb, var(--accent) 82%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--panel-bg-strong));
+}
+
+.next-script-audio-preview-button.is-generating::after {
+  position: absolute;
+  inset: -3px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 62%, transparent);
+  border-radius: inherit;
+  content: "";
+  animation: next-script-audio-spin 900ms linear infinite;
+}
+
 .next-script-audio-preview-button:disabled {
   cursor: default;
   opacity: 0.44;
+}
+
+.next-script-audio-preview-button.is-empty:disabled,
+.next-script-audio-preview-button.is-generating:disabled {
+  opacity: 0.78;
+}
+
+@keyframes next-script-audio-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .next-script-tabs button {

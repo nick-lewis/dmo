@@ -2312,6 +2312,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       : activeScriptAudioNeedsGeneration
         ? "Generate and play audio script"
         : "Audio script preview unavailable";
+  const activeScriptAudioPreviewStateClass =
+    scriptAudioStatus === "generating"
+      ? "is-generating"
+      : activeScriptAudioItem?.audioUrl
+        ? "has-audio"
+        : "is-empty";
   const displayTextPanel = activeScriptAudioItem ? (
     <DisplayTextEditor
       baseSlots={activeDisplayBaseSlots}
@@ -2339,6 +2345,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             aria-label={activeScriptAudioPreviewLabel}
             className={[
               "next-script-audio-preview-button",
+              activeScriptAudioPreviewStateClass,
               isActiveScriptAudioPlaying ? "is-playing" : "",
             ]
               .filter(Boolean)

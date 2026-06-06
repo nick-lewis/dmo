@@ -525,11 +525,61 @@ class ScriptAudioCachePayloadTests(TestCase):
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["markerCount"], 1)
-        self.assertEqual(items[0]["displayBaseText"], "First second")
+        self.assertEqual(items[0]["displayBaseText"], "First second.")
+        self.assertEqual(items[0]["displayBaseSlots"], ["First", "second."])
         self.assertEqual(items[0]["displayExpectedWordCount"], 2)
         self.assertEqual(items[0]["timedMarkerCount"], 1)
         self.assertEqual(items[0]["timingWordCount"], 2)
         self.assertEqual(items[0]["timingPreview"][1]["word"], "second")
+
+    def test_script_audio_inventory_keeps_display_text_from_script_when_timing_differs(self):
+        script = "Actual written script."
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                tutor = self.experience.tutor_settings
+                cache_key = compute_script_audio_cache_key(
+                    assistant_name=tutor.assistant_name,
+                    realtime_model=tutor.realtime_model,
+                    script=script,
+                    audio_model=tutor.realtime_model,
+                    voice=tutor.voice,
+                    voice_instructions=tutor.voice_instructions,
+                )
+                words_path = script_audio_words_path(
+                    cache_key,
+                    settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
+                )
+                words_path.parent.mkdir(parents=True, exist_ok=True)
+                words_path.write_text(
+                    json.dumps(
+                        [
+                            {"word": "Unexpected", "start": 0.1, "end": 0.3},
+                            {"word": "transcript", "start": 0.3, "end": 0.6},
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+
+                items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(items[0]["displayBaseText"], script)
+        self.assertEqual(items[0]["displayBaseSlots"], ["Actual", "written", "script."])
+        self.assertEqual(items[0]["displayExpectedWordCount"], 3)
+        self.assertEqual(items[0]["timingWordCount"], 2)
+        self.assertEqual(items[0]["timingPreview"][0]["word"], "Unexpected")
 
     def test_script_audio_inventory_exposes_display_transcript_override(self):
         raw_script = "My name is D-lou."
@@ -645,7 +695,7 @@ class ScriptAudioCachePayloadTests(TestCase):
         self.assertEqual(good_response.json()["displaySlots"], ["My", "name", "is", "dLU."])
         self.assertEqual(bad_response.status_code, 400)
 
-    def test_display_transcript_slots_can_keep_blank_timed_words(self):
+    def test_display_transcript_uses_script_slots_when_timing_words_split(self):
         script = "My name is D-lou."
 
         with tempfile.TemporaryDirectory() as media_root:
@@ -693,18 +743,18 @@ class ScriptAudioCachePayloadTests(TestCase):
 
                 response = self.client.put(
                     f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
-                    data=json.dumps({"displaySlots": ["My", "name", "is", "dLU", ""]}),
+                    data=json.dumps({"displaySlots": ["My", "name", "is", "dLU."]}),
                     content_type="application/json",
                 )
 
                 items = collect_experience_script_audio_items(self.experience)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["displayText"], "My name is dLU")
-        self.assertEqual(response.json()["displaySlots"], ["My", "name", "is", "dLU", ""])
-        self.assertEqual(items[0]["displayBaseSlots"], ["My", "name", "is", "D", "lou."])
-        self.assertEqual(items[0]["displaySlots"], ["My", "name", "is", "dLU", ""])
-        self.assertEqual(items[0]["displayText"], "My name is dLU")
+        self.assertEqual(response.json()["displayText"], "My name is dLU.")
+        self.assertEqual(response.json()["displaySlots"], ["My", "name", "is", "dLU."])
+        self.assertEqual(items[0]["displayBaseSlots"], ["My", "name", "is", "D-lou."])
+        self.assertEqual(items[0]["displaySlots"], ["My", "name", "is", "dLU."])
+        self.assertEqual(items[0]["displayText"], "My name is dLU.")
 
     def test_display_transcript_can_store_visual_line_breaks(self):
         script = "First line second line."
