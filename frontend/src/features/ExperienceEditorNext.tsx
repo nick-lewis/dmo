@@ -97,6 +97,7 @@ import {
   useTutorAutosave,
 } from "./useExperienceAutosave";
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
+import { NextFineTuningPanel } from "./NextFineTuningPanel";
 import {
   clamp,
   dropIndexForTextTarget,
@@ -2672,7 +2673,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   }, [scriptActionMenu]);
 
   useEffect(() => {
-    if (activeScriptDetailTab !== "script") return;
+    if (
+      activeScriptDetailTab !== "script" &&
+      activeScriptDetailTab !== "fine-tuning"
+    ) {
+      return;
+    }
 
     const deckUrl = activeScriptDeckUrl.trim();
     const slideRefs = Array.from(
@@ -4334,7 +4340,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             text={activeScriptActionView.text}
           />
         ) : activeScriptDetailTab === "fine-tuning" ? (
-          <div aria-label="Fine Tuning" className="next-fine-tuning-panel" />
+          <NextFineTuningPanel
+            audioItem={activeScriptAudioItem}
+            deckUrl={activeScriptDeckUrl}
+            onMarkedTextChange={updateActiveScriptMarkedText}
+            previews={scriptSlidePreviews}
+            text={activeScriptText}
+          />
         ) : (
           <>
             {displayTextPanel}
