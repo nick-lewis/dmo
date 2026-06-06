@@ -1,3 +1,5 @@
+import re
+
 from django.db import transaction
 from django.db.models import Max
 
@@ -31,6 +33,11 @@ class EventServiceError(ValueError):
     pass
 
 
+DEFAULT_NEW_EVENT_TITLE = "New event"
+NEW_EVENT_SLUG_PATTERN = re.compile(r"^new-event(?:-(\d+))?$", re.IGNORECASE)
+NEW_EVENT_TITLE_PATTERN = re.compile(r"^new event(?:\s+(\d+))?$", re.IGNORECASE)
+
+
 def ordered_experience_events(experience):
     return experience.events.order_by("sort_order", "created_at")
 
@@ -47,6 +54,33 @@ def compact_sort_order(manager):
         item.save(update_fields=["sort_order", "updated_at"])
 
 
+def placeholder_event_number(value, pattern):
+    match = pattern.match(str(value or "").strip())
+    if not match:
+        return None
+    suffix = match.group(1)
+    return int(suffix) if suffix else 1
+
+
+def unique_new_event_title(experience):
+    used_numbers = set()
+    for title, slug in experience.events.values_list("title", "slug"):
+        title_number = placeholder_event_number(title, NEW_EVENT_TITLE_PATTERN)
+        slug_number = placeholder_event_number(slug, NEW_EVENT_SLUG_PATTERN)
+        if title_number:
+            used_numbers.add(title_number)
+        if slug_number:
+            used_numbers.add(slug_number)
+
+    suffix = 1
+    while suffix in used_numbers:
+        suffix += 1
+
+    if suffix == 1:
+        return DEFAULT_NEW_EVENT_TITLE
+    return f"{DEFAULT_NEW_EVENT_TITLE} {suffix}"
+
+
 def create_experience_event(experience, data):
     if isinstance(data.get("event"), dict):
         try:
@@ -60,7 +94,9 @@ def create_experience_event(experience, data):
             raise EventServiceError(str(error)) from error
         return event
 
-    title = str(data.get("title", "")).strip() or "New event"
+    title = str(data.get("title", "")).strip()
+    if not title or title.casefold() == DEFAULT_NEW_EVENT_TITLE.casefold():
+        title = unique_new_event_title(experience)
     description = str(data.get("description", "")).strip()
     if len(title) > 160:
         raise EventServiceError("Event title is too long.")

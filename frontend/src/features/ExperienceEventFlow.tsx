@@ -13,6 +13,7 @@ import {
 
 import { MinusIcon, PlayIcon, PlusIcon } from "../components/Icons";
 import {
+  eventListLabel,
   eventOutgoingLinks,
   eventTargetForRoute,
   isDynamicRouteTarget,
@@ -449,7 +450,7 @@ function EventFlowCard({
   const description = eventDescription(event);
   const isRunning = runningEventId === event.id;
   const isRunDisabled = Boolean(runningEventId);
-  const title = event.title || event.slug || "Untitled event";
+  const title = eventListLabel(events, event) || "Untitled event";
 
   function selectEvent() {
     onSelectEvent(event.id);

@@ -26,11 +26,26 @@ export function eventTargetForRoute(
 }
 
 
+export function eventListLabel(events: ExperienceEvent[], event: ExperienceEvent) {
+  const title = event.title.trim();
+  const fallbackLabel = event.slug || event.id;
+  const label = title || fallbackLabel;
+  const hasDuplicateTitle =
+    title.length > 0 &&
+    events.filter((candidate) => candidate.title.trim() === title).length > 1;
+  if (!hasDuplicateTitle) return label;
+
+  const detail = event.slug || event.id.slice(0, 8);
+  return detail ? `${label} (${detail})` : label;
+}
+
+
 export function eventTitleForTrigger(
   events: ExperienceEvent[],
   eventSlug: string,
 ) {
-  return eventTargetForRoute(events, eventSlug)?.title ?? eventSlug;
+  const target = eventTargetForRoute(events, eventSlug);
+  return target ? eventListLabel(events, target) : eventSlug;
 }
 
 

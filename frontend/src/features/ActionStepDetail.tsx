@@ -6,6 +6,7 @@ import {
   recordFromUnknown,
   stringConfigValue,
 } from "../runtimeUtils";
+import { eventListLabel } from "../eventGraph";
 import type {
   EventStepDraft,
   ExperienceEvent,
@@ -38,6 +39,8 @@ export function ActionStepDetail({
   const hasTriggerEventOption = editorEvents.some(
     (event) => event.slug === triggerEventSlug,
   );
+  const eventOptionLabel = (event: ExperienceEvent) =>
+    `${eventListLabel(editorEvents, event)}${event.isStart ? " (start)" : ""}`;
 
   return (
     <div className={className}>
@@ -226,8 +229,7 @@ export function ActionStepDetail({
               ) : null}
               {editorEvents.map((event) => (
                 <option key={event.id} value={event.slug}>
-                  {event.title || event.slug}
-                  {event.isStart ? " (start)" : ""}
+                  {eventOptionLabel(event)}
                 </option>
               ))}
             </select>
@@ -261,8 +263,7 @@ export function ActionStepDetail({
               ) : null}
               {editorEvents.map((event) => (
                 <option key={event.id} value={event.slug}>
-                  {event.title || event.slug}
-                  {event.isStart ? " (start)" : ""}
+                  {eventOptionLabel(event)}
                 </option>
               ))}
             </select>
@@ -317,8 +318,7 @@ export function ActionStepDetail({
             ) : null}
             {editorEvents.map((event) => (
               <option key={event.id} value={event.slug}>
-                {event.title || event.slug}
-                {event.isStart ? " (start)" : ""}
+                {eventOptionLabel(event)}
               </option>
             ))}
           </select>
@@ -339,8 +339,7 @@ export function ActionStepDetail({
             ) : null}
             {editorEvents.map((event) => (
               <option key={event.id} value={event.slug}>
-                {event.title || event.slug}
-                {event.isStart ? " (start)" : ""}
+                {eventOptionLabel(event)}
               </option>
             ))}
           </select>
@@ -369,8 +368,7 @@ export function ActionStepDetail({
             ) : null}
             {editorEvents.map((event) => (
               <option key={event.id} value={event.slug}>
-                {event.title || event.slug}
-                {event.isStart ? " (start)" : ""}
+                {eventOptionLabel(event)}
               </option>
             ))}
           </select>

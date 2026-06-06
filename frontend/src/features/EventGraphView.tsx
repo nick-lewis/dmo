@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import {
+  eventListLabel,
   eventOutgoingLinks,
   eventTargetForRoute,
   eventTransitionStats,
@@ -63,7 +64,7 @@ export function EventGraphView({
       .map((link) => ({
         ...link,
         sourceEventId: event.id,
-        sourceEvent: event.title || event.slug,
+        sourceEvent: eventListLabel(events, event),
       })),
   );
   const orphanCount = orphanEvents.length;
@@ -81,7 +82,7 @@ export function EventGraphView({
   const routeRows: EventGraphRouteRow[] = sortedEvents.flatMap((event) =>
     eventOutgoingLinks(event).map((link) => ({
       ...link,
-      sourceEvent: event.title || event.slug,
+      sourceEvent: eventListLabel(events, event),
       sourceEventId: event.id,
     })),
   );
@@ -125,7 +126,7 @@ export function EventGraphView({
           .map((link) => ({
             ...link,
             sourceEventId: event.id,
-            sourceEvent: event.title || event.slug,
+            sourceEvent: eventListLabel(events, event),
           })),
       )
     : [];
@@ -221,7 +222,7 @@ export function EventGraphView({
               type="button"
             >
               <strong>Orphaned</strong>
-              <span>{event.title || event.slug}</span>
+              <span>{eventListLabel(events, event)}</span>
             </button>
           ))}
           {unresolvedRoutes.map((link, index) => (
@@ -256,7 +257,7 @@ export function EventGraphView({
               onClick={() => onSelectEvent(event.id)}
               type="button"
             >
-              <span>{event.title || event.slug}</span>
+              <span>{eventListLabel(events, event)}</span>
               <small>
                 {event.isStart ? "start" : `${stats.incomingCount} in`} /{" "}
                 {stats.outgoingCount} out
@@ -269,7 +270,7 @@ export function EventGraphView({
       {selectedEvent ? (
         <div className="event-graph-details">
           <div className="event-graph-details-header">
-            <strong>{selectedEvent.title || selectedEvent.slug}</strong>
+            <strong>{eventListLabel(events, selectedEvent)}</strong>
             <span>
               {incomingLinks.length} in / {selectedOutgoingLinks.length} out
             </span>
@@ -502,7 +503,7 @@ function EventGraphRouteCatalog({
                     onClick={() => onSelectEvent(target.id)}
                     type="button"
                   >
-                    {target.title || target.slug}
+                    {eventListLabel(events, target)}
                   </button>
                 ) : isDynamic ? (
                   <code>{link.slug || "dynamic event"}</code>
@@ -574,7 +575,7 @@ function EventGraphLinkList({
               onClick={() => onSelectEvent(target.id)}
               type="button"
             >
-              <strong>{target.title || target.slug}</strong>
+              <strong>{eventListLabel(events, target)}</strong>
               <small>
                 {link.kind} / {link.source}
                 {link.condition ? ` / if ${link.condition}` : ""}

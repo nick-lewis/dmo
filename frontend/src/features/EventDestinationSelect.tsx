@@ -1,4 +1,5 @@
 import type { ExperienceEvent } from "../types";
+import { eventListLabel } from "../eventGraph";
 
 type EventDestinationSelectProps = {
   ariaLabel: string;
@@ -27,7 +28,7 @@ export function EventDestinationSelect({
       {value && !hasEventOption ? <option value={value}>{value}</option> : null}
       {editorEvents.map((event) => (
         <option key={event.id} value={event.slug}>
-          {event.title || event.slug}
+          {eventListLabel(editorEvents, event)}
           {event.isStart ? " (start)" : ""}
         </option>
       ))}

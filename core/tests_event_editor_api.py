@@ -139,6 +139,45 @@ class EventEditorApiTests(TestCase):
             "An experience needs at least one event.",
         )
 
+    def test_create_placeholder_events_get_unique_titles(self):
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="New event",
+            slug="new-event",
+            sort_order=1,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="New event",
+            slug="new-event-2",
+            sort_order=2,
+        )
+
+        first_response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/",
+            data=json.dumps({"description": "", "title": "New event"}),
+            content_type="application/json",
+        )
+        second_response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/",
+            data=json.dumps({"description": "", "title": ""}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 201)
+        self.assertEqual(first_response.json()["event"]["title"], "New event 3")
+        self.assertEqual(second_response.json()["event"]["title"], "New event 4")
+        self.assertEqual(first_response.json()["event"]["slug"], "new-event-3")
+        self.assertEqual(second_response.json()["event"]["slug"], "new-event-4")
+
     def test_event_patch_persists_conversation_choices(self):
         start = ExperienceEvent.objects.create(
             experience=self.experience,
