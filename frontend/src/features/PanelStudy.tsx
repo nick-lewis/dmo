@@ -20,7 +20,7 @@ import {
 } from "../PythonNotebookPanel";
 import {
   apiFetch,
-  experienceEditPath,
+  experienceNextEditPath,
   experienceRunPath,
   getCurrentPath,
   routeExperience,
@@ -79,6 +79,7 @@ import type {
   VoiceSampleStatus,
 } from "../types";
 import {
+  ArrowLeftIcon,
   InspectorIcon,
 } from "../components/Icons";
 import { ChatPanelContent } from "./ChatPanelContent";
@@ -1496,22 +1497,21 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         </div>
       ) : null}
       <header className="study-header">
-        <p className="study-kicker">
-          {selectedExperience?.title || "Tutoring workspace"}
-        </p>
+        <button
+          aria-label="Back to editor"
+          className="study-back-button"
+          disabled={!selectedExperience}
+          onClick={() => {
+            if (selectedExperience) {
+              window.location.assign(experienceNextEditPath(selectedExperience.id));
+            }
+          }}
+          title="Back to editor"
+          type="button"
+        >
+          <ArrowLeftIcon />
+        </button>
         <div className="study-actions">
-          <button
-            className="header-action secondary"
-            disabled={!selectedExperience}
-            onClick={() => {
-              if (selectedExperience) {
-                window.location.assign(experienceEditPath(selectedExperience.id));
-              }
-            }}
-            type="button"
-          >
-            Edit
-          </button>
           <button
             className="header-action secondary"
             onClick={() => window.location.assign("/")}

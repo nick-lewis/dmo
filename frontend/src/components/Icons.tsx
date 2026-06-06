@@ -72,6 +72,26 @@ export function PlayIcon() {
   );
 }
 
+export function ArrowLeftIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="15"
+      viewBox="0 0 24 24"
+      width="15"
+    >
+      <path
+        d="M15 18 9 12l6-6M10 12h10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 export function MicIcon() {
   return (
     <svg

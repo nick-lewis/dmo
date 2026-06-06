@@ -423,17 +423,43 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 22px;
+  min-height: 30px;
   padding: 0 2px;
 }
 
-.study-kicker {
-  margin: 0;
-  color: var(--muted-ink);
-  font-size: 0.78rem;
-  font-weight: 760;
-  letter-spacing: 0;
-  text-transform: uppercase;
+.study-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, white 72%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.study-back-button:hover:not(:disabled),
+.study-back-button:focus-visible {
+  border-color: color-mix(in srgb, var(--dl-coral) 42%, var(--border));
+  background: color-mix(in srgb, var(--dl-coral) 12%, white);
+  color: var(--dl-coral);
+}
+
+.study-back-button:active:not(:disabled) {
+  transform: translateX(-1px);
+}
+
+.study-back-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .study-actions {
@@ -441,6 +467,7 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
   min-width: 0;
 }
 
@@ -10847,14 +10874,14 @@ button {
   }
 
   .study-header {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
   }
 
   .study-actions {
     flex-wrap: wrap;
-    justify-content: flex-start;
-    width: 100%;
+    justify-content: flex-end;
+    width: auto;
   }
 
   .study-user {
