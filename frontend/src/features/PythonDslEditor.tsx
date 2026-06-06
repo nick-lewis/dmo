@@ -48,8 +48,14 @@ export type PythonDslEventTarget = {
 
 type DslContextMenuState = {
   chatTarget?: PythonDslChatAction;
+  insertionPoint: DslInsertionPoint;
   x: number;
   y: number;
+};
+
+type DslInsertionPoint = {
+  mode: "append" | "line";
+  position: number;
 };
 
 const indent = "    ";
@@ -642,16 +648,29 @@ function scriptActionAtPosition(
 function insertStatementAtCursor(
   view: EditorView,
   statement: string,
+  insertionPoint?: DslInsertionPoint,
 ): PythonDslScriptAction {
-  const selection = view.state.selection.main;
-  const line = view.state.doc.lineAt(selection.from);
+  const doc = view.state.doc;
+  const point = insertionPoint ?? {
+    mode: "append",
+    position: view.state.selection.main.from,
+  };
+  const position = Math.min(Math.max(point.position, 0), doc.length);
+  const line = doc.lineAt(position);
   const lineText = line.text;
   const indentation = lineText.match(/^\s*/)?.[0] ?? "";
   const isLineEmpty = lineText.trim().length === 0;
-  const from = isLineEmpty ? line.from : line.to;
-  const to = isLineEmpty ? line.to : line.to;
-  const insertion = `${isLineEmpty ? "" : "\n"}${indentation}${statement}`;
-  const statementFrom = from + (isLineEmpty ? 0 : 1) + indentation.length;
+  const isLineInsertion = point.mode === "line";
+  const from = isLineInsertion
+    ? line.from
+    : isLineEmpty
+      ? line.from
+      : line.to;
+  const to = isLineInsertion && isLineEmpty ? line.to : from;
+  const insertion = isLineInsertion
+    ? `${indentation}${statement}${isLineEmpty ? "" : "\n"}`
+    : `${isLineEmpty ? "" : "\n"}${indentation}${statement}`;
+  const statementFrom = from + (isLineInsertion || isLineEmpty ? 0 : 1) + indentation.length;
   const statementTo = statementFrom + statement.length;
 
   view.dispatch({
@@ -693,18 +712,29 @@ function contextMenuPosition(clientX: number, clientY: number) {
   };
 }
 
-function selectContextMenuPosition(
+function contextMenuInsertionPoint(
   view: EditorView,
   event: { clientX: number; clientY: number },
-) {
+): { insertionPoint: DslInsertionPoint; position: number | null } {
   const position = view.posAtCoords({
     x: event.clientX,
     y: event.clientY,
   });
+  const doc = view.state.doc;
+  const lastLine = doc.line(doc.lines);
+  const lastLineCoords =
+    view.coordsAtPos(lastLine.to, 1) ?? view.coordsAtPos(lastLine.from, -1);
+  const isBelowLastLine =
+    lastLineCoords !== null && event.clientY > lastLineCoords.bottom + 6;
+  const insertionPoint =
+    position === null || isBelowLastLine
+      ? { mode: "append" as const, position: doc.length }
+      : { mode: "line" as const, position: doc.lineAt(position).from };
+
   view.dispatch({
-    selection: { anchor: position ?? view.state.doc.length },
+    selection: { anchor: insertionPoint.position },
   });
-  return position;
+  return { insertionPoint, position };
 }
 
 export function PythonDslEditor({
@@ -834,7 +864,10 @@ export function PythonDslEditor({
         contextmenu(event, view) {
           event.preventDefault();
           event.stopPropagation();
-          const position = selectContextMenuPosition(view, event);
+          const { insertionPoint, position } = contextMenuInsertionPoint(
+            view,
+            event,
+          );
           const clickedChatAction = explicitDslActionTarget(
             event,
             view,
@@ -847,6 +880,7 @@ export function PythonDslEditor({
           view.focus();
           setContextMenu({
             chatTarget: chatAction ?? undefined,
+            insertionPoint,
             ...contextMenuPosition(event.clientX, event.clientY),
           });
           return true;
@@ -918,7 +952,7 @@ export function PythonDslEditor({
       });
       view.focus();
     } else {
-      insertStatementAtCursor(view, statement);
+      insertStatementAtCursor(view, statement, contextMenu?.insertionPoint);
     }
     setContextMenu(null);
   }
@@ -927,7 +961,11 @@ export function PythonDslEditor({
     const view = viewRef.current;
     if (!view) return;
 
-    const scriptAction = insertStatementAtCursor(view, "script()");
+    const scriptAction = insertStatementAtCursor(
+      view,
+      "script()",
+      contextMenu?.insertionPoint,
+    );
     onOpenScriptActionRef.current?.(scriptAction);
     setContextMenu(null);
   }
@@ -938,7 +976,10 @@ export function PythonDslEditor({
 
     const view = viewRef.current;
     if (view) {
-      const position = selectContextMenuPosition(view, event);
+      const { insertionPoint, position } = contextMenuInsertionPoint(
+        view,
+        event,
+      );
       const clickedChatAction = explicitDslActionTarget(
         event,
         view,
@@ -951,12 +992,14 @@ export function PythonDslEditor({
       view.focus();
       setContextMenu({
         chatTarget: chatAction ?? undefined,
+        insertionPoint,
         ...contextMenuPosition(event.clientX, event.clientY),
       });
       return;
     }
 
     setContextMenu({
+      insertionPoint: { mode: "append", position: 0 },
       ...contextMenuPosition(event.clientX, event.clientY),
     });
   }
