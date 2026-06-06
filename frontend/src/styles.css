@@ -1784,7 +1784,7 @@ button {
 }
 
 .next-script-slide-row.has-no-slide {
-  background: color-mix(in srgb, var(--panel-bg-strong) 40%, transparent);
+  background: color-mix(in srgb, var(--page-bg) 74%, var(--panel-bg-strong));
 }
 
 .next-script-slide-script {
@@ -1867,6 +1867,10 @@ button {
   border-radius: 6px;
   color: color-mix(in srgb, var(--muted-ink) 76%, transparent);
   font-size: 0.72rem;
+}
+
+.next-script-slide-row.has-no-slide .next-script-slide-preview span {
+  background: color-mix(in srgb, var(--page-bg) 86%, var(--panel-bg-strong));
 }
 
 .next-script-action-token {
