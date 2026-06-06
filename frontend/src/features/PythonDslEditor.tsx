@@ -18,10 +18,13 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 type PythonDslEditorProps = {
   ariaLabel: string;
   eventTargets?: PythonDslEventTarget[];
+  mode?: PythonDslEditorMode;
   onChange: (value: string) => void;
   onOpenScriptAction?: (action: PythonDslScriptAction) => void;
   value: string;
 };
+
+type PythonDslEditorMode = "on-entry" | "conversation";
 
 export type PythonDslScriptAction = {
   actionIndex: number;
@@ -49,6 +52,7 @@ export type PythonDslEventTarget = {
 type DslContextMenuState = {
   chatTarget?: PythonDslChatAction;
   insertionPoint: DslInsertionPoint;
+  mode: PythonDslEditorMode;
   x: number;
   y: number;
 };
@@ -60,7 +64,7 @@ type DslInsertionPoint = {
 
 const indent = "    ";
 
-const rootDslCompletions: Completion[] = [
+const pythonKeywordCompletions: Completion[] = [
   {
     label: "if",
     apply: "if condition:\n    ",
@@ -104,6 +108,10 @@ const rootDslCompletions: Completion[] = [
   { label: "None", section: "Python", type: "constant" },
   { label: "pass", section: "Python", type: "keyword" },
   { label: "return", section: "Python", type: "keyword" },
+];
+
+const rootDslCompletions: Completion[] = [
+  ...pythonKeywordCompletions,
   {
     label: "event",
     detail: "current event",
@@ -213,6 +221,39 @@ const rootDslCompletions: Completion[] = [
     info: "Emit a named runtime signal.",
     section: "Actions",
     type: "function",
+  },
+];
+
+const conversationDslCompletions: Completion[] = [
+  ...pythonKeywordCompletions,
+  {
+    label: "choice",
+    apply: 'choice(text="Continue", destination="", icon=True)',
+    detail: "button",
+    info: "Add a learner choice button.",
+    section: "Conversation",
+    type: "function",
+  },
+  {
+    label: "text",
+    apply: 'text="Continue"',
+    detail: "choice label",
+    section: "Choice",
+    type: "property",
+  },
+  {
+    label: "destination",
+    apply: 'destination=""',
+    detail: "choice destination",
+    section: "Choice",
+    type: "property",
+  },
+  {
+    label: "icon",
+    apply: "icon=True",
+    detail: "show icon",
+    section: "Choice",
+    type: "property",
   },
 ];
 
@@ -350,6 +391,7 @@ function eventTargetCompletions(eventTargets: PythonDslEventTarget[]) {
 
 function createDslCompletionSource(
   getEventTargets: () => PythonDslEventTarget[],
+  mode: PythonDslEditorMode,
 ) {
   const chatArgumentCompletions: Completion[] = [
     {
@@ -375,13 +417,27 @@ function createDslCompletionSource(
     const currentLine = context.state.doc.lineAt(context.pos);
     const prefix = currentLine.text.slice(0, context.pos - currentLine.from);
     const routeTargetMatch =
-      /(?:\bgoto\s*\(\s*["']|\btarget\s*=\s*["'])([^"']*)$/.exec(prefix);
+      /(?:\bgoto\s*\(\s*["']|\btarget\s*=\s*["']|\bdestination\s*=\s*["'])([^"']*)$/.exec(prefix);
     if (routeTargetMatch && eventCompletions.length) {
       return {
         from: context.pos - routeTargetMatch[1].length,
         options: eventCompletions,
         validFor: /^[^"']*$/,
       };
+    }
+
+    if (mode === "conversation") {
+      const iconArgumentMatch = /\bicon\s*=\s*([A-Za-z]*)$/.exec(prefix);
+      if (iconArgumentMatch) {
+        return {
+          from: context.pos - iconArgumentMatch[1].length,
+          options: [
+            { label: "True", section: "Choice", type: "constant" },
+            { label: "False", section: "Choice", type: "constant" },
+          ],
+          validFor: /^[A-Za-z]*$/,
+        };
+      }
     }
 
     const chatArgumentMatch = /\bchat\s*\(\s*([A-Za-z_=]*)$/.exec(prefix);
@@ -411,7 +467,10 @@ function createDslCompletionSource(
 
     return {
       from: word.from,
-      options: rootDslCompletions,
+      options:
+        mode === "conversation"
+          ? conversationDslCompletions
+          : rootDslCompletions,
       validFor: /^\w*$/,
     };
   };
@@ -498,6 +557,7 @@ function runHistoryShortcut(
 const chatActionPattern =
   /\bchat\s*\(\s*(?:enabled\s*=\s*)?(True|False|true|false)\s*\)/g;
 const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const choiceActionPattern = /\bchoice\s*\([^)]*\)/g;
 const chatActionDecoration = Decoration.mark({
   attributes: {
     "aria-label": "Ctrl-click to toggle chat action",
@@ -512,8 +572,18 @@ const scriptActionDecoration = Decoration.mark({
   },
   class: "cm-dsl-script-action",
 });
+const choiceActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Conversation choice",
+    role: "button",
+  },
+  class: "cm-dsl-choice-action",
+});
 
-function dslActionDecorations(view: EditorView): DecorationSet {
+function dslActionDecorations(
+  view: EditorView,
+  mode: PythonDslEditorMode,
+): DecorationSet {
   const ranges = [];
 
   for (const visibleRange of view.visibleRanges) {
@@ -525,18 +595,27 @@ function dslActionDecorations(view: EditorView): DecorationSet {
       const trimmed = lineText.trimStart();
 
       if (!trimmed.startsWith("#")) {
-        for (const match of lineText.matchAll(chatActionPattern)) {
-          if (typeof match.index !== "number") continue;
-          const from = line.from + match.index;
-          const to = from + match[0].length;
-          ranges.push(chatActionDecoration.range(from, to));
-        }
+        if (mode === "conversation") {
+          for (const match of lineText.matchAll(choiceActionPattern)) {
+            if (typeof match.index !== "number") continue;
+            const from = line.from + match.index;
+            const to = from + match[0].length;
+            ranges.push(choiceActionDecoration.range(from, to));
+          }
+        } else {
+          for (const match of lineText.matchAll(chatActionPattern)) {
+            if (typeof match.index !== "number") continue;
+            const from = line.from + match.index;
+            const to = from + match[0].length;
+            ranges.push(chatActionDecoration.range(from, to));
+          }
 
-        for (const match of lineText.matchAll(scriptActionPattern)) {
-          if (typeof match.index !== "number") continue;
-          const from = line.from + match.index;
-          const to = from + match[0].length;
-          ranges.push(scriptActionDecoration.range(from, to));
+          for (const match of lineText.matchAll(scriptActionPattern)) {
+            if (typeof match.index !== "number") continue;
+            const from = line.from + match.index;
+            const to = from + match[0].length;
+            ranges.push(scriptActionDecoration.range(from, to));
+          }
         }
       }
 
@@ -548,24 +627,26 @@ function dslActionDecorations(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-const scriptActionPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
+function dslActionPluginForMode(mode: PythonDslEditorMode) {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
 
-    constructor(view: EditorView) {
-      this.decorations = dslActionDecorations(view);
-    }
-
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
-        this.decorations = dslActionDecorations(update.view);
+      constructor(view: EditorView) {
+        this.decorations = dslActionDecorations(view, mode);
       }
-    }
-  },
-  {
-    decorations: (plugin) => plugin.decorations,
-  },
-);
+
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = dslActionDecorations(update.view, mode);
+        }
+      }
+    },
+    {
+      decorations: (plugin) => plugin.decorations,
+    },
+  );
+}
 
 function explicitDslActionTarget(
   event: globalThis.MouseEvent | MouseEvent,
@@ -740,6 +821,7 @@ function contextMenuInsertionPoint(
 export function PythonDslEditor({
   ariaLabel,
   eventTargets = [],
+  mode = "on-entry",
   onChange,
   onOpenScriptAction,
   value,
@@ -748,6 +830,7 @@ export function PythonDslEditor({
   const eventTargetsRef = useRef(eventTargets);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const modeRef = useRef(mode);
   const onOpenScriptActionRef = useRef(onOpenScriptAction);
   const [contextMenu, setContextMenu] = useState<DslContextMenuState | null>(
     null,
@@ -760,6 +843,10 @@ export function PythonDslEditor({
   useEffect(() => {
     onOpenScriptActionRef.current = onOpenScriptAction;
   }, [onOpenScriptAction]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     eventTargetsRef.current = eventTargets;
@@ -793,14 +880,17 @@ export function PythonDslEditor({
       basicSetup,
       pythonLanguage,
       pythonLanguage.data.of({
-        autocomplete: createDslCompletionSource(() => eventTargetsRef.current),
+        autocomplete: createDslCompletionSource(
+          () => eventTargetsRef.current,
+          mode,
+        ),
       }),
       autocompletion({ activateOnTyping: true, closeOnBlur: true }),
       indentUnit.of(indent),
       EditorState.tabSize.of(4),
       syntaxHighlighting(pythonDslHighlightStyle),
       pythonDslTheme,
-      scriptActionPlugin,
+      dslActionPluginForMode(mode),
       EditorView.contentAttributes.of({
         "aria-label": ariaLabel,
         autocapitalize: "off",
@@ -813,6 +903,8 @@ export function PythonDslEditor({
           return runHistoryShortcut(event, view);
         },
         click(event, view) {
+          if (modeRef.current === "conversation") return false;
+
           const clickedChatAction = explicitDslActionTarget(
             event,
             view,
@@ -872,11 +964,14 @@ export function PythonDslEditor({
             view,
             event,
           );
-          const clickedChatAction = explicitDslActionTarget(
-            event,
-            view,
-            "cm-dsl-chat-action",
-          );
+          const clickedChatAction =
+            modeRef.current === "conversation"
+              ? null
+              : explicitDslActionTarget(
+                  event,
+                  view,
+                  "cm-dsl-chat-action",
+                );
           const chatAction =
             position === null || !clickedChatAction
               ? null
@@ -885,6 +980,7 @@ export function PythonDslEditor({
           setContextMenu({
             chatTarget: chatAction ?? undefined,
             insertionPoint,
+            mode: modeRef.current,
             ...contextMenuPosition(event.clientX, event.clientY),
           });
           return true;
@@ -903,7 +999,7 @@ export function PythonDslEditor({
         indentWithTab,
       ]),
     ],
-    [ariaLabel],
+    [ariaLabel, mode],
   );
 
   useEffect(() => {
@@ -974,6 +1070,16 @@ export function PythonDslEditor({
     setContextMenu(null);
   }
 
+  function insertConversationChoice() {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const destination = eventTargetsRef.current[0]?.slug ?? "";
+    const statement = `choice(text="Continue", destination="${destination}", icon=True)`;
+    insertStatementAtCursor(view, statement, contextMenu?.insertionPoint);
+    setContextMenu(null);
+  }
+
   function openContextMenu(event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
@@ -984,11 +1090,14 @@ export function PythonDslEditor({
         view,
         event,
       );
-      const clickedChatAction = explicitDslActionTarget(
-        event,
-        view,
-        "cm-dsl-chat-action",
-      );
+      const clickedChatAction =
+        modeRef.current === "conversation"
+          ? null
+          : explicitDslActionTarget(
+              event,
+              view,
+              "cm-dsl-chat-action",
+            );
       const chatAction =
         position === null || !clickedChatAction
           ? null
@@ -997,6 +1106,7 @@ export function PythonDslEditor({
       setContextMenu({
         chatTarget: chatAction ?? undefined,
         insertionPoint,
+        mode: modeRef.current,
         ...contextMenuPosition(event.clientX, event.clientY),
       });
       return;
@@ -1004,6 +1114,7 @@ export function PythonDslEditor({
 
     setContextMenu({
       insertionPoint: { mode: "append", position: 0 },
+      mode: modeRef.current,
       ...contextMenuPosition(event.clientX, event.clientY),
     });
   }
@@ -1022,35 +1133,48 @@ export function PythonDslEditor({
           role="menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button
-            className="python-dsl-context-action python-dsl-context-script"
-            onClick={insertScriptAction}
-            role="menuitem"
-            type="button"
-          >
-            Script
-          </button>
-          <div className="python-dsl-context-label">
-            Chat
-          </div>
-          <div className="python-dsl-context-options" role="group">
+          {contextMenu.mode === "conversation" ? (
             <button
-              data-chat-state="on"
-              onClick={() => insertChatAction("on")}
+              className="python-dsl-context-action python-dsl-context-choice"
+              onClick={insertConversationChoice}
               role="menuitem"
               type="button"
             >
-              On
+              Choice button
             </button>
-            <button
-              data-chat-state="off"
-              onClick={() => insertChatAction("off")}
-              role="menuitem"
-              type="button"
-            >
-              Off
-            </button>
-          </div>
+          ) : (
+            <>
+              <button
+                className="python-dsl-context-action python-dsl-context-script"
+                onClick={insertScriptAction}
+                role="menuitem"
+                type="button"
+              >
+                Script
+              </button>
+              <div className="python-dsl-context-label">
+                Chat
+              </div>
+              <div className="python-dsl-context-options" role="group">
+                <button
+                  data-chat-state="on"
+                  onClick={() => insertChatAction("on")}
+                  role="menuitem"
+                  type="button"
+                >
+                  On
+                </button>
+                <button
+                  data-chat-state="off"
+                  onClick={() => insertChatAction("off")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Off
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
     </div>

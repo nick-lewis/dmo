@@ -17,6 +17,7 @@ import {
   experienceRunPath,
 } from "../api";
 import { publicAsset } from "../assets";
+import { defaultChoiceIconPath } from "../tutorAssets";
 import {
   HelpIcon,
   MicIcon,
@@ -60,6 +61,7 @@ import type {
   ApiUser,
   ClassificationModelId,
   EventActionStep,
+  EventConversationChoice,
   Experience,
   ExperienceEvent,
   ExperienceForm,
@@ -69,7 +71,7 @@ import type {
   SessionPayload,
   TutorSettings,
 } from "../types";
-import { experienceAutosaveDelayMs } from "./eventEditorUtils";
+import { experienceAutosaveDelayMs, localMessageId } from "./eventEditorUtils";
 import type { PythonDslScriptAction } from "./PythonDslEditor";
 import {
   parsePythonDslChatActions,
@@ -117,6 +119,11 @@ type PendingEventAutosave = {
 };
 
 type PendingOnEntryAutosave = {
+  eventId: string;
+  source: string;
+};
+
+type PendingConversationAutosave = {
   eventId: string;
   source: string;
 };
@@ -452,6 +459,174 @@ function displayTextFromSlots(slots: string[], breaks: number[] = []) {
   });
 
   return lines.join("\n").replace(/\n+$/, "");
+}
+
+function sortedConversationChoices(choices: EventConversationChoice[]) {
+  return [...choices].sort(
+    (left, right) => left.sortOrder - right.sortOrder,
+  );
+}
+
+function dslStringLiteral(value: string) {
+  return JSON.stringify(value);
+}
+
+function conversationChoiceDslSourceFromChoices(
+  choices: EventConversationChoice[],
+) {
+  return sortedConversationChoices(choices)
+    .map(
+      (choice) =>
+        `choice(text=${dslStringLiteral(choice.label || "Continue")}, destination=${dslStringLiteral(
+          choice.triggersEvent || "",
+        )}, icon=${choice.iconPath ? "True" : "False"})`,
+    )
+    .join("\n");
+}
+
+function splitDslArguments(args: string) {
+  const values: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let isEscaped = false;
+
+  for (const char of args) {
+    if (isEscaped) {
+      current += char;
+      isEscaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      current += char;
+      isEscaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      current += char;
+      quote = char;
+      continue;
+    }
+
+    if (char === ",") {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) values.push(current.trim());
+  return values;
+}
+
+function parseDslValue(value: string) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    try {
+      return JSON.parse(
+        trimmed.startsWith("'")
+          ? `"${trimmed.slice(1, -1).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+          : trimmed,
+      );
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+
+  return trimmed;
+}
+
+function parseDslBoolean(value: string | undefined, fallback: boolean) {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "on", "1"].includes(normalized)) return true;
+  if (["false", "no", "off", "0"].includes(normalized)) return false;
+  return fallback;
+}
+
+function conversationChoicesFromDslSource(
+  source: string,
+  existingChoices: EventConversationChoice[],
+) {
+  const existingSorted = sortedConversationChoices(existingChoices);
+  const choices: EventConversationChoice[] = [];
+
+  source.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+
+    const match = trimmed.match(/^choice\s*\((.*)\)\s*$/);
+    const existingChoice = existingSorted[choices.length];
+    if (!match) {
+      if (trimmed.includes("choice") && existingChoice) {
+        choices.push({ ...existingChoice, sortOrder: choices.length });
+      }
+      return;
+    }
+
+    const namedArgs = new Map<string, string>();
+    const positionalArgs: string[] = [];
+    splitDslArguments(match[1] ?? "").forEach((arg) => {
+      const equalsIndex = arg.indexOf("=");
+      if (equalsIndex > 0) {
+        namedArgs.set(
+          arg.slice(0, equalsIndex).trim(),
+          arg.slice(equalsIndex + 1).trim(),
+        );
+        return;
+      }
+      positionalArgs.push(arg);
+    });
+
+    const label = String(
+      parseDslValue(
+        namedArgs.get("text") ??
+          namedArgs.get("label") ??
+          positionalArgs[0] ??
+          existingChoice?.label ??
+          "Continue",
+      ),
+    ).trim();
+    const destination = String(
+      parseDslValue(
+        namedArgs.get("destination") ??
+          namedArgs.get("target") ??
+          namedArgs.get("triggersEvent") ??
+          positionalArgs[1] ??
+          existingChoice?.triggersEvent ??
+          "",
+      ),
+    ).trim();
+    const hasIcon = parseDslBoolean(
+      namedArgs.get("icon"),
+      Boolean(existingChoice?.iconPath),
+    );
+
+    choices.push({
+      enabled: existingChoice?.enabled ?? true,
+      iconPath: hasIcon
+        ? existingChoice?.iconPath || defaultChoiceIconPath
+        : "",
+      id: existingChoice?.id ?? localMessageId("conversation-choice"),
+      label: label || "Continue",
+      sortOrder: choices.length,
+      triggersEvent: destination,
+    });
+  });
+
+  return choices;
 }
 
 function markerEditKey(marker: ScriptMarkerInstance) {
@@ -1913,11 +2088,17 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [savingDisplayTextId, setSavingDisplayTextId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [onEntryDrafts, setOnEntryDrafts] = useState<Record<string, string>>({});
+  const [conversationDrafts, setConversationDrafts] = useState<
+    Record<string, string>
+  >({});
   const eventAutosaveTimerRef = useRef<number | null>(null);
   const onEntryAutosaveTimerRef = useRef<number | null>(null);
+  const conversationAutosaveTimerRef = useRef<number | null>(null);
   const scriptTextAutosaveTimerRef = useRef<number | null>(null);
   const pendingEventAutosaveRef = useRef<PendingEventAutosave | null>(null);
   const pendingOnEntryAutosaveRef = useRef<PendingOnEntryAutosave | null>(null);
+  const pendingConversationAutosaveRef =
+    useRef<PendingConversationAutosave | null>(null);
   const pendingScriptTextAutosaveRef =
     useRef<PendingScriptTextAutosave | null>(null);
   const pendingScriptDisplayDraftsRef = useRef<
@@ -2129,6 +2310,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       isCancelled = true;
       clearEventAutosaveTimer();
       clearOnEntryAutosaveTimer();
+      clearConversationAutosaveTimer();
       clearScriptTextAutosaveTimer();
       clearOverviewAutosaveTimer();
       clearTutorAutosaveTimer();
@@ -2497,6 +2679,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     onEntryAutosaveTimerRef.current = null;
   }
 
+  function clearConversationAutosaveTimer() {
+    if (!conversationAutosaveTimerRef.current) return;
+
+    window.clearTimeout(conversationAutosaveTimerRef.current);
+    conversationAutosaveTimerRef.current = null;
+  }
+
   function clearScriptTextAutosaveTimer() {
     if (!scriptTextAutosaveTimerRef.current) return;
 
@@ -2684,6 +2873,54 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
+  async function flushConversationAutosave() {
+    const pending = pendingConversationAutosaveRef.current;
+    if (!experience || !pending) return true;
+
+    const targetEvent = experience.events.find(
+      (event) => event.id === pending.eventId,
+    );
+    if (!targetEvent) {
+      pendingConversationAutosaveRef.current = null;
+      return true;
+    }
+
+    clearConversationAutosaveTimer();
+    pendingConversationAutosaveRef.current = null;
+
+    const conversationChoices = conversationChoicesFromDslSource(
+      pending.source,
+      targetEvent.conversationChoices ?? [],
+    );
+
+    try {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${encodeURIComponent(
+          experience.id,
+        )}/events/${encodeURIComponent(pending.eventId)}/`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ conversationChoices }),
+        },
+      );
+
+      setExperience((current) =>
+        current && current.id === experience.id
+          ? replaceExperienceEvent(current, payload.event)
+          : current,
+      );
+      return true;
+    } catch (saveError) {
+      pendingConversationAutosaveRef.current = pending;
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save In Conversation.",
+      );
+      return false;
+    }
+  }
+
   async function flushScriptTextAutosave() {
     const pending = pendingScriptTextAutosaveRef.current;
     if (!experience || !pending) return true;
@@ -2800,6 +3037,39 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     clearOnEntryAutosaveTimer();
     onEntryAutosaveTimerRef.current = window.setTimeout(() => {
       void flushOnEntryAutosave();
+    }, experienceAutosaveDelayMs);
+  }
+
+  function updateSelectedEventConversationDraft(value: string) {
+    if (!experience || !selectedEvent) return;
+
+    const eventId = selectedEvent.id;
+    const conversationChoices = conversationChoicesFromDslSource(
+      value,
+      selectedEvent.conversationChoices ?? [],
+    );
+
+    setConversationDrafts((current) => ({
+      ...current,
+      [eventId]: value,
+    }));
+    pendingConversationAutosaveRef.current = { eventId, source: value };
+
+    setExperience((current) => {
+      if (!current || current.id !== experience.id) return current;
+
+      const currentEvent = current.events.find((event) => event.id === eventId);
+      if (!currentEvent) return current;
+
+      return replaceExperienceEvent(current, {
+        ...currentEvent,
+        conversationChoices,
+      });
+    });
+
+    clearConversationAutosaveTimer();
+    conversationAutosaveTimerRef.current = window.setTimeout(() => {
+      void flushConversationAutosave();
     }, experienceAutosaveDelayMs);
   }
 
@@ -3094,12 +3364,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const didSaveTutor = await flushTutorAutosave();
     const didSaveEvent = await flushEventAutosave();
     const didSaveOnEntry = await flushOnEntryAutosave();
+    const didSaveConversation = await flushConversationAutosave();
     const didSaveScriptText = await flushScriptTextAutosave();
     return (
       didSaveOverview &&
       didSaveTutor &&
       didSaveEvent &&
       didSaveOnEntry &&
+      didSaveConversation &&
       didSaveScriptText
     );
   }
@@ -3240,6 +3512,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (pendingOnEntryAutosaveRef.current?.eventId === eventId) {
       pendingOnEntryAutosaveRef.current = null;
     }
+    if (pendingConversationAutosaveRef.current?.eventId === eventId) {
+      pendingConversationAutosaveRef.current = null;
+    }
     if (pendingScriptTextAutosaveRef.current?.eventId === eventId) {
       pendingScriptTextAutosaveRef.current = null;
     }
@@ -3259,6 +3534,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           : current,
       );
       setOnEntryDrafts((current) => {
+        const next = { ...current };
+        delete next[eventId];
+        return next;
+      });
+      setConversationDrafts((current) => {
         const next = { ...current };
         delete next[eventId];
         return next;
@@ -3328,6 +3608,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       (selectedEvent.onEntryDslSource ||
         pythonDslSourceFromEventSteps(selectedEvent.steps)))
     : "";
+  const selectedEventInConversationSource = selectedEvent
+    ? (conversationDrafts[selectedEvent.id] ??
+      conversationChoiceDslSourceFromChoices(
+        selectedEvent.conversationChoices ?? [],
+      ))
+    : "";
 
   const eventInspector = selectedEvent ? (
     <div className="next-event-inspector">
@@ -3395,6 +3681,30 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             onChange={updateSelectedEventOnEntryDraft}
             onOpenScriptAction={openSelectedEventScriptAction}
             value={selectedEventOnEntrySource}
+          />
+        </Suspense>
+      </section>
+      <section className="next-event-script-section">
+        <div className="next-event-script-heading">
+          <h3>In Conversation</h3>
+        </div>
+        <Suspense
+          fallback={
+            <div
+              aria-label="Loading code editor"
+              className="python-dsl-loading"
+              role="status"
+            />
+          }
+        >
+          <PythonDslEditor
+            ariaLabel="In Conversation script"
+            eventTargets={(experience?.events ?? []).filter(
+              (event) => event.id !== selectedEvent.id,
+            )}
+            mode="conversation"
+            onChange={updateSelectedEventConversationDraft}
+            value={selectedEventInConversationSource}
           />
         </Suspense>
       </section>

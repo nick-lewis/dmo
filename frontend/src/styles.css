@@ -2251,7 +2251,8 @@ button {
 }
 
 .cm-dsl-chat-action,
-.cm-dsl-script-action {
+.cm-dsl-script-action,
+.cm-dsl-choice-action {
   display: inline-block;
   min-height: 1.36em;
   margin: 0 1px;
@@ -2278,6 +2279,18 @@ button {
   color: color-mix(in srgb, var(--page-ink) 84%, var(--accent-2));
   background: color-mix(in srgb, var(--accent-soft) 56%, transparent);
   cursor: pointer;
+}
+
+.cm-dsl-choice-action {
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+}
+
+.cm-dsl-choice-action:hover,
+.cm-focused .cm-dsl-choice-action:hover {
+  border-color: color-mix(in srgb, var(--accent-2) 30%, var(--panel-border));
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
+  cursor: text;
 }
 
 .next-flow-branches {
