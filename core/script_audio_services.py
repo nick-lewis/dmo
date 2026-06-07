@@ -43,6 +43,7 @@ SCRIPT_AUDIO_MESSAGE_SOURCES = {
     "classifier-group-action",
 }
 SCRIPT_WORD_PATTERN = re.compile(r"\S+")
+SCRIPT_AUDIO_VOICE_INSTRUCTIONS_LIMIT = 4000
 
 
 def script_audio_model_for_tutor(tutor_settings):
@@ -108,6 +109,27 @@ def normalize_script_audio_display_cue_offsets(value, cue_count=0):
             offsets.extend([0.0 for _ in range(cue_count - len(offsets))])
         return offsets[:cue_count]
     return offsets
+
+
+def normalize_script_audio_voice_instructions(value):
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def load_script_audio_voice_instructions_override(script):
+    payload = load_script_audio_display_payload(script)
+    return normalize_script_audio_voice_instructions(
+        payload.get("voiceInstructionsOverride")
+    )
+
+
+def script_audio_voice_instructions_for_script(script, tutor_settings):
+    default_voice_instructions = normalize_script_audio_voice_instructions(
+        tutor_settings.voice_instructions
+    )
+    voice_instructions_override = load_script_audio_voice_instructions_override(script)
+    return voice_instructions_override or default_voice_instructions
 
 
 def script_audio_display_text_from_slots(slots, breaks=None):
@@ -226,6 +248,7 @@ def save_script_audio_display_slots(
     base_slots=None,
     display_breaks=None,
     display_cue_offsets=None,
+    voice_instructions_override=None,
 ):
     display_key = compute_script_audio_display_key(script)
     display_path = script_audio_display_path(display_key)
@@ -248,13 +271,21 @@ def save_script_audio_display_slots(
     has_nonzero_cue_offset = any(
         abs(offset) >= 0.001 for offset in normalized_cue_offsets
     )
+    normalized_voice_instructions_override = (
+        load_script_audio_voice_instructions_override(script)
+        if voice_instructions_override is None
+        else normalize_script_audio_voice_instructions(voice_instructions_override)
+    )
+    has_voice_instructions_override = bool(normalized_voice_instructions_override)
 
     if (
         not normalized_slots
+        and not has_voice_instructions_override
         or (
             normalized_slots == normalized_base_slots
             and not normalized_breaks
             and not has_nonzero_cue_offset
+            and not has_voice_instructions_override
         )
     ):
         try:
@@ -263,21 +294,25 @@ def save_script_audio_display_slots(
             pass
         return [], []
 
+    if not normalized_slots and has_voice_instructions_override:
+        normalized_slots = normalized_base_slots
+
+    payload = {
+        "displayBreaks": normalized_breaks,
+        "displayCueOffsets": normalized_cue_offsets,
+        "displaySlots": normalized_slots,
+        "displayText": script_audio_display_text_from_slots(
+            normalized_slots,
+            normalized_breaks,
+        ),
+        "version": "script-audio-display-slots-v1",
+    }
+    if normalized_voice_instructions_override:
+        payload["voiceInstructionsOverride"] = normalized_voice_instructions_override
+
     display_path.parent.mkdir(parents=True, exist_ok=True)
     display_path.write_text(
-        json.dumps(
-            {
-                "displayBreaks": normalized_breaks,
-                "displayCueOffsets": normalized_cue_offsets,
-                "displaySlots": normalized_slots,
-                "displayText": script_audio_display_text_from_slots(
-                    normalized_slots,
-                    normalized_breaks,
-                ),
-                "version": "script-audio-display-slots-v1",
-            },
-            indent=2,
-        ),
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
     return normalized_slots, normalized_breaks
@@ -335,8 +370,12 @@ def script_audio_display_payload(item):
         "displayText": item.get("displayText", ""),
         "displayWordCount": item.get("displayWordCount", 0),
         "hasDisplayTranscript": bool(item.get("hasDisplayTranscript")),
+        "defaultVoiceInstructions": item.get("defaultVoiceInstructions", ""),
+        "hasVoiceInstructionsOverride": bool(item.get("hasVoiceInstructionsOverride")),
         "id": item.get("id", ""),
         "script": item.get("script", ""),
+        "voiceInstructions": item.get("voiceInstructions", ""),
+        "voiceInstructionsOverride": item.get("voiceInstructionsOverride", ""),
     }
 
 def script_is_static_for_audio(text):
@@ -349,13 +388,20 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     if not script:
         return None
 
+    default_voice_instructions = normalize_script_audio_voice_instructions(
+        tutor_settings.voice_instructions
+    )
+    voice_instructions_override = load_script_audio_voice_instructions_override(script)
+    effective_voice_instructions = (
+        voice_instructions_override or default_voice_instructions
+    )
     cache_key = compute_script_audio_cache_key(
         assistant_name=tutor_settings.assistant_name,
         audio_model=script_audio_model_for_tutor(tutor_settings),
         realtime_model=tutor_settings.realtime_model,
         script=script,
         voice=tutor_settings.voice,
-        voice_instructions=tutor_settings.voice_instructions,
+        voice_instructions=effective_voice_instructions,
     )
     audio_path = script_audio_audio_path(cache_key)
     words_path = script_audio_words_path(
@@ -415,6 +461,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "characterCount": len(script),
         "cached": cached,
         "durationSeconds": audio_duration_seconds(audio_path) if cached else None,
+        "defaultVoiceInstructions": default_voice_instructions,
         "displayBaseSlots": display_base_slots,
         "displayBaseText": display_base_text,
         "displayBreaks": display_breaks,
@@ -442,12 +489,15 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "sourceCount": 1,
         "sources": [source],
         "hasDisplayTranscript": has_display_transcript,
+        "hasVoiceInstructionsOverride": bool(voice_instructions_override),
         "timedMarkerCount": timed_marker_count,
         "timingPreview": timing_preview,
         "timingWords": timing_words,
         "timingWordCount": timing_word_count,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "voice": tutor_settings.voice,
+        "voiceInstructions": effective_voice_instructions,
+        "voiceInstructionsOverride": voice_instructions_override,
         "wordCount": script_word_count(script),
         "wordsCached": words_cached,
     }
@@ -711,7 +761,7 @@ def generate_script_audio_item(tutor_settings, item, force=False, safety_identif
         safety_identifier=safety_identifier,
         script=item["script"],
         voice=tutor_settings.voice,
-        voice_instructions=tutor_settings.voice_instructions,
+        voice_instructions=item.get("voiceInstructions", tutor_settings.voice_instructions),
     )
     get_or_create_script_audio_words(
         api_key=settings.OPENAI_API_KEY,
@@ -791,22 +841,60 @@ def script_audio_display_transcript_payload(experience, script_id, data=None):
     if data is None:
         return script_audio_display_payload(item), "", 200
 
+    tutor_settings = ensure_tutor_settings(experience)
+    base_script = item.get("script", "")
     base_slots = normalize_script_audio_display_slots(item.get("displayBaseSlots"))
     if not base_slots:
         base_slots = script_audio_display_slots_from_text(item.get("displayBaseText", ""))
+    updates_display = any(
+        key in data
+        for key in (
+            "displayBreaks",
+            "displayCueOffsets",
+            "displaySlots",
+            "displayText",
+        )
+    )
     if "displaySlots" in data:
         display_slots = normalize_script_audio_display_slots(data.get("displaySlots"))
-    else:
+    elif "displayText" in data:
         display_slots = script_audio_display_slots_from_text(data.get("displayText", ""))
+    elif updates_display:
+        display_slots = []
+    else:
+        display_slots = (
+            normalize_script_audio_display_slots(item.get("displaySlots"))
+            or base_slots
+        )
     display_breaks = normalize_script_audio_display_breaks(
-        data.get("displayBreaks"),
+        data.get("displayBreaks")
+        if "displayBreaks" in data
+        else item.get("displayBreaks"),
         len(base_slots),
     )
     display_cue_offsets = (
         data.get("displayCueOffsets")
         if isinstance(data, dict) and "displayCueOffsets" in data
+        else item.get("displayCueOffsets")
+        if not updates_display
         else None
     )
+    voice_instructions_override = None
+    if isinstance(data, dict) and "voiceInstructionsOverride" in data:
+        voice_instructions_override = normalize_script_audio_voice_instructions(
+            data.get("voiceInstructionsOverride")
+        )
+        if len(voice_instructions_override) > SCRIPT_AUDIO_VOICE_INSTRUCTIONS_LIMIT:
+            detail = (
+                "Voice instructions override must be "
+                f"{SCRIPT_AUDIO_VOICE_INSTRUCTIONS_LIMIT} characters or fewer."
+            )
+            return {"detail": detail}, detail, 400
+        if (
+            voice_instructions_override
+            == normalize_script_audio_voice_instructions(tutor_settings.voice_instructions)
+        ):
+            voice_instructions_override = ""
     expected_slot_count = len(base_slots)
     display_slot_count = len(display_slots)
     if display_slots and expected_slot_count and display_slot_count != expected_slot_count:
@@ -825,11 +913,12 @@ def script_audio_display_transcript_payload(experience, script_id, data=None):
         )
 
     save_script_audio_display_slots(
-        item.get("script", ""),
+        base_script,
         display_slots,
         base_slots,
         display_breaks,
         display_cue_offsets,
+        voice_instructions_override,
     )
     refreshed_item = next(
         (
@@ -847,13 +936,17 @@ def cached_script_audio_payload(session, script, script_cues=None):
         return {}
 
     tutor_settings = ensure_tutor_settings(session.experience)
+    voice_instructions = script_audio_voice_instructions_for_script(
+        script,
+        tutor_settings,
+    )
     cache_key = compute_script_audio_cache_key(
         assistant_name=tutor_settings.assistant_name,
         audio_model=script_audio_model_for_tutor(tutor_settings),
         realtime_model=tutor_settings.realtime_model,
         script=script,
         voice=tutor_settings.voice,
-        voice_instructions=tutor_settings.voice_instructions,
+        voice_instructions=voice_instructions,
     )
     audio_path = script_audio_audio_path(cache_key)
     metadata_path = script_audio_metadata_path(cache_key)
@@ -888,6 +981,7 @@ def cached_script_audio_payload(session, script, script_cues=None):
         "realtimeModel": tutor_settings.realtime_model,
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "voice": tutor_settings.voice,
+        "voiceInstructions": voice_instructions,
     }
     if script_words:
         payload["scriptWords"] = script_words
@@ -926,6 +1020,10 @@ def generate_message_script_audio_payload(
     )
 
     tutor_settings = ensure_tutor_settings(session.experience)
+    voice_instructions = script_audio_voice_instructions_for_script(
+        script,
+        tutor_settings,
+    )
     default_model = str(
         data.get("model") or tutor_settings.realtime_model
     ).strip()
@@ -954,7 +1052,7 @@ def generate_message_script_audio_payload(
             safety_identifier=safety_identifier,
             script=script,
             voice=voice,
-            voice_instructions=tutor_settings.voice_instructions,
+            voice_instructions=voice_instructions,
         )
     except AudioGenerationError as error:
         return None, error.message, error.status_code
@@ -994,6 +1092,7 @@ def generate_message_script_audio_payload(
                 "scriptWords": script_words,
                 "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
                 "voice": voice,
+                "voiceInstructions": voice_instructions,
             }
         )
         next_metadata["scriptAudio"] = script_audio
@@ -1019,6 +1118,7 @@ def generate_message_script_audio_payload(
         "timingModel": settings.DLU_SCRIPT_AUDIO_ALIGNMENT_MODEL,
         "timingWarning": timing_warning,
         "voice": voice,
+        "voiceInstructions": voice_instructions,
     }, "", 200
 
 

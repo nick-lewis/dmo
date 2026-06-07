@@ -123,6 +123,7 @@ export function useEditorScriptAudio({
           item.id === scriptId
             ? {
                 ...item,
+                defaultVoiceInstructions: payload.defaultVoiceInstructions,
                 displayBaseSlots: payload.displayBaseSlots,
                 displayBaseText: payload.displayBaseText,
                 displayExpectedWordCount: payload.displayExpectedWordCount,
@@ -133,6 +134,9 @@ export function useEditorScriptAudio({
                 displayText: payload.displayText,
                 displayWordCount: payload.displayWordCount,
                 hasDisplayTranscript: payload.hasDisplayTranscript,
+                hasVoiceInstructionsOverride: payload.hasVoiceInstructionsOverride,
+                voiceInstructions: payload.voiceInstructions,
+                voiceInstructionsOverride: payload.voiceInstructionsOverride,
               }
             : item,
         ),
@@ -143,6 +147,62 @@ export function useEditorScriptAudio({
         saveError instanceof Error
           ? saveError.message
           : "Could not save display transcript.";
+      setScriptAudioError(message);
+      throw saveError;
+    }
+  }
+
+  async function saveScriptAudioVoiceInstructionsOverride(
+    scriptId: string,
+    voiceInstructionsOverride: string,
+  ) {
+    if (!experience) {
+      throw new Error("Experience is not loaded.");
+    }
+
+    const didSave = await flushEditorAutosave();
+    if (!didSave) {
+      throw new Error("Could not save the current editor draft.");
+    }
+
+    setScriptAudioError("");
+    try {
+      const payload = await apiFetch<ScriptAudioDisplayPayload>(
+        `/api/experiences/${experience.id}/script-audio/${scriptId}/display/`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            voiceInstructionsOverride,
+          }),
+        },
+      );
+      setScriptAudioItems((current) =>
+        current.map((item) =>
+          item.id === scriptId
+            ? {
+                ...item,
+                audioUrl: "",
+                cached: false,
+                defaultVoiceInstructions: payload.defaultVoiceInstructions,
+                durationSeconds: null,
+                hasVoiceInstructionsOverride: payload.hasVoiceInstructionsOverride,
+                timingPreview: [],
+                timingWords: [],
+                timingWordCount: 0,
+                voiceInstructions: payload.voiceInstructions,
+                voiceInstructionsOverride: payload.voiceInstructionsOverride,
+                wordsCached: false,
+              }
+            : item,
+        ),
+      );
+      void loadScriptAudioItems(experience.id, false);
+      return payload;
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save script voice instructions.";
       setScriptAudioError(message);
       throw saveError;
     }
@@ -218,6 +278,7 @@ export function useEditorScriptAudio({
     playScriptAudioPreview,
     playingScriptAudioId,
     saveScriptAudioDisplayTranscript,
+    saveScriptAudioVoiceInstructionsOverride,
     scriptAudioError,
     scriptAudioItems,
     scriptAudioPlaybackRate,

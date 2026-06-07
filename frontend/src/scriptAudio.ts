@@ -201,6 +201,8 @@ export function cachedScriptAudioFromMessage(
       typeof audio.timingWarning === "string" ? audio.timingWarning : "",
     ttsModel: typeof audio.ttsModel === "string" ? audio.ttsModel : "",
     voice: voice as RealtimeVoiceId,
+    voiceInstructions:
+      typeof audio.voiceInstructions === "string" ? audio.voiceInstructions : "",
   };
 }
 

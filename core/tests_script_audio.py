@@ -619,6 +619,154 @@ class ScriptAudioCachePayloadTests(TestCase):
         self.assertEqual(items[0]["displaySlotCount"], 4)
         self.assertEqual(items[0]["displayWordCount"], 4)
 
+    def test_script_audio_inventory_uses_voice_instructions_override(self):
+        script = "Try that again."
+        self.experience.tutor_settings.voice_instructions = "Warm default."
+        self.experience.tutor_settings.save(update_fields=["voice_instructions"])
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                display_path = script_audio_display_path(
+                    compute_script_audio_display_key(script)
+                )
+                display_path.parent.mkdir(parents=True, exist_ok=True)
+                display_path.write_text(
+                    json.dumps({"voiceInstructionsOverride": "More playful."}),
+                    encoding="utf-8",
+                )
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+
+                items = collect_experience_script_audio_items(self.experience)
+
+        self.assertEqual(items[0]["defaultVoiceInstructions"], "Warm default.")
+        self.assertEqual(items[0]["voiceInstructionsOverride"], "More playful.")
+        self.assertEqual(items[0]["voiceInstructions"], "More playful.")
+        self.assertTrue(items[0]["hasVoiceInstructionsOverride"])
+
+    def test_voice_instructions_override_matching_default_is_not_saved(self):
+        script = "Try that again."
+        self.experience.tutor_settings.voice_instructions = "Warm default."
+        self.experience.tutor_settings.save(update_fields=["voice_instructions"])
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+                self.client.force_login(self.user)
+                item = collect_experience_script_audio_items(self.experience)[0]
+
+                response = self.client.put(
+                    f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
+                    data=json.dumps(
+                        {"voiceInstructionsOverride": "Warm default."}
+                    ),
+                    content_type="application/json",
+                )
+                items = collect_experience_script_audio_items(self.experience)
+                display_path = script_audio_display_path(
+                    compute_script_audio_display_key(script)
+                )
+                display_payload_exists = display_path.exists()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(display_payload_exists)
+        self.assertEqual(items[0]["voiceInstructionsOverride"], "")
+        self.assertEqual(items[0]["voiceInstructions"], "Warm default.")
+        self.assertFalse(items[0]["hasVoiceInstructionsOverride"])
+
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_generation_uses_voice_instructions_override(self):
+        script = "Try that again."
+        self.experience.tutor_settings.voice_instructions = "Warm default."
+        self.experience.tutor_settings.save(update_fields=["voice_instructions"])
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                display_path = script_audio_display_path(
+                    compute_script_audio_display_key(script)
+                )
+                display_path.parent.mkdir(parents=True, exist_ok=True)
+                display_path.write_text(
+                    json.dumps({"voiceInstructionsOverride": "More playful."}),
+                    encoding="utf-8",
+                )
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+                item = collect_experience_script_audio_items(self.experience)[0]
+                audio_path = script_audio_audio_path(item["cacheKey"])
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+
+                def create_audio(*args, **kwargs):
+                    with wave.open(str(audio_path), "wb") as audio_file:
+                        audio_file.setnchannels(1)
+                        audio_file.setsampwidth(2)
+                        audio_file.setframerate(24000)
+                        audio_file.writeframes(b"\x00\x00" * 2400)
+                    return SimpleNamespace(
+                        audio_path=audio_path,
+                        cache_key=item["cacheKey"],
+                        cache_hit=False,
+                    )
+
+                with (
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio",
+                        side_effect=create_audio,
+                    ) as create_script_audio,
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio_words",
+                        return_value=[
+                            {"word": "Try", "start": 0.1, "end": 0.2},
+                            {"word": "that", "start": 0.2, "end": 0.3},
+                            {"word": "again.", "start": 0.3, "end": 0.4},
+                        ],
+                    ),
+                ):
+                    payload, error, status_code = generate_experience_script_audio_payload(
+                        self.experience,
+                        {"force": False, "scriptId": item["id"]},
+                        "test-user",
+                    )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(error, "")
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(
+            create_script_audio.call_args.kwargs["voice_instructions"],
+            "More playful.",
+        )
+
     def test_cached_payload_includes_display_transcript_override(self):
         script = "My name is D-lou."
         display_text = "My name is dLU."

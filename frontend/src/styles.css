@@ -1723,6 +1723,102 @@ button {
   outline: 0;
 }
 
+.next-audio-script-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.next-script-voice-panel {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.next-script-voice-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
+  font-size: 0.58rem;
+  font-weight: 880;
+  text-transform: uppercase;
+}
+
+.next-script-voice-panel-heading small {
+  color: color-mix(in srgb, var(--accent-2) 76%, var(--muted-ink));
+  font-size: inherit;
+  font-weight: 880;
+}
+
+.next-script-voice-textarea {
+  width: 100%;
+  min-height: 52px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  border-radius: 7px;
+  outline: 0;
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--panel-bg-strong) 42%, transparent);
+  font-family: var(--ui-font);
+  font-size: 0.78rem;
+  font-weight: 520;
+  line-height: 1.42;
+  resize: none;
+}
+
+.next-script-voice-textarea:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 26%, var(--panel-soft-border));
+}
+
+.next-script-textarea-shell {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+}
+
+.next-script-voice-settings-button {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 7px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 13%, var(--panel-soft-border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 74%, var(--page-bg));
+}
+
+.next-script-voice-settings-button:hover:not(:disabled),
+.next-script-voice-settings-button:focus-visible,
+.next-script-voice-settings-button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent-2) 28%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent-soft) 38%, var(--panel-bg-strong));
+  outline: 0;
+}
+
+.next-script-voice-settings-button.has-custom {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--accent) 76%, var(--page-ink));
+}
+
+.next-script-voice-settings-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .next-script-textarea {
   display: block;
   width: 100%;

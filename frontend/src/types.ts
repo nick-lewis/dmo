@@ -588,6 +588,7 @@ export type MessageAudioPayload = {
   timingWarning?: string;
   ttsModel?: string;
   voice: RealtimeVoiceId;
+  voiceInstructions?: string;
 };
 
 export type ScriptAudioItem = {
@@ -600,6 +601,7 @@ export type ScriptAudioItem = {
   characterCount?: number;
   displayBaseSlots?: string[];
   displayBaseText?: string;
+  defaultVoiceInstructions?: string;
   displayBreaks?: number[];
   displayCueOffsets?: number[];
   durationSeconds: number | null;
@@ -610,6 +612,7 @@ export type ScriptAudioItem = {
   displayWordCount?: number;
   generationReason?: string;
   hasDisplayTranscript?: boolean;
+  hasVoiceInstructionsOverride?: boolean;
   id: string;
   markerCount?: number;
   preview: string;
@@ -625,6 +628,8 @@ export type ScriptAudioItem = {
   timingModel?: string;
   ttsModel?: string;
   voice?: RealtimeVoiceId;
+  voiceInstructions?: string;
+  voiceInstructionsOverride?: string;
   wordCount?: number;
   wordsCached: boolean;
 };
@@ -637,6 +642,7 @@ export type ScriptAudioPayload = {
 };
 
 export type ScriptAudioDisplayPayload = {
+  defaultVoiceInstructions: string;
   displayBaseSlots: string[];
   displayBaseText: string;
   displayBreaks: number[];
@@ -647,8 +653,11 @@ export type ScriptAudioDisplayPayload = {
   displayText: string;
   displayWordCount: number;
   hasDisplayTranscript: boolean;
+  hasVoiceInstructionsOverride: boolean;
   id: string;
   script: string;
+  voiceInstructions: string;
+  voiceInstructionsOverride: string;
 };
 
 export type ScriptCue = {

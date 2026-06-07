@@ -2419,6 +2419,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     stepId: "",
     text: "",
   });
+  const [isAudioVoiceSettingsOpen, setIsAudioVoiceSettingsOpen] =
+    useState(false);
+  const [audioVoiceInstructionsDraft, setAudioVoiceInstructionsDraft] =
+    useState("");
+  const [savingAudioVoiceSettingsId, setSavingAudioVoiceSettingsId] =
+    useState("");
   const eventAutosaveTimerRef = useRef<number | null>(null);
   const onEntryAutosaveTimerRef = useRef<number | null>(null);
   const conversationAutosaveTimerRef = useRef<number | null>(null);
@@ -2440,6 +2446,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
   const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const audioVoiceInstructionsRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingAudioScriptSelectionRef = useRef<AudioScriptSelection | null>(
     null,
   );
@@ -2471,6 +2478,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     playScriptAudioPreview,
     playingScriptAudioId,
     saveScriptAudioDisplayTranscript,
+    saveScriptAudioVoiceInstructionsOverride,
     scriptAudioError,
     scriptAudioItems,
     scriptAudioStatus,
@@ -2519,6 +2527,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const activeScriptAudioItem = scriptAudioItemForScriptText(
     scriptAudioItems,
     activeAudioScriptText,
+  );
+  const activeAudioDefaultVoiceInstructions =
+    activeScriptAudioItem?.defaultVoiceInstructions ?? tutorForm.voiceInstructions;
+  const activeAudioVoiceInstructionsOverride =
+    activeScriptAudioItem?.voiceInstructionsOverride ?? "";
+  const activeAudioVoiceInstructions =
+    activeAudioVoiceInstructionsOverride || activeAudioDefaultVoiceInstructions;
+  const activeAudioVoiceSettingsStepId = activeScriptStep?.id ?? "";
+  const activeAudioHasCustomVoiceInstructions = Boolean(
+    activeScriptAudioItem?.hasVoiceInstructionsOverride,
   );
   const activeScriptAudioNeedsGeneration = activeScriptAudioItem
     ? scriptAudioItemNeedsGeneration(activeScriptAudioItem)
@@ -2657,6 +2675,23 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeAudioScriptText,
     activeAudioScriptVisualText,
   ]);
+
+  useEffect(() => {
+    setAudioVoiceInstructionsDraft(activeAudioVoiceInstructions);
+  }, [
+    activeAudioVoiceInstructions,
+    activeAudioVoiceSettingsStepId,
+    activeScriptAudioItem?.id,
+  ]);
+
+  useEffect(() => {
+    if (!isAudioVoiceSettingsOpen) return;
+
+    resizeTextareaToContent(audioVoiceInstructionsRef.current, {
+      maxHeight: 220,
+      minHeight: 52,
+    });
+  }, [audioVoiceInstructionsDraft, isAudioVoiceSettingsOpen]);
 
   useLayoutEffect(() => {
     const pendingSelection = pendingAudioScriptSelectionRef.current;
@@ -3912,6 +3947,27 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     audioScriptTextareaFocusedRef.current = false;
   }
 
+  async function saveActiveAudioVoiceInstructionsOverride() {
+    const item = activeScriptAudioItem;
+    if (!item) return;
+
+    const normalizedDraft = audioVoiceInstructionsDraft.trim();
+    const normalizedDefault = activeAudioDefaultVoiceInstructions.trim();
+    const currentOverride = activeAudioVoiceInstructionsOverride.trim();
+    const nextOverride =
+      normalizedDraft && normalizedDraft !== normalizedDefault
+        ? normalizedDraft
+        : "";
+    if (nextOverride === currentOverride) return;
+
+    setSavingAudioVoiceSettingsId(item.id);
+    try {
+      await saveScriptAudioVoiceInstructionsOverride(item.id, nextOverride);
+    } finally {
+      setSavingAudioVoiceSettingsId("");
+    }
+  }
+
   function changeActiveScriptText(
     value: string,
     selectionStart: number | null,
@@ -4867,26 +4923,83 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
-          <textarea
-            aria-label="Audio script text"
-            className="next-script-textarea"
-            disabled={!activeScriptStep}
-            onBlur={blurActiveScriptText}
-            onChange={(event) =>
-              changeActiveScriptText(
-                event.currentTarget.value,
-                event.currentTarget.selectionStart,
-                event.currentTarget.selectionEnd,
-                event.currentTarget.selectionDirection,
-              )
-            }
-            onContextMenu={(event) => event.stopPropagation()}
-            onFocus={(event) => focusActiveScriptText(event.currentTarget.value)}
-            placeholder="No script text yet."
-            ref={audioScriptTextareaRef}
-            spellCheck
-            value={activeAudioScriptTextareaValue}
-          />
+          <div className="next-audio-script-panel">
+            {isAudioVoiceSettingsOpen ? (
+              <div className="next-script-voice-panel">
+                <div className="next-script-voice-panel-heading">
+                  <span>Personality &amp; tone</span>
+                  <small>
+                    {savingAudioVoiceSettingsId === activeScriptAudioItem?.id
+                      ? "Saving"
+                      : activeAudioHasCustomVoiceInstructions
+                        ? "Custom"
+                        : "Default"}
+                  </small>
+                </div>
+                <textarea
+                  aria-label="Audio script personality and tone"
+                  className="next-script-voice-textarea"
+                  disabled={!activeScriptAudioItem}
+                  onBlur={() => void saveActiveAudioVoiceInstructionsOverride()}
+                  onChange={(event) => {
+                    setAudioVoiceInstructionsDraft(event.currentTarget.value);
+                    resizeTextareaToContent(event.currentTarget, {
+                      maxHeight: 220,
+                      minHeight: 52,
+                    });
+                  }}
+                  onContextMenu={(event) => event.stopPropagation()}
+                  ref={audioVoiceInstructionsRef}
+                  spellCheck
+                  value={audioVoiceInstructionsDraft}
+                />
+              </div>
+            ) : null}
+            <div className="next-script-textarea-shell">
+              <button
+                aria-label="Audio script personality and tone"
+                aria-pressed={isAudioVoiceSettingsOpen}
+                className={[
+                  "next-script-voice-settings-button",
+                  activeAudioHasCustomVoiceInstructions ? "has-custom" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                disabled={!activeScriptAudioItem}
+                onClick={() =>
+                  setIsAudioVoiceSettingsOpen((current) => !current)
+                }
+                title={
+                  activeAudioHasCustomVoiceInstructions
+                    ? "Custom personality and tone for this audio script"
+                    : "Using default personality and tone"
+                }
+                type="button"
+              >
+                <SettingsIcon />
+              </button>
+              <textarea
+                aria-label="Audio script text"
+                className="next-script-textarea"
+                disabled={!activeScriptStep}
+                onBlur={blurActiveScriptText}
+                onChange={(event) =>
+                  changeActiveScriptText(
+                    event.currentTarget.value,
+                    event.currentTarget.selectionStart,
+                    event.currentTarget.selectionEnd,
+                    event.currentTarget.selectionDirection,
+                  )
+                }
+                onContextMenu={(event) => event.stopPropagation()}
+                onFocus={(event) => focusActiveScriptText(event.currentTarget.value)}
+                placeholder="No script text yet."
+                ref={audioScriptTextareaRef}
+                spellCheck
+                value={activeAudioScriptTextareaValue}
+              />
+            </div>
+          </div>
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView
             actionRows={activeScriptActionView.rows}
