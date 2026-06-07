@@ -79,6 +79,7 @@ import { experienceAutosaveDelayMs, localMessageId } from "./eventEditorUtils";
 import type { PythonDslScriptAction } from "./PythonDslEditor";
 import {
   parsePythonDslChatActions,
+  parsePythonDslContextActions,
   parsePythonDslScriptActions,
   pythonDslSourceFromEventSteps,
 } from "./pythonDslActions";
@@ -123,6 +124,7 @@ const PythonDslEditor = lazy(() =>
 );
 
 type PendingEventAutosave = {
+  chatInstructions: string;
   description: string;
   eventId: string;
   title: string;
@@ -252,6 +254,8 @@ type ScriptSourceWordRange = {
 const displayDocumentHistoryLimit = 80;
 const scriptActionHistoryLimit = 80;
 const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const onEntryDslContextStepSource = "next-on-entry-dsl";
+const conversationDslContextStepSource = "next-conversation-dsl";
 const defaultSideImagePath = "test-images/dLU-right.png";
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
@@ -2390,6 +2394,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const pendingAudioScriptSelectionRef = useRef<AudioScriptSelection | null>(
     null,
   );
+  const selectedEventChatInstructionsRef = useRef<HTMLTextAreaElement | null>(
+    null,
+  );
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const scriptImageFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2746,6 +2753,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   useEffect(() => {
     resizeTextareaToContent(selectedEventDescriptionRef.current);
   }, [selectedEvent?.description, selectedEvent?.id]);
+
+  useEffect(() => {
+    resizeTextareaToContent(selectedEventChatInstructionsRef.current);
+  }, [selectedEvent?.chatInstructions, selectedEvent?.id]);
 
   useEffect(() => {
     if (!selectedEventId) {
@@ -3169,6 +3180,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         {
           method: "PATCH",
           body: JSON.stringify({
+            chatInstructions: pending.chatInstructions,
             description: pending.description,
             title: pending.title,
           }),
@@ -3190,6 +3202,81 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
       return false;
     }
+  }
+
+  async function syncContextStepsFromDsl({
+    eventPathId,
+    experiencePathId,
+    latestEvent,
+    source,
+    sourceLabel,
+  }: {
+    eventPathId: string;
+    experiencePathId: string;
+    latestEvent: ExperienceEvent;
+    source: string;
+    sourceLabel: string;
+  }) {
+    const nextContextActions = parsePythonDslContextActions(source);
+    const existingContextSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "set_context" &&
+        step.config.source === sourceLabel,
+    );
+    let nextEvent = latestEvent;
+
+    for (const [index, contextAction] of nextContextActions.entries()) {
+      const existingStep = existingContextSteps[index];
+      const stepPayload = {
+        actionType: "set_context" as const,
+        condition: {},
+        config: {
+          key: contextAction.key,
+          source: sourceLabel,
+          value: contextAction.value,
+        },
+        enabled: true,
+        label: `Set ${contextAction.key}`,
+      };
+
+      if (existingStep) {
+        const payload = await apiFetch<{ step: EventActionStep }>(
+          `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
+            existingStep.id,
+          )}/`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              ...stepPayload,
+              sortOrder: existingStep.sortOrder,
+            }),
+          },
+        );
+        nextEvent = replaceEventStep(nextEvent, payload.step);
+        continue;
+      }
+
+      const payload = await apiFetch<{
+        event: ExperienceEvent;
+        step: EventActionStep;
+      }>(`/api/experiences/${experiencePathId}/events/${eventPathId}/steps/`, {
+        method: "POST",
+        body: JSON.stringify(stepPayload),
+      });
+      nextEvent = payload.event;
+    }
+
+    for (const extraStep of existingContextSteps.slice(nextContextActions.length)) {
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
+          extraStep.id,
+        )}/`,
+        { method: "DELETE" },
+      );
+      nextEvent = payload.event;
+    }
+
+    return nextEvent;
   }
 
   async function flushOnEntryAutosave() {
@@ -3226,6 +3313,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         },
       );
       latestEvent = sourcePayload.event;
+
+      latestEvent = await syncContextStepsFromDsl({
+        eventPathId,
+        experiencePathId,
+        latestEvent,
+        source: pending.source,
+        sourceLabel: onEntryDslContextStepSource,
+      });
 
       for (
         let index = existingScriptSteps.length;
@@ -3353,6 +3448,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       pending.source,
       targetEvent.conversationChoices ?? [],
     );
+    let latestEvent = targetEvent;
 
     try {
       const payload = await apiFetch<{ event: ExperienceEvent }>(
@@ -3361,13 +3457,25 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         )}/events/${encodeURIComponent(pending.eventId)}/`,
         {
           method: "PATCH",
-          body: JSON.stringify({ conversationChoices }),
+          body: JSON.stringify({
+            conversationChoices,
+            conversationDslSource: pending.source,
+          }),
         },
       );
+      latestEvent = payload.event;
+
+      latestEvent = await syncContextStepsFromDsl({
+        eventPathId: encodeURIComponent(pending.eventId),
+        experiencePathId: encodeURIComponent(experience.id),
+        latestEvent,
+        source: pending.source,
+        sourceLabel: conversationDslContextStepSource,
+      });
 
       setExperience((current) =>
         current && current.id === experience.id
-          ? replaceExperienceEvent(current, payload.event)
+          ? replaceExperienceEvent(current, latestEvent)
           : current,
       );
       return true;
@@ -3457,7 +3565,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   }
 
   function updateSelectedEventDraft(
-    field: "description" | "title",
+    field: "chatInstructions" | "description" | "title",
     value: string,
   ) {
     if (!experience || !selectedEvent) return;
@@ -3467,6 +3575,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       pendingEventAutosaveRef.current?.eventId === eventId
         ? pendingEventAutosaveRef.current
         : {
+            chatInstructions: selectedEvent.chatInstructions ?? "",
             description: selectedEvent.description,
             eventId,
             title: selectedEvent.title,
@@ -3534,6 +3643,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
       return replaceExperienceEvent(current, {
         ...currentEvent,
+        conversationDslSource: value,
         conversationChoices,
       });
     });
@@ -4330,9 +4440,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     : "";
   const selectedEventInConversationSource = selectedEvent
     ? (conversationDrafts[selectedEvent.id] ??
-      conversationChoiceDslSourceFromChoices(
-        selectedEvent.conversationChoices ?? [],
-      ))
+      (selectedEvent.conversationDslSource ||
+        conversationChoiceDslSourceFromChoices(
+          selectedEvent.conversationChoices ?? [],
+        )))
     : "";
   const firstSelectedEventScriptAction = useMemo(
     () => firstTopLevelScriptActionFromDsl(selectedEventOnEntrySource),
@@ -4447,6 +4558,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         <div className="next-event-script-heading">
           <h3>In Conversation</h3>
         </div>
+        <textarea
+          aria-label="Extra conversation context"
+          className="next-conversation-context-text"
+          onChange={(event) =>
+            updateSelectedEventDraft("chatInstructions", event.target.value)
+          }
+          onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+          placeholder="Extra conversation context"
+          ref={selectedEventChatInstructionsRef}
+          rows={1}
+          value={selectedEvent.chatInstructions ?? ""}
+        />
         <Suspense
           fallback={
             <div

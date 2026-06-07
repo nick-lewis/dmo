@@ -115,6 +115,10 @@ class ExperienceContentMaturityTests(TestCase):
             title="Start",
             slug="start",
             description="Entry event.",
+            conversation_dsl_source=(
+                'button(text="Finish", destination="done", icon=True)\n'
+                'set_context(key="seen_start", value=True)'
+            ),
             chat_instructions="Use context {{ learner_goal }}.",
             is_start=True,
             sort_order=0,
@@ -259,6 +263,7 @@ class ExperienceContentMaturityTests(TestCase):
 
         start = experience.events.get(slug="start")
         self.assertEqual(start.chat_instructions, "Use context {{ learner_goal }}.")
+        self.assertIn("seen_start", start.conversation_dsl_source)
         steps = list(start.steps.order_by("sort_order"))
         self.assertEqual(steps[0].config["text"].count("[interactive:"), 1)
         self.assertEqual(steps[0].condition["type"], "context_missing")

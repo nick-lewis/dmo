@@ -206,6 +206,14 @@ const rootDslCompletions: Completion[] = [
     type: "function",
   },
   {
+    label: "set_context",
+    apply: 'set_context(key="entry_ready", value="yes")',
+    detail: "context write",
+    info: "Store a value in the runtime context.",
+    section: "Actions",
+    type: "function",
+  },
+  {
     label: "script",
     apply: "script()",
     detail: "action",
@@ -266,6 +274,14 @@ const conversationDslCompletions: Completion[] = [
     type: "function",
   },
   {
+    label: "set_context",
+    apply: 'set_context(key="conversation_note", value="yes")',
+    detail: "context write",
+    info: "Store a value in the runtime context.",
+    section: "Conversation",
+    type: "function",
+  },
+  {
     label: "text",
     apply: 'text="Continue"',
     detail: "button label",
@@ -284,6 +300,20 @@ const conversationDslCompletions: Completion[] = [
     apply: "icon=True",
     detail: "show icon",
     section: "Button",
+    type: "property",
+  },
+  {
+    label: "key",
+    apply: 'key="context_key"',
+    detail: "context key",
+    section: "Set context",
+    type: "property",
+  },
+  {
+    label: "value",
+    apply: 'value="yes"',
+    detail: "context value",
+    section: "Set context",
     type: "property",
   },
 ];
@@ -596,6 +626,7 @@ function runHistoryShortcut(
 const chatActionPattern =
   /\bchat\s*\(\s*(?:enabled\s*=\s*)?(True|False|true|false)\s*\)/g;
 const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const setContextActionPattern = /\bset_context\s*\([^)]*\)/g;
 const conversationButtonActionPattern = /\b(?:button|choice)\s*\([^)]*\)/g;
 const chatActionDecoration = Decoration.mark({
   attributes: {
@@ -618,6 +649,13 @@ const conversationButtonActionDecoration = Decoration.mark({
   },
   class: "cm-dsl-button-action",
 });
+const setContextActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Set context action",
+    role: "button",
+  },
+  class: "cm-dsl-context-action",
+});
 
 function dslActionDecorations(
   view: EditorView,
@@ -634,6 +672,13 @@ function dslActionDecorations(
       const trimmed = lineText.trimStart();
 
       if (!trimmed.startsWith("#")) {
+        for (const match of lineText.matchAll(setContextActionPattern)) {
+          if (typeof match.index !== "number") continue;
+          const from = line.from + match.index;
+          const to = from + match[0].length;
+          ranges.push(setContextActionDecoration.range(from, to));
+        }
+
         if (mode === "conversation") {
           for (const match of lineText.matchAll(
             conversationButtonActionPattern,
@@ -933,7 +978,7 @@ function contextMenuPosition(
   clientX: number,
   clientY: number,
   width = 196,
-  height = 116,
+  height = 154,
 ) {
   return {
     x: Math.max(12, Math.min(clientX, window.innerWidth - width)),
@@ -1282,6 +1327,19 @@ export function PythonDslEditor({
     setContextMenu(null);
   }
 
+  function insertSetContextAction() {
+    const view = viewRef.current;
+    if (!view) return;
+
+    insertStatementAtCursor(
+      view,
+      'set_context(key="context_key", value="yes")',
+      contextMenu?.insertionPoint,
+    );
+    setContextMenu(null);
+    setButtonDestinationMenu(null);
+  }
+
   function chooseButtonDestination(eventTarget: PythonDslEventTarget) {
     const view = viewRef.current;
     if (!view || !buttonDestinationMenu) return;
@@ -1363,14 +1421,24 @@ export function PythonDslEditor({
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.mode === "conversation" ? (
-            <button
-              className="python-dsl-context-action python-dsl-context-button"
-              onClick={insertConversationButton}
-              role="menuitem"
-              type="button"
-            >
-              Button
-            </button>
+            <>
+              <button
+                className="python-dsl-context-action python-dsl-context-button"
+                onClick={insertConversationButton}
+                role="menuitem"
+                type="button"
+              >
+                Button
+              </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-context"
+                onClick={insertSetContextAction}
+                role="menuitem"
+                type="button"
+              >
+                Set context
+              </button>
+            </>
           ) : (
             <>
               <button
@@ -1380,6 +1448,14 @@ export function PythonDslEditor({
                 type="button"
               >
                 Script
+              </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-context"
+                onClick={insertSetContextAction}
+                role="menuitem"
+                type="button"
+              >
+                Set context
               </button>
               <div className="python-dsl-context-label">
                 Chat

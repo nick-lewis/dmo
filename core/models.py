@@ -102,6 +102,7 @@ class ExperienceEvent(models.Model):
     slug = models.SlugField(max_length=180)
     description = models.TextField(blank=True, default="")
     on_entry_dsl_source = models.TextField(blank=True, default="")
+    conversation_dsl_source = models.TextField(blank=True, default="")
     chat_instructions = models.TextField(blank=True, default="")
     conversation_choices = models.JSONField(blank=True, default=list)
     is_start = models.BooleanField(default=False)

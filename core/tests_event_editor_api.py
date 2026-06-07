@@ -199,6 +199,11 @@ class EventEditorApiTests(TestCase):
             f"/api/experiences/{self.experience.id}/events/{start.id}/",
             data=json.dumps(
                 {
+                    "conversationDslSource": (
+                        'button(text="Yes, quick primer", '
+                        'destination="primer", icon=True)\n'
+                        'set_context(key="route", value="primer")'
+                    ),
                     "conversationChoices": [
                         {
                             "enabled": True,
@@ -216,6 +221,7 @@ class EventEditorApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         start.refresh_from_db()
+        self.assertIn("set_context", start.conversation_dsl_source)
         self.assertEqual(start.conversation_choices[0]["label"], "Yes, quick primer")
         self.assertEqual(
             start.conversation_choices[0]["iconPath"],
@@ -356,6 +362,10 @@ class EventEditorApiTests(TestCase):
         )
         event_payload = {
             "chatInstructions": "Stay focused on the restored event.",
+            "conversationDslSource": (
+                'button(text="Continue", destination="start", icon=True)\n'
+                'set_context(key="done", value="yes")'
+            ),
             "chatTools": [
                 {
                     "description": "Learner is done.",
@@ -409,6 +419,7 @@ class EventEditorApiTests(TestCase):
         event = self.experience.events.get(slug="restored-event")
         self.assertEqual(event.title, "Restored event")
         self.assertEqual(event.chat_instructions, "Stay focused on the restored event.")
+        self.assertIn("set_context", event.conversation_dsl_source)
         self.assertEqual(event.steps.get().config["text"], "Restored line.")
         tool = event.chat_tools.get(name="student_done")
         self.assertEqual(tool.handler_actions[0]["config"]["key"], "done")

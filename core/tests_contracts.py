@@ -252,6 +252,7 @@ class SerializerShapeContractTests(TestCase):
                 "classifierGroups",
                 "conversationChecks",
                 "conversationChoices",
+                "conversationDslSource",
                 "createdAt",
                 "description",
                 "id",

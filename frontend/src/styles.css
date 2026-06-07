@@ -2776,7 +2776,8 @@ button {
 }
 
 .next-event-title-text,
-.next-event-description-text {
+.next-event-description-text,
+.next-conversation-context-text {
   width: 100%;
   min-width: 0;
   border: 1px solid transparent;
@@ -2832,14 +2833,29 @@ button {
   overflow: hidden;
 }
 
+.next-conversation-context-text {
+  min-height: 34px;
+  padding: 7px 8px;
+  border-color: color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
+  color: color-mix(in srgb, var(--page-ink) 88%, var(--muted-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 48%, transparent);
+  font-size: 0.78rem;
+  font-weight: 640;
+  line-height: 1.42;
+  resize: none;
+  overflow: hidden;
+}
+
 .next-event-title-text:focus,
-.next-event-description-text:focus {
+.next-event-description-text:focus,
+.next-conversation-context-text:focus {
   border-color: color-mix(in srgb, var(--accent-2) 18%, transparent);
   background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
 }
 
 .next-event-title-text::placeholder,
-.next-event-description-text::placeholder {
+.next-event-description-text::placeholder,
+.next-conversation-context-text::placeholder {
   color: color-mix(in srgb, var(--muted-ink) 64%, transparent);
 }
 
@@ -3001,6 +3017,10 @@ button {
   grid-column: 1 / -1;
 }
 
+.python-dsl-context-context {
+  grid-column: 1 / -1;
+}
+
 .python-dsl-context-label {
   display: flex;
   align-items: center;
@@ -3098,7 +3118,8 @@ button {
 
 .cm-dsl-chat-action,
 .cm-dsl-script-action,
-.cm-dsl-button-action {
+.cm-dsl-button-action,
+.cm-dsl-context-action {
   display: inline-block;
   min-height: 1.36em;
   margin: 0 1px;
@@ -3136,6 +3157,18 @@ button {
   border-color: color-mix(in srgb, var(--accent-2) 30%, var(--panel-border));
   color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
   background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
+  cursor: text;
+}
+
+.cm-dsl-context-action {
+  color: color-mix(in srgb, var(--accent-4) 74%, var(--page-ink));
+}
+
+.cm-dsl-context-action:hover,
+.cm-focused .cm-dsl-context-action:hover {
+  border-color: color-mix(in srgb, var(--accent-4) 30%, var(--panel-border));
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-4));
+  background: color-mix(in srgb, var(--accent-4) 12%, transparent);
   cursor: text;
 }
 
