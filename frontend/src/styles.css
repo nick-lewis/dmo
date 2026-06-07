@@ -2833,9 +2833,29 @@ button {
   overflow: hidden;
 }
 
+.next-conversation-context-field {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.next-conversation-context-field > span {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  left: 9px;
+  color: color-mix(in srgb, var(--muted-ink) 74%, transparent);
+  font-size: 0.62rem;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .next-conversation-context-text {
-  min-height: 34px;
-  padding: 7px 8px;
+  display: block;
+  min-height: 46px;
+  padding: 19px 8px 7px;
   border-color: color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
   color: color-mix(in srgb, var(--page-ink) 88%, var(--muted-ink));
   background: color-mix(in srgb, var(--panel-bg-strong) 48%, transparent);

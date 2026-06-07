@@ -4558,18 +4558,21 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         <div className="next-event-script-heading">
           <h3>In Conversation</h3>
         </div>
-        <textarea
-          aria-label="Extra conversation context"
-          className="next-conversation-context-text"
-          onChange={(event) =>
-            updateSelectedEventDraft("chatInstructions", event.target.value)
-          }
-          onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-          placeholder="Extra conversation context"
-          ref={selectedEventChatInstructionsRef}
-          rows={1}
-          value={selectedEvent.chatInstructions ?? ""}
-        />
+        <label className="next-conversation-context-field">
+          <span>extra conversation context</span>
+          <textarea
+            aria-label="Extra conversation context"
+            className="next-conversation-context-text"
+            onChange={(event) =>
+              updateSelectedEventDraft("chatInstructions", event.target.value)
+            }
+            onInput={(event) => resizeTextareaToContent(event.currentTarget)}
+            placeholder="Add context the tutor should use here."
+            ref={selectedEventChatInstructionsRef}
+            rows={1}
+            value={selectedEvent.chatInstructions ?? ""}
+          />
+        </label>
         <Suspense
           fallback={
             <div
