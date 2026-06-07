@@ -1,7 +1,8 @@
 import {
-  type MouseEvent as ReactMouseEvent,
   type ChangeEvent,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
   useEffect,
@@ -10,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   apiFetch,
@@ -243,8 +245,17 @@ type ScriptInsertionPreview = {
 
 type SideImageActionState = {
   imagePath: string;
+  scale: number;
   side: "left" | "right";
   visible: boolean;
+};
+
+type ScriptActionMenuDragState = {
+  menuX: number;
+  menuY: number;
+  pointerId: number;
+  startX: number;
+  startY: number;
 };
 
 type ScriptSourceWordRange = {
@@ -258,6 +269,9 @@ const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
 const onEntryDslStepSource = "next-on-entry-dsl";
 const conversationDslStepSource = "next-conversation-dsl";
 const defaultSideImagePath = "test-images/dLU-right.png";
+const sideImageScaleMin = 0.2;
+const sideImageScaleMax = 3;
+const scriptActionMenuViewportPadding = 12;
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -374,6 +388,16 @@ function defaultTutorSettings(): TutorSettings {
   };
 }
 
+function normalizeSideImageScale(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 1;
+  return clamp(numeric, sideImageScaleMin, sideImageScaleMax);
+}
+
+function formatSideImageScaleArg(value: number) {
+  return String(Number(normalizeSideImageScale(value).toFixed(2)));
+}
+
 function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
   const firstArg = args[0]?.trim().toLowerCase() || "";
   const hasSideArg = [
@@ -391,15 +415,19 @@ function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
   const mode = rawMode.toLowerCase();
   const hideModes = ["hide", "hidden", "off", "false", "0"];
   const showModes = ["show", "on", "visible", "true", "1"];
+  const usesExplicitMode = showModes.includes(mode) || hideModes.includes(mode);
+  const imageArgIndex = usesExplicitMode ? 1 : 0;
   const imagePath =
-    remainingArgs.length > 1
-      ? remainingArgs[1]
-      : showModes.includes(mode) || hideModes.includes(mode)
+    remainingArgs.length > imageArgIndex
+      ? remainingArgs[imageArgIndex]
+      : usesExplicitMode
         ? ""
         : remainingArgs[0] || "";
+  const scale = normalizeSideImageScale(remainingArgs[imageArgIndex + 1]);
 
   return {
     imagePath,
+    scale,
     side,
     visible: !hideModes.includes(mode),
   };
@@ -407,10 +435,23 @@ function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
 
 function sideImageActionArgs(state: SideImageActionState) {
   const imagePath = state.imagePath.trim();
+  const scale = normalizeSideImageScale(state.scale);
+  const scaleArg =
+    imagePath && Math.abs(scale - 1) > 0.001
+      ? formatSideImageScaleArg(scale)
+      : "";
   if (state.visible) {
-    return imagePath ? [state.side, "show", imagePath] : [state.side, "show"];
+    const args = imagePath
+      ? [state.side, "show", imagePath]
+      : [state.side, "show"];
+    if (scaleArg) args.push(scaleArg);
+    return args;
   }
-  return imagePath ? [state.side, "hide", imagePath] : [state.side, "hide"];
+  const args = imagePath
+    ? [state.side, "hide", imagePath]
+    : [state.side, "hide"];
+  if (scaleArg) args.push(scaleArg);
+  return args;
 }
 
 function sortedExperienceEvents(events: ExperienceEvent[]) {
@@ -794,6 +835,29 @@ function removeScriptMarker(text: string, marker: ScriptMarkerInstance) {
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([.,!?;:])/g, "$1")
     .trim();
+}
+
+function clampFloatingMenuPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  if (typeof window === "undefined") return { x, y };
+
+  const maxX = Math.max(
+    scriptActionMenuViewportPadding,
+    window.innerWidth - width - scriptActionMenuViewportPadding,
+  );
+  const maxY = Math.max(
+    scriptActionMenuViewportPadding,
+    window.innerHeight - height - scriptActionMenuViewportPadding,
+  );
+
+  return {
+    x: Math.round(clamp(x, scriptActionMenuViewportPadding, maxX)),
+    y: Math.round(clamp(y, scriptActionMenuViewportPadding, maxY)),
+  };
 }
 
 function deckUrlForNewTab(value: string) {
@@ -2586,6 +2650,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionHistoryStepIdRef = useRef("");
   const scriptActionRedoStackRef = useRef<string[]>([]);
   const scriptActionUndoStackRef = useRef<string[]>([]);
+  const scriptActionMenuDragRef = useRef<ScriptActionMenuDragState | null>(null);
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
   const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -3059,6 +3124,42 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     scriptActionMenu?.mode === "edit" ? scriptActionMenu.markerKey : "",
   ]);
 
+  useLayoutEffect(() => {
+    if (!scriptActionMenu) return;
+
+    const menuElement = scriptActionMenuRef.current;
+    if (!menuElement) return;
+
+    const rect = menuElement.getBoundingClientRect();
+    const nextPosition = clampFloatingMenuPosition(
+      scriptActionMenu.x,
+      scriptActionMenu.y,
+      rect.width,
+      rect.height,
+    );
+
+    if (
+      nextPosition.x === scriptActionMenu.x &&
+      nextPosition.y === scriptActionMenu.y
+    ) {
+      return;
+    }
+
+    setScriptActionMenu((current) =>
+      current
+        ? {
+            ...current,
+            ...nextPosition,
+          }
+        : current,
+    );
+  }, [
+    isLoadingScriptImages,
+    isScriptImagePickerOpen,
+    scriptActionMenu,
+    scriptImageOptions.length,
+  ]);
+
   useEffect(() => {
     if (!scriptActionMenu) return;
 
@@ -3077,6 +3178,35 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     return () => {
       document.removeEventListener("pointerdown", closeIfOutside, true);
       document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [scriptActionMenu]);
+
+  useEffect(() => {
+    if (!scriptActionMenu) return;
+
+    function moveWhileDragging(event: PointerEvent) {
+      const dragState = scriptActionMenuDragRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+      moveScriptActionMenuToPointer(event.clientX, event.clientY);
+    }
+
+    function stopDragging(event: PointerEvent) {
+      const dragState = scriptActionMenuDragRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+      scriptActionMenuDragRef.current = null;
+    }
+
+    window.addEventListener("pointermove", moveWhileDragging);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", moveWhileDragging);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
     };
   }, [scriptActionMenu]);
 
@@ -4196,11 +4326,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   ) {
     if (!activeScriptStep) return;
 
+    const position = clampFloatingMenuPosition(event.clientX, event.clientY, 290, 180);
     setScriptActionMenu({
       insertionIndex,
       mode: "insert",
-      x: Math.min(event.clientX, window.innerWidth - 260),
-      y: Math.min(event.clientY, window.innerHeight - 240),
+      ...position,
     });
   }
 
@@ -4210,12 +4340,75 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   ) {
     event.preventDefault();
     event.stopPropagation();
+    const position = clampFloatingMenuPosition(event.clientX, event.clientY, 320, 300);
     setScriptActionMenu({
       markerKey: markerEditKey(marker),
       mode: "edit",
-      x: Math.min(event.clientX, window.innerWidth - 320),
-      y: Math.min(event.clientY, window.innerHeight - 260),
+      ...position,
     });
+  }
+
+  function beginScriptActionMenuDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) {
+    if (!scriptActionMenu || event.button > 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scriptActionMenuDragRef.current = {
+      menuX: scriptActionMenu.x,
+      menuY: scriptActionMenu.y,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }
+
+  function moveScriptActionMenuToPointer(clientX: number, clientY: number) {
+    const dragState = scriptActionMenuDragRef.current;
+    if (!dragState) return;
+
+    const rect = scriptActionMenuRef.current?.getBoundingClientRect();
+    const nextPosition = clampFloatingMenuPosition(
+      dragState.menuX + clientX - dragState.startX,
+      dragState.menuY + clientY - dragState.startY,
+      rect?.width ?? 290,
+      rect?.height ?? 260,
+    );
+    setScriptActionMenu((current) =>
+      current
+        ? {
+            ...current,
+            ...nextPosition,
+          }
+        : current,
+    );
+  }
+
+  function moveScriptActionMenuDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) {
+    const dragState = scriptActionMenuDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    moveScriptActionMenuToPointer(event.clientX, event.clientY);
+  }
+
+  function endScriptActionMenuDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) {
+    const dragState = scriptActionMenuDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    scriptActionMenuDragRef.current = null;
   }
 
   function insertScriptAction(type: "slide" | "side-image" | "sound") {
@@ -5256,13 +5449,26 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             ) : null}
           </>
         )}
-        {scriptActionMenu ? (
+        {scriptActionMenu && typeof document !== "undefined" ? (
+          createPortal(
           <div
             className="next-script-action-popover"
             ref={scriptActionMenuRef}
             role="menu"
             style={{ left: scriptActionMenu.x, top: scriptActionMenu.y }}
           >
+            <button
+              aria-label="Move action menu"
+              className="next-script-action-popover-grip"
+              onPointerCancel={endScriptActionMenuDrag}
+              onPointerDown={beginScriptActionMenuDrag}
+              onPointerMove={moveScriptActionMenuDrag}
+              onPointerUp={endScriptActionMenuDrag}
+              title="Drag to move"
+              type="button"
+            >
+              <span aria-hidden="true" />
+            </button>
             {scriptActionMenu.mode === "insert" ? (
               <>
                 <button
@@ -5445,6 +5651,30 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                         ) : null}
                       </div>
                     </div>
+                    <label>
+                      <span>Scale</span>
+                      <input
+                        aria-label="Interface image scale"
+                        max={sideImageScaleMax}
+                        min={sideImageScaleMin}
+                        onChange={(event) =>
+                          replaceScriptActionMarker(
+                            editingScriptMarker,
+                            sideImageActionArgs({
+                              ...editingSideImageState,
+                              scale: normalizeSideImageScale(
+                                event.target.value,
+                              ),
+                            }),
+                          )
+                        }
+                        step="0.05"
+                        type="number"
+                        value={formatSideImageScaleArg(
+                          editingSideImageState.scale,
+                        )}
+                      />
+                    </label>
                   </>
                 ) : editingScriptMarker.type === "play_sound" ? (
                   <>
@@ -5536,7 +5766,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                 )}
               </div>
             ) : null}
-          </div>
+          </div>,
+            document.body,
+          )
         ) : null}
       </div>
     ) : null;

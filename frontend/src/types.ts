@@ -413,6 +413,7 @@ export type RuntimeOverlay = {
 
 export type RuntimeSideImage = {
   imagePath: string;
+  scale?: number;
   slot: string;
   visible: boolean;
 };

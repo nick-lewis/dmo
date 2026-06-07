@@ -43,6 +43,7 @@ import {
   runtimeInteractiveFromRecord,
   runtimeNotesFromValue,
   runtimeOverlaysFromRecord,
+  runtimeSideImageScale,
   runtimeSideImageSlot,
   runtimeSideImagesFromRecord,
   runtimeSlideFromRecord,
@@ -363,18 +364,28 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       typeof action.imagePath === "string" ? action.imagePath.trim() : "";
     const visibleFromAction =
       typeof action.visible === "boolean" ? action.visible : undefined;
+    const scaleFromAction =
+      Object.prototype.hasOwnProperty.call(action, "scale")
+        ? runtimeSideImageScale(action.scale)
+        : undefined;
 
     setRuntimeSideImages((current) => {
       const existing = current[slot] ?? {
         imagePath: slot === "left" ? runtimeAvatarPath || tutorForm.avatarPath : "",
+        scale: 1,
         slot,
         visible: true,
       };
       const imagePath = imagePathFromAction || existing.imagePath;
       const visible = visibleFromAction ?? Boolean(imagePathFromAction || existing.visible);
+      const scale =
+        scaleFromAction ?? (imagePathFromAction ? 1 : existing.scale ?? 1);
       return {
         ...current,
-        [slot]: { imagePath, slot, visible },
+        [slot]:
+          Math.abs(scale - 1) > 0.001
+            ? { imagePath, scale, slot, visible }
+            : { imagePath, slot, visible },
       };
     });
 

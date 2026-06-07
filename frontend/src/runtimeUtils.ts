@@ -370,6 +370,12 @@ export function runtimeSideImageSlot(value: unknown) {
   return "";
 }
 
+export function runtimeSideImageScale(value: unknown) {
+  const scale = Number(value);
+  if (!Number.isFinite(scale) || scale <= 0) return 1;
+  return Math.min(Math.max(scale, 0.2), 3);
+}
+
 export function runtimeSideImagesFromRecord(
   value: unknown,
 ): Record<string, RuntimeSideImage> {
@@ -386,7 +392,11 @@ export function runtimeSideImagesFromRecord(
           ? image.imagePath.trim()
           : "";
     const visible = typeof image.visible === "boolean" ? image.visible : true;
-    next[slot] = { imagePath, slot, visible };
+    const scale = runtimeSideImageScale(image.scale);
+    next[slot] =
+      Math.abs(scale - 1) > 0.001
+        ? { imagePath, scale, slot, visible }
+        : { imagePath, slot, visible };
   }
   return next;
 }

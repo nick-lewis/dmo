@@ -24,6 +24,16 @@ def normalize_runtime_side_image_slot(value):
     return ""
 
 
+def normalize_runtime_side_image_scale(value):
+    try:
+        scale = float(str(value or "").strip())
+    except ValueError:
+        return 1.0
+    if scale <= 0:
+        return 1.0
+    return min(max(scale, 0.2), 3.0)
+
+
 def normalize_runtime_side_images(value):
     images = {}
     if not isinstance(value, dict):
@@ -36,10 +46,12 @@ def normalize_runtime_side_images(value):
             )
             image_path = str(raw_image.get("imagePath", "") or "").strip()
             visible = raw_image.get("visible", True)
+            scale = normalize_runtime_side_image_scale(raw_image.get("scale"))
         else:
             slot = normalize_runtime_side_image_slot(fallback_slot)
             image_path = str(raw_image or "").strip()
             visible = True
+            scale = 1.0
         if not slot:
             continue
         if not isinstance(visible, bool):
@@ -49,6 +61,8 @@ def normalize_runtime_side_images(value):
             "slot": slot,
             "visible": visible,
         }
+        if abs(scale - 1.0) > 0.001:
+            images[slot]["scale"] = round(scale, 2)
     return images
 
 
@@ -445,11 +459,19 @@ def apply_runtime_actions_to_state(
             visible = action.get("visible", existing_image.get("visible", True))
             if not isinstance(visible, bool):
                 visible = True
+            if "scale" in action:
+                scale = normalize_runtime_side_image_scale(action.get("scale"))
+            elif "imagePath" in action:
+                scale = 1.0
+            else:
+                scale = normalize_runtime_side_image_scale(existing_image.get("scale"))
             images[slot] = {
                 "imagePath": image_path,
                 "slot": slot,
                 "visible": visible,
             }
+            if abs(scale - 1.0) > 0.001:
+                images[slot]["scale"] = round(scale, 2)
             if slot == "left":
                 avatar_path = image_path
                 avatar_visible = visible

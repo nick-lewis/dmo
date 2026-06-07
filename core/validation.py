@@ -477,6 +477,16 @@ def normalize_runtime_side_image_slot(value):
     return ""
 
 
+def normalize_runtime_side_image_scale(value):
+    try:
+        scale = float(str(value or "").strip())
+    except ValueError:
+        return None
+    if scale <= 0:
+        return None
+    return min(max(scale, 0.2), 3.0)
+
+
 def rejected_emitted_runtime_action(action, reason):
     action_type = ""
     if isinstance(action, dict):
@@ -672,6 +682,15 @@ def normalize_emitted_runtime_action(action):
         }
         if image_path:
             normalized["imagePath"] = image_path
+        if "scale" in action:
+            scale = normalize_runtime_side_image_scale(action.get("scale"))
+            if scale is None:
+                return None, rejected_emitted_runtime_action(
+                    action,
+                    "invalid_image_scale",
+                )
+            if abs(scale - 1.0) > 0.001:
+                normalized["scale"] = round(scale, 2)
         return normalized, None
 
     if action_type == "show_image":

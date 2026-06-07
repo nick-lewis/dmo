@@ -152,8 +152,10 @@ export function ChatPanelContent({
   const leftImageVisible = leftSideImage
     ? leftSideImage.visible && Boolean(leftImagePath)
     : avatarVisible;
+  const leftImageScale = leftSideImage?.scale ?? 1;
   const rightImagePath = rightSideImage?.imagePath.trim() ?? "";
   const rightImageVisible = Boolean(rightSideImage?.visible && rightImagePath);
+  const rightImageScale = rightSideImage?.scale ?? 1;
   const renderedMessages = messages.flatMap((message): RenderedChatItem[] => {
     if (message.metadata?.scriptHidden) return [];
 
@@ -511,6 +513,11 @@ export function ChatPanelContent({
           alt={assistantDisplayName}
           className="chat-side-image chat-side-image-left"
           src={publicAsset(leftImagePath)}
+          style={
+            {
+              "--chat-side-image-scale": String(leftImageScale),
+            } as CSSProperties
+          }
         />
       ) : null}
       {rightImageVisible ? (
@@ -519,6 +526,11 @@ export function ChatPanelContent({
           aria-hidden="true"
           className="chat-side-image chat-side-image-right"
           src={publicAsset(rightImagePath)}
+          style={
+            {
+              "--chat-side-image-scale": String(rightImageScale),
+            } as CSSProperties
+          }
         />
       ) : null}
       {runtimeOverlays.map((overlay) => (

@@ -161,6 +161,16 @@ def normalize_side_image_slot(value):
     return ""
 
 
+def normalize_side_image_scale(value):
+    try:
+        scale = float(str(value or "").strip())
+    except ValueError:
+        return None
+    if scale <= 0:
+        return None
+    return min(max(scale, 0.2), 3.0)
+
+
 def side_image_marker_action(args, runtime_context):
     if not args:
         return None
@@ -181,14 +191,20 @@ def side_image_marker_action(args, runtime_context):
     if state in hide_states:
         visible = False
         image_arg = remaining_args[1] if len(remaining_args) > 1 else ""
+        scale_arg = remaining_args[2] if len(remaining_args) > 2 else ""
     elif state in show_states:
         visible = True
         image_arg = remaining_args[1] if len(remaining_args) > 1 else ""
+        scale_arg = remaining_args[2] if len(remaining_args) > 2 else ""
     else:
         visible = True
         image_arg = remaining_args[0] if remaining_args else ""
+        scale_arg = remaining_args[1] if len(remaining_args) > 1 else ""
 
     image_path = render_context_template(image_arg, runtime_context).strip()
+    scale = normalize_side_image_scale(
+        render_context_template(scale_arg, runtime_context).strip()
+    )
     action = {
         "slot": slot,
         "type": "side_image",
@@ -196,6 +212,8 @@ def side_image_marker_action(args, runtime_context):
     }
     if image_path:
         action["imagePath"] = image_path
+    if scale is not None and abs(scale - 1.0) > 0.001:
+        action["scale"] = round(scale, 2)
     return action
 
 
