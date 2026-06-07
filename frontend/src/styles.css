@@ -2410,13 +2410,23 @@ button {
 }
 
 .next-fine-context-menu {
+  --page-bg: #f8f7f3;
+  --page-ink: #1f2529;
+  --muted-ink: #6c7478;
+  --panel-bg-strong: #ffffff;
+  --panel-border: rgba(35, 123, 148, 0.2);
+  --panel-soft-border: rgba(44, 58, 75, 0.12);
+  --accent: #e46670;
+  --accent-2: #237b94;
+  --accent-soft: #fff0f1;
+  --accent-2-soft: #e3f1f4;
   position: fixed;
   z-index: 7000;
   min-width: 190px;
   padding: 5px;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 84%, transparent);
   border-radius: 7px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 94%, var(--page-bg));
+  background: #ffffff;
   box-shadow: 0 16px 34px color-mix(in srgb, var(--page-ink) 16%, transparent);
 }
 
@@ -2773,6 +2783,16 @@ button {
 }
 
 .next-script-action-popover {
+  --page-bg: #f8f7f3;
+  --page-ink: #1f2529;
+  --muted-ink: #6c7478;
+  --panel-bg-strong: #ffffff;
+  --panel-border: rgba(35, 123, 148, 0.2);
+  --panel-soft-border: rgba(44, 58, 75, 0.12);
+  --accent: #e46670;
+  --accent-2: #237b94;
+  --accent-soft: #fff0f1;
+  --accent-2-soft: #e3f1f4;
   position: fixed;
   z-index: 80;
   display: grid;
@@ -2781,7 +2801,7 @@ button {
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 7px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 96%, white);
+  background: #ffffff;
   box-shadow: 0 18px 48px rgba(31, 41, 55, 0.14);
 }
 

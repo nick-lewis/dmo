@@ -246,6 +246,7 @@ type ScriptInsertionPreview = {
 type SideImageActionState = {
   imagePath: string;
   scale: number;
+  scaleText: string;
   side: "left" | "right";
   visible: boolean;
 };
@@ -394,10 +395,6 @@ function normalizeSideImageScale(value: unknown) {
   return clamp(numeric, sideImageScaleMin, sideImageScaleMax);
 }
 
-function formatSideImageScaleArg(value: number) {
-  return String(Number(normalizeSideImageScale(value).toFixed(2)));
-}
-
 function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
   const firstArg = args[0]?.trim().toLowerCase() || "";
   const hasSideArg = [
@@ -423,11 +420,13 @@ function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
       : usesExplicitMode
         ? ""
         : remainingArgs[0] || "";
-  const scale = normalizeSideImageScale(remainingArgs[imageArgIndex + 1]);
+  const scaleText = remainingArgs[imageArgIndex + 1]?.trim() || "1";
+  const scale = normalizeSideImageScale(scaleText);
 
   return {
     imagePath,
     scale,
+    scaleText,
     side,
     visible: !hideModes.includes(mode),
   };
@@ -435,10 +434,13 @@ function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
 
 function sideImageActionArgs(state: SideImageActionState) {
   const imagePath = state.imagePath.trim();
-  const scale = normalizeSideImageScale(state.scale);
+  const rawScaleText = state.scaleText.trim();
+  const scale = normalizeSideImageScale(rawScaleText || state.scale);
   const scaleArg =
-    imagePath && Math.abs(scale - 1) > 0.001
-      ? formatSideImageScaleArg(scale)
+    imagePath &&
+    rawScaleText &&
+    (Math.abs(scale - 1) > 0.001 || rawScaleText.endsWith("."))
+      ? rawScaleText
       : "";
   if (state.visible) {
     const args = imagePath
@@ -5665,14 +5667,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                               scale: normalizeSideImageScale(
                                 event.target.value,
                               ),
+                              scaleText: event.target.value,
                             }),
                           )
                         }
+                        inputMode="decimal"
                         step="0.05"
-                        type="number"
-                        value={formatSideImageScaleArg(
-                          editingSideImageState.scale,
-                        )}
+                        type="text"
+                        value={editingSideImageState.scaleText}
                       />
                     </label>
                   </>

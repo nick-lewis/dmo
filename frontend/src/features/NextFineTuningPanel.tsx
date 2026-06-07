@@ -173,6 +173,7 @@ const fineTuningSideImageScaleMax = 3;
 type FineTuningSideImageState = {
   imagePath: string;
   scale: number;
+  scaleText: string;
   side: "left" | "right";
   visible: boolean;
 };
@@ -229,10 +230,6 @@ function normalizeFineTuningSideImageScale(value: unknown) {
   );
 }
 
-function formatFineTuningSideImageScale(value: number) {
-  return String(Number(normalizeFineTuningSideImageScale(value).toFixed(2)));
-}
-
 function sideImageStateFromMarker(
   marker: ScriptMarkerInstance,
 ): FineTuningSideImageState {
@@ -240,6 +237,7 @@ function sideImageStateFromMarker(
     return {
       imagePath: marker.argList[0] || defaultFineTuningSideImagePath,
       scale: 1,
+      scaleText: "1",
       side: "left",
       visible: true,
     };
@@ -249,6 +247,7 @@ function sideImageStateFromMarker(
     return {
       imagePath: marker.argList[0] || "",
       scale: 1,
+      scaleText: "1",
       side: "left",
       visible: false,
     };
@@ -278,13 +277,13 @@ function sideImageStateFromMarker(
       : usesExplicitMode
         ? ""
         : remainingArgs[0] || "";
-  const scale = normalizeFineTuningSideImageScale(
-    remainingArgs[imageArgIndex + 1],
-  );
+  const scaleText = remainingArgs[imageArgIndex + 1]?.trim() || "1";
+  const scale = normalizeFineTuningSideImageScale(scaleText);
 
   return {
     imagePath,
     scale,
+    scaleText,
     side,
     visible: !hideModes.includes(mode),
   };
@@ -292,10 +291,13 @@ function sideImageStateFromMarker(
 
 function sideImageArgsFromState(state: FineTuningSideImageState) {
   const imagePath = state.imagePath.trim();
-  const scale = normalizeFineTuningSideImageScale(state.scale);
+  const rawScaleText = state.scaleText.trim();
+  const scale = normalizeFineTuningSideImageScale(rawScaleText || state.scale);
   const scaleArg =
-    imagePath && Math.abs(scale - 1) > 0.001
-      ? formatFineTuningSideImageScale(scale)
+    imagePath &&
+    rawScaleText &&
+    (Math.abs(scale - 1) > 0.001 || rawScaleText.endsWith("."))
+      ? rawScaleText
       : "";
   const args = imagePath
     ? [state.side, state.visible ? "show" : "hide", imagePath]
@@ -1582,11 +1584,13 @@ export function NextFineTuningPanel({
                 updateImageState({
                   ...imageState,
                   scale: normalizeFineTuningSideImageScale(event.target.value),
+                  scaleText: event.target.value,
                 })
               }
+              inputMode="decimal"
               step="0.05"
-              type="number"
-              value={formatFineTuningSideImageScale(imageState.scale)}
+              type="text"
+              value={imageState.scaleText}
             />
           </label>
         </div>
