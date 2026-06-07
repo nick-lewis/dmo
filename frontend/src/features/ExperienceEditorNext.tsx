@@ -921,6 +921,23 @@ function appendMappedBoundary(
   sourceIndexByTextIndex[characters.length] = sourceEnd;
 }
 
+function appendMappedLineBreaks(
+  characters: string[],
+  sourceIndexByTextIndex: number[],
+  count: number,
+  sourceStart: number,
+  sourceEnd: number,
+) {
+  if (count <= 0) return;
+
+  sourceIndexByTextIndex[characters.length] = sourceStart;
+  for (let index = 0; index < count; index += 1) {
+    characters.push("\n");
+    sourceIndexByTextIndex[characters.length] =
+      index === count - 1 ? sourceEnd : sourceStart;
+  }
+}
+
 function buildDisplayActionBaseText(
   sourceText: string,
   sourceMarkers: ScriptMarkerInstance[],
@@ -978,17 +995,14 @@ function buildDisplayActionBaseText(
       previousVisibleSourceEnd = sourceRange.end;
     }
 
-    for (
-      let breakIndex = 0;
-      breakIndex < (breakCounts.get(slotIndex) ?? 0);
-      breakIndex += 1
-    ) {
-      appendMappedBoundary(
+    const lineBreakCount = breakCounts.get(slotIndex) ?? 0;
+    if (lineBreakCount) {
+      appendMappedLineBreaks(
         characters,
         sourceIndexByTextIndex,
-        "\n",
+        lineBreakCount,
         sourceRange.end,
-        sourceRange.end,
+        sourceWordRanges[slotIndex + 1]?.start ?? sourceRange.end,
       );
       lineHasText = false;
       previousVisibleSourceEnd = sourceRange.end;
@@ -1020,6 +1034,24 @@ function displayInsertionIndexForSourceWordIndex(
   }
 
   return displayText.length;
+}
+
+function displayInsertionIndexForSourceIndex(
+  sourceIndex: number,
+  fallbackWordIndex: number,
+  displayText: string,
+  displayRangesBySourceWord: Array<{ end: number; start: number } | undefined>,
+  sourceIndexByTextIndex: number[],
+) {
+  for (let index = 0; index < sourceIndexByTextIndex.length; index += 1) {
+    if ((sourceIndexByTextIndex[index] ?? 0) >= sourceIndex) return index;
+  }
+
+  return displayInsertionIndexForSourceWordIndex(
+    fallbackWordIndex,
+    displayText,
+    displayRangesBySourceWord,
+  );
 }
 
 function insertViewMarkerAt(
@@ -1093,10 +1125,12 @@ function projectScriptActionsToDisplayText({
 
   markers
     .map((marker, index) => ({
-      displayIndex: displayInsertionIndexForSourceWordIndex(
+      displayIndex: displayInsertionIndexForSourceIndex(
+        marker.start,
         marker.wordIndex,
         text,
         displayRangesBySourceWord,
+        sourceIndexByTextIndex,
       ),
       index,
       marker,
@@ -1131,6 +1165,11 @@ function projectScriptActionsToDisplayText({
     sourceIndexByTextIndex,
     text,
   };
+}
+
+function slideRowTextStart(text: string, start: number, end: number) {
+  const leadingWhitespace = text.slice(start, end).match(/^\s+/)?.[0] ?? "";
+  return start + leadingWhitespace.length;
 }
 
 function scriptActionRowsFromScript(
@@ -1169,13 +1208,14 @@ function scriptActionRowsFromScript(
   slideMarkers.forEach((marker, index) => {
     const nextMarker = slideMarkers[index + 1] ?? null;
     const slideRef = marker.argList[0]?.trim() || "1";
+    const textEnd = nextMarker?.start ?? text.length;
     rows.push({
       key: viewMarkerEditKey(marker),
       label: `Slide ${slideRef}`,
       marker,
       slideRef,
-      textEnd: nextMarker?.start ?? text.length,
-      textStart: marker.end,
+      textEnd,
+      textStart: slideRowTextStart(text, marker.end, textEnd),
     });
   });
 
@@ -1990,6 +2030,49 @@ function ScriptActionReadOnlyView({
       pieceOffset += piece.length;
 
       if (/^\s+$/.test(piece)) {
+        if (piece.includes("\n")) {
+          let whitespaceOffset = 0;
+          piece.split(/(\n+)/).forEach((part, partIndex) => {
+            if (!part) return;
+            const partStart = pieceStart + whitespaceOffset;
+            whitespaceOffset += part.length;
+
+            if (!part.includes("\n")) {
+              nodes.push(
+                <span
+                  className="next-script-view-space"
+                  data-insert-after={sourceIndexForTextIndex(
+                    partStart + part.length,
+                  )}
+                  data-insert-before={sourceIndexForTextIndex(partStart)}
+                  key={`${keyPrefix}-space-${index}-${partIndex}-${partStart}`}
+                >
+                  {part}
+                </span>,
+              );
+              return;
+            }
+
+            const insertIndex = sourceIndexForTextIndex(partStart + part.length);
+            nodes.push(
+              <span
+                aria-label={
+                  part.length > 1 ? "Page break" : "Line break"
+                }
+                className={
+                  part.length > 1
+                    ? "next-script-view-page-break"
+                    : "next-script-view-line-break"
+                }
+                data-insert-after={insertIndex}
+                data-insert-before={insertIndex}
+                key={`${keyPrefix}-breakspace-${index}-${partIndex}-${partStart}`}
+              />,
+            );
+          });
+          return;
+        }
+
         nodes.push(
           <span
             className="next-script-view-space"

@@ -2330,6 +2330,28 @@ button {
   cursor: text;
 }
 
+.next-script-view-line-break,
+.next-script-view-page-break {
+  display: block;
+  width: 100%;
+  cursor: text;
+}
+
+.next-script-view-line-break {
+  min-height: 0.68em;
+}
+
+.next-script-view-page-break {
+  min-height: 1.5em;
+  margin: 0.22em 0 0.38em;
+  border-top: 1px dotted color-mix(in srgb, var(--accent-2) 26%, transparent);
+}
+
+.next-script-view-page-break:hover {
+  border-top-color: color-mix(in srgb, var(--accent-2) 46%, transparent);
+  background: color-mix(in srgb, var(--accent-2-soft) 24%, transparent);
+}
+
 .next-script-view-word:hover {
   background: color-mix(in srgb, var(--accent-2-soft) 44%, transparent);
 }
