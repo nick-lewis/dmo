@@ -23,6 +23,7 @@ from core.experience_lifecycle_views import (
     export_experience,
     experience_validation,
     experiences,
+    script_images,
     update_experience,
     upload_tutor_avatar,
 )
@@ -112,6 +113,11 @@ urlpatterns = [
         "api/experiences/<uuid:experience_id>/tutor-avatar/",
         upload_tutor_avatar,
         name="upload-tutor-avatar",
+    ),
+    path(
+        "api/experiences/<uuid:experience_id>/script-images/",
+        script_images,
+        name="script-images",
     ),
     path(
         "api/experiences/<uuid:experience_id>/duplicate/",

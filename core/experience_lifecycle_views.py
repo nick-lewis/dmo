@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import uuid4
 
 from django.conf import settings
@@ -28,6 +29,47 @@ TUTOR_AVATAR_CONTENT_TYPES = {
     "image/webp": ".webp",
 }
 TUTOR_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+SCRIPT_IMAGE_DIR = "script-images"
+SCRIPT_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def public_script_image_options():
+    public_root = settings.BASE_DIR / "frontend" / "public"
+    image_dirs = [
+        ("test-images", public_root / "test-images", "Built-in"),
+        (
+            SCRIPT_IMAGE_DIR,
+            Path(settings.MEDIA_ROOT) / SCRIPT_IMAGE_DIR,
+            "Uploaded",
+        ),
+    ]
+    options = []
+    seen_paths = set()
+    for path_prefix, directory, source in image_dirs:
+        if not directory.exists():
+            continue
+        for image_path in sorted(directory.iterdir(), key=lambda item: item.name.lower()):
+            if not image_path.is_file():
+                continue
+            if image_path.suffix.lower() not in {".gif", ".jpg", ".jpeg", ".png", ".webp"}:
+                continue
+            asset_path = f"{path_prefix}/{image_path.name}".replace("\\", "/")
+            if path_prefix == SCRIPT_IMAGE_DIR:
+                asset_path = f"{settings.MEDIA_URL.strip('/')}/{asset_path}".replace(
+                    "\\",
+                    "/",
+                )
+            if asset_path in seen_paths:
+                continue
+            seen_paths.add(asset_path)
+            options.append(
+                {
+                    "label": image_path.stem.replace("-", " ").replace("_", " "),
+                    "path": asset_path,
+                    "source": source,
+                }
+            )
+    return options
 
 
 @require_http_methods(["GET", "POST"])
@@ -130,6 +172,58 @@ def upload_tutor_avatar(request, experience_id):
     media_url = settings.MEDIA_URL.strip("/")
     avatar_path = f"{media_url}/{saved_name}".replace("\\", "/")
     return JsonResponse({"avatarPath": avatar_path})
+
+
+@require_http_methods(["GET", "POST"])
+def script_images(request, experience_id):
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    experience = Experience.objects.filter(id=experience_id, user=request.user).first()
+    if not experience:
+        return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({"images": public_script_image_options()})
+
+    uploaded_file = request.FILES.get("image")
+    if not uploaded_file:
+        return JsonResponse({"detail": "Choose an image to upload."}, status=400)
+
+    content_type = str(uploaded_file.content_type or "").lower()
+    extension = TUTOR_AVATAR_CONTENT_TYPES.get(content_type)
+    if not extension:
+        return JsonResponse(
+            {"detail": "Use a PNG, JPG, WebP, or GIF image."},
+            status=400,
+        )
+
+    if uploaded_file.size > SCRIPT_IMAGE_MAX_BYTES:
+        return JsonResponse(
+            {"detail": "Use an image smaller than 8 MB."},
+            status=400,
+        )
+
+    storage = FileSystemStorage(location=settings.MEDIA_ROOT)
+    saved_name = storage.save(
+        f"{SCRIPT_IMAGE_DIR}/{uuid4().hex}{extension}",
+        uploaded_file,
+    )
+    media_url = settings.MEDIA_URL.strip("/")
+    image_path = f"{media_url}/{saved_name}".replace("\\", "/")
+    return JsonResponse(
+        {
+            "image": {
+                "label": Path(saved_name).stem,
+                "path": image_path,
+                "source": "Uploaded",
+            },
+            "imagePath": image_path,
+            "images": public_script_image_options(),
+        },
+        status=201,
+    )
 
 
 @require_GET

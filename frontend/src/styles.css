@@ -2458,8 +2458,16 @@ button {
   gap: 8px;
 }
 
+.next-script-image-field {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
 .next-script-action-editor-head strong,
-.next-script-action-editor label span {
+.next-script-action-editor label span,
+.next-script-image-field > span {
   color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
   font-size: 0.72rem;
   font-weight: 820;
@@ -2487,6 +2495,147 @@ button {
   background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
   font: inherit;
   font-size: 0.8rem;
+}
+
+.next-script-image-control {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.next-script-image-preview-button {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 52px;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted-ink) 78%, var(--page-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+}
+
+.next-script-image-preview-button:hover,
+.next-script-image-preview-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 34%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent-2-soft) 38%, transparent);
+  outline: 0;
+}
+
+.next-script-image-preview-button img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.next-script-image-preview-button span {
+  font-size: 0.62rem;
+  font-weight: 760;
+}
+
+.next-script-image-path-input {
+  align-self: start;
+}
+
+.next-script-image-upload-button {
+  align-self: start;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent-2) 84%, var(--page-ink));
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 780;
+}
+
+.next-script-image-upload-button:hover:not(:disabled),
+.next-script-image-upload-button:focus-visible {
+  background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
+  outline: 0;
+}
+
+.next-script-image-upload-button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.next-script-image-file-input {
+  display: none;
+}
+
+.next-script-image-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 232px;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 14%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 78%, transparent);
+}
+
+.next-script-image-picker button {
+  display: grid;
+  grid-template-rows: 58px auto auto;
+  gap: 3px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: transparent;
+  text-align: left;
+}
+
+.next-script-image-picker button:hover,
+.next-script-image-picker button:focus-visible,
+.next-script-image-picker button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent-2) 26%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent-2-soft) 38%, transparent);
+  outline: 0;
+}
+
+.next-script-image-picker img {
+  width: 100%;
+  height: 58px;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 62%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--page-bg) 74%, var(--panel-bg-strong));
+}
+
+.next-script-image-picker span,
+.next-script-image-picker small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-script-image-picker span {
+  font-size: 0.68rem;
+  font-weight: 760;
+}
+
+.next-script-image-picker small {
+  color: var(--muted-ink);
+  font-size: 0.58rem;
+  font-weight: 680;
+}
+
+.next-script-image-picker-empty {
+  grid-column: 1 / -1;
+  padding: 10px;
+  color: var(--muted-ink);
+  font-size: 0.72rem;
+  font-weight: 720;
 }
 
 .next-display-text-editor {

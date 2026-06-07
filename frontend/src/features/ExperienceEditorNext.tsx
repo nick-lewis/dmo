@@ -174,6 +174,12 @@ type AudioScriptSelection = {
   stepId: string;
 };
 
+type ScriptImageOption = {
+  label: string;
+  path: string;
+  source: string;
+};
+
 type PersistedNextEditorUiState = {
   activeScriptAction?: {
     actionIndex?: number;
@@ -2258,6 +2264,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [runningEventId, setRunningEventId] = useState("");
   const [scriptActionMenu, setScriptActionMenu] =
     useState<ScriptActionMenuState | null>(null);
+  const [scriptImageOptions, setScriptImageOptions] = useState<
+    ScriptImageOption[]
+  >([]);
+  const [isLoadingScriptImages, setIsLoadingScriptImages] = useState(false);
+  const [isScriptImagePickerOpen, setIsScriptImagePickerOpen] = useState(false);
+  const [isUploadingScriptImage, setIsUploadingScriptImage] = useState(false);
   const [scriptSlidePreviews, setScriptSlidePreviews] = useState<
     Record<string, ScriptSlidePreview>
   >({});
@@ -2297,6 +2309,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   );
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const scriptImageFileInputRef = useRef<HTMLInputElement | null>(null);
   const tutorAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const tutorPresenceRef = useRef<HTMLDivElement | null>(null);
   const tutorVoiceInstructionsRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2695,8 +2708,21 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   }, [experience?.id, status]);
 
   useEffect(() => {
+    if (!experience || status !== "ready") return;
+
+    void loadScriptImages(experience.id);
+  }, [experience?.id, status]);
+
+  useEffect(() => {
     setScriptActionMenu(null);
   }, [activeScriptStep?.id]);
+
+  useEffect(() => {
+    setIsScriptImagePickerOpen(false);
+  }, [
+    scriptActionMenu?.mode,
+    scriptActionMenu?.mode === "edit" ? scriptActionMenu.markerKey : "",
+  ]);
 
   useEffect(() => {
     if (!scriptActionMenu) return;
@@ -4094,6 +4120,89 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
+  async function loadScriptImages(targetExperienceId = experience?.id ?? "") {
+    if (!targetExperienceId) return;
+
+    setIsLoadingScriptImages(true);
+    try {
+      const payload = await apiFetch<{ images: ScriptImageOption[] }>(
+        `/api/experiences/${encodeURIComponent(targetExperienceId)}/script-images/`,
+      );
+      setScriptImageOptions(payload.images);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load script images.",
+      );
+    } finally {
+      setIsLoadingScriptImages(false);
+    }
+  }
+
+  function selectScriptImage(imagePath: string) {
+    if (!editingScriptMarker || !editingSideImageState) return;
+
+    replaceScriptActionMarker(
+      editingScriptMarker,
+      sideImageActionArgs({
+        ...editingSideImageState,
+        imagePath,
+      }),
+    );
+    setIsScriptImagePickerOpen(false);
+  }
+
+  async function uploadScriptImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !experience) return;
+
+    if (!file.type.startsWith("image/")) {
+      setError("Choose an image file.");
+      event.target.value = "";
+      return;
+    }
+
+    setError("");
+    setIsUploadingScriptImage(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const payload = await apiFetch<{
+        imagePath: string;
+        images: ScriptImageOption[];
+      }>(
+        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      setScriptImageOptions(payload.images);
+      if (editingScriptMarker && editingSideImageState) {
+        replaceScriptActionMarker(
+          editingScriptMarker,
+          sideImageActionArgs({
+            ...editingSideImageState,
+            imagePath: payload.imagePath,
+          }),
+        );
+      }
+      setIsScriptImagePickerOpen(false);
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Could not upload script image.",
+      );
+    } finally {
+      setIsUploadingScriptImage(false);
+      event.target.value = "";
+    }
+  }
+
   async function uploadTutorAvatar(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file || !experience) return;
@@ -4311,6 +4420,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     editingScriptMarker?.type === "side_image"
       ? sideImageActionStateFromArgs(editingScriptMarker.argList)
       : null;
+  const scriptImagePickerOptions = (() => {
+    const currentPath = editingSideImageState?.imagePath.trim() ?? "";
+    if (
+      !currentPath ||
+      scriptImageOptions.some((option) => option.path === currentPath)
+    ) {
+      return scriptImageOptions;
+    }
+
+    return [
+      {
+        label: "Current image",
+        path: currentPath,
+        source: "Custom",
+      },
+      ...scriptImageOptions,
+    ];
+  })();
   const displayTextPanel = activeScriptAudioItem ? (
     <DisplayTextEditor
       baseSlots={activeDisplayBaseSlots}
@@ -4579,23 +4706,93 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                         <option value="hide">Hide</option>
                       </select>
                     </label>
-                    <label>
+                    <div className="next-script-image-field">
                       <span>Image</span>
-                      <input
-                        aria-label="Interface image path"
-                        onChange={(event) =>
-                          replaceScriptActionMarker(
-                            editingScriptMarker,
-                            sideImageActionArgs({
-                              ...editingSideImageState,
-                              imagePath: event.target.value,
-                            }),
-                          )
-                        }
-                        placeholder={defaultSideImagePath}
-                        value={editingSideImageState.imagePath}
-                      />
-                    </label>
+                      <div className="next-script-image-control">
+                        <button
+                          aria-expanded={isScriptImagePickerOpen}
+                          aria-label="Choose interface image"
+                          className="next-script-image-preview-button"
+                          onClick={() =>
+                            setIsScriptImagePickerOpen((isOpen) => !isOpen)
+                          }
+                          title="Choose interface image"
+                          type="button"
+                        >
+                          {editingSideImageState.imagePath ? (
+                            <img
+                              alt=""
+                              src={publicAsset(editingSideImageState.imagePath)}
+                            />
+                          ) : (
+                            <span>No image</span>
+                          )}
+                        </button>
+                        <input
+                          aria-label="Interface image path"
+                          className="next-script-image-path-input"
+                          onChange={(event) =>
+                            replaceScriptActionMarker(
+                              editingScriptMarker,
+                              sideImageActionArgs({
+                                ...editingSideImageState,
+                                imagePath: event.target.value,
+                              }),
+                            )
+                          }
+                          placeholder={defaultSideImagePath}
+                          value={editingSideImageState.imagePath}
+                        />
+                        <button
+                          className="next-script-image-upload-button"
+                          disabled={isUploadingScriptImage}
+                          onClick={() => scriptImageFileInputRef.current?.click()}
+                          type="button"
+                        >
+                          {isUploadingScriptImage ? "Uploading" : "Upload"}
+                        </button>
+                        <input
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="next-script-image-file-input"
+                          onChange={(event) => void uploadScriptImage(event)}
+                          ref={scriptImageFileInputRef}
+                          type="file"
+                        />
+                        {isScriptImagePickerOpen ? (
+                          <div
+                            aria-label="Interface image options"
+                            className="next-script-image-picker"
+                          >
+                            {isLoadingScriptImages ? (
+                              <div className="next-script-image-picker-empty">
+                                Loading images
+                              </div>
+                            ) : scriptImagePickerOptions.length ? (
+                              scriptImagePickerOptions.map((option) => {
+                                const isSelected =
+                                  option.path === editingSideImageState.imagePath;
+                                return (
+                                  <button
+                                    aria-pressed={isSelected}
+                                    key={option.path}
+                                    onClick={() => selectScriptImage(option.path)}
+                                    type="button"
+                                  >
+                                    <img alt="" src={publicAsset(option.path)} />
+                                    <span>{option.label}</span>
+                                    <small>{option.source}</small>
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="next-script-image-picker-empty">
+                                No images yet
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </>
                 ) : editingScriptMarker.type === "play_sound" ? (
                   <>
@@ -4878,7 +5075,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                       ))}
                     </select>
                   </label>
-                  <label className="control-field next-tutor-speed-field">
+                  <label
+                    className="control-field next-tutor-speed-field"
+                    title="Speed of pseudo generation of pre-generated scripts."
+                  >
                     <span>Text reveal speed</span>
                     <input
                       aria-label="Text reveal speed"

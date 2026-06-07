@@ -2,11 +2,13 @@ import json
 import tempfile
 import wave
 from io import StringIO
+from pathlib import Path
 from threading import Event, Lock
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 
@@ -251,6 +253,41 @@ class EventEditorApiTests(TestCase):
             response.json()["experience"]["tutor"]["choiceIconBackground"],
             "#fde2dc",
         )
+
+    def test_script_images_lists_built_in_images(self):
+        response = self.client.get(
+            f"/api/experiences/{self.experience.id}/script-images/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        image_paths = {image["path"] for image in response.json()["images"]}
+        self.assertIn("test-images/dLU-right.png", image_paths)
+
+    def test_script_images_upload_saves_script_image(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root, MEDIA_URL="media/"):
+                image = SimpleUploadedFile(
+                    "demo.png",
+                    b"fake-png-bytes",
+                    content_type="image/png",
+                )
+                response = self.client.post(
+                    f"/api/experiences/{self.experience.id}/script-images/",
+                    data={"image": image},
+                )
+
+                self.assertEqual(response.status_code, 201)
+                image_path = response.json()["imagePath"]
+                self.assertTrue(image_path.startswith("media/script-images/"))
+                self.assertTrue(Path(media_root, image_path.removeprefix("media/")).exists())
+
+                list_response = self.client.get(
+                    f"/api/experiences/{self.experience.id}/script-images/",
+                )
+                image_paths = {
+                    item["path"] for item in list_response.json()["images"]
+                }
+                self.assertIn(image_path, image_paths)
 
     def test_start_event_persists_conversation_choices_without_immediate_action(self):
         TutorSettings.objects.create(
