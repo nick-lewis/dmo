@@ -7,7 +7,10 @@ import {
 import { publicAsset } from "../assets";
 import { SendIcon } from "../components/Icons";
 import type { RealtimeStatus } from "../realtime";
-import { displayTextFromScriptAudioMessage } from "../scriptAudio";
+import {
+  displayTextFromScriptAudioMessage,
+  scriptAudioSources,
+} from "../scriptAudio";
 import { choiceIconBackgroundStyle } from "../uiHelpers";
 import type {
   ApiUser,
@@ -56,8 +59,8 @@ type RenderedChatItem = {
   author: string;
   body: string;
   id: string;
-  isScriptDisplayChunk: boolean;
   streaming: boolean;
+  topAnchor: boolean;
   tone: "student" | "tutor";
 };
 
@@ -169,11 +172,18 @@ export function ChatPanelContent({
             chunk.text ||
             (chunk.streaming || chunk.active ? "..." : chunk.fullText),
           id: chunk.id,
-          isScriptDisplayChunk: true,
           streaming: chunk.streaming,
+          topAnchor: true,
           tone,
         }));
     }
+
+    const messageSource =
+      typeof message.metadata?.source === "string"
+        ? message.metadata.source
+        : "";
+    const isScriptAudioMessage =
+      message.role === "assistant" && scriptAudioSources.has(messageSource);
 
     return [
       {
@@ -184,8 +194,8 @@ export function ChatPanelContent({
             : displayTextFromScriptAudioMessage(message)) ||
           (isStreaming ? "..." : ""),
         id: message.id,
-        isScriptDisplayChunk: false,
         streaming: isStreaming,
+        topAnchor: isScriptAudioMessage,
         tone,
       },
     ];
@@ -196,9 +206,7 @@ export function ChatPanelContent({
   const turnAnchorIsStreaming = Boolean(
     turnAnchorMessage?.streaming,
   );
-  const turnAnchorIsScriptDisplayChunk = Boolean(
-    turnAnchorMessage?.isScriptDisplayChunk,
-  );
+  const turnAnchorShouldTopAnchor = Boolean(turnAnchorMessage?.topAnchor);
   const turnAnchorIsVisible = Boolean(
     turnAnchorMessage,
   );
@@ -231,7 +239,7 @@ export function ChatPanelContent({
         const target = messageRefs.current.get(turnAnchorMessageId);
         if (target) {
           if (turnAnchorIsStreaming) {
-            if (turnAnchorIsScriptDisplayChunk) {
+            if (turnAnchorShouldTopAnchor) {
               scrollMessageList({
                 top: Math.max(0, target.offsetTop - 2),
               });
@@ -275,7 +283,7 @@ export function ChatPanelContent({
   }, [
     messages.length,
     runtimeButtonsLayoutKey,
-    turnAnchorIsScriptDisplayChunk,
+    turnAnchorShouldTopAnchor,
     turnAnchorIsStreaming,
     turnAnchorIsVisible,
     turnAnchorMessageId,
