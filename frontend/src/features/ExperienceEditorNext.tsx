@@ -78,9 +78,7 @@ import type {
 import { experienceAutosaveDelayMs, localMessageId } from "./eventEditorUtils";
 import type { PythonDslScriptAction } from "./PythonDslEditor";
 import {
-  parsePythonDslChatActions,
-  parsePythonDslContextActions,
-  parsePythonDslScriptActions,
+  parsePythonDslStepActions,
   pythonDslSourceFromEventSteps,
 } from "./pythonDslActions";
 import {
@@ -254,8 +252,8 @@ type ScriptSourceWordRange = {
 const displayDocumentHistoryLimit = 80;
 const scriptActionHistoryLimit = 80;
 const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
-const onEntryDslContextStepSource = "next-on-entry-dsl";
-const conversationDslContextStepSource = "next-conversation-dsl";
+const onEntryDslStepSource = "next-on-entry-dsl";
+const conversationDslStepSource = "next-conversation-dsl";
 const defaultSideImagePath = "test-images/dLU-right.png";
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
@@ -3204,41 +3202,63 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
-  async function syncContextStepsFromDsl({
+  async function syncDslActionStepsFromSource({
     eventPathId,
     experiencePathId,
+    includeChatActions = false,
+    includeScriptActions = false,
     latestEvent,
     source,
     sourceLabel,
   }: {
     eventPathId: string;
     experiencePathId: string;
+    includeChatActions?: boolean;
+    includeScriptActions?: boolean;
     latestEvent: ExperienceEvent;
     source: string;
     sourceLabel: string;
   }) {
-    const nextContextActions = parsePythonDslContextActions(source);
+    const nextActions = parsePythonDslStepActions(source).filter((action) => {
+      if (action.actionType === "chat_availability") return includeChatActions;
+      if (action.actionType === "script") return includeScriptActions;
+      return true;
+    });
     const existingContextSteps = sortedEventSteps(latestEvent.steps).filter(
       (step) =>
         step.actionType === "set_context" &&
         step.config.source === sourceLabel,
     );
+    const existingGotoSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "goto_event" &&
+        step.config.source === sourceLabel,
+    );
+    const existingChatSteps = includeChatActions
+      ? sortedEventSteps(latestEvent.steps).filter(
+          (step) => step.actionType === "chat_availability",
+        )
+      : [];
+    const existingScriptSteps = includeScriptActions
+      ? sortedScriptSteps(latestEvent)
+      : [];
+    let contextIndex = 0;
+    let gotoIndex = 0;
+    let chatIndex = 0;
+    let scriptIndex = 0;
     let nextEvent = latestEvent;
+    const desiredStepIds: string[] = [];
 
-    for (const [index, contextAction] of nextContextActions.entries()) {
-      const existingStep = existingContextSteps[index];
-      const stepPayload = {
-        actionType: "set_context" as const,
-        condition: {},
-        config: {
-          key: contextAction.key,
-          source: sourceLabel,
-          value: contextAction.value,
-        },
-        enabled: true,
-        label: `Set ${contextAction.key}`,
-      };
-
+    async function upsertDslStep(
+      existingStep: EventActionStep | undefined,
+      stepPayload: {
+        actionType: EventActionStep["actionType"];
+        condition: Record<string, unknown>;
+        config: Record<string, unknown>;
+        enabled: boolean;
+        label: string;
+      },
+    ) {
       if (existingStep) {
         const payload = await apiFetch<{ step: EventActionStep }>(
           `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
@@ -3253,7 +3273,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           },
         );
         nextEvent = replaceEventStep(nextEvent, payload.step);
-        continue;
+        return payload.step;
       }
 
       const payload = await apiFetch<{
@@ -3264,14 +3284,120 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         body: JSON.stringify(stepPayload),
       });
       nextEvent = payload.event;
+      return payload.step;
     }
 
-    for (const extraStep of existingContextSteps.slice(nextContextActions.length)) {
+    for (const action of nextActions) {
+      if (action.actionType === "script") {
+        const existingStep = existingScriptSteps[scriptIndex];
+        scriptIndex += 1;
+        const step = await upsertDslStep(existingStep, {
+          actionType: "script",
+          condition: existingStep?.condition ?? {},
+          config: existingStep?.config ?? { deckUrl: "", text: "" },
+          enabled: true,
+          label: existingStep?.label || "Script",
+        });
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "chat_availability") {
+        const step = await upsertDslStep(existingChatSteps[chatIndex], {
+          actionType: "chat_availability",
+          condition: {},
+          config: { enabled: action.enabled },
+          enabled: true,
+          label: "Set chat availability",
+        });
+        chatIndex += 1;
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "set_context") {
+        const step = await upsertDslStep(existingContextSteps[contextIndex], {
+          actionType: "set_context",
+          condition: {},
+          config: {
+            key: action.key,
+            source: sourceLabel,
+            value: action.value,
+          },
+          enabled: true,
+          label: `Set ${action.key}`,
+        });
+        contextIndex += 1;
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "goto_event") {
+        const step = await upsertDslStep(existingGotoSteps[gotoIndex], {
+          actionType: "goto_event",
+          condition: {},
+          config: {
+            source: sourceLabel,
+            triggersEvent: action.triggersEvent,
+          },
+          enabled: true,
+          label: `Go to ${action.triggersEvent}`,
+        });
+        gotoIndex += 1;
+        desiredStepIds.push(step.id);
+      }
+    }
+
+    const extraSteps = [
+      ...existingChatSteps.slice(chatIndex),
+      ...existingContextSteps.slice(contextIndex),
+      ...existingGotoSteps.slice(gotoIndex),
+    ];
+
+    if (
+      !desiredStepIds.length &&
+      extraSteps.length > 0 &&
+      extraSteps.length === nextEvent.steps.length
+    ) {
+      const payload = await apiFetch<{
+        event: ExperienceEvent;
+        step: EventActionStep;
+      }>(`/api/experiences/${experiencePathId}/events/${eventPathId}/steps/`, {
+        method: "POST",
+        body: JSON.stringify({
+          actionType: "script",
+          condition: {},
+          config: { deckUrl: "", text: "" },
+          enabled: true,
+          label: "Script",
+        }),
+      });
+      nextEvent = payload.event;
+    }
+
+    for (const extraStep of extraSteps) {
       const payload = await apiFetch<{ event: ExperienceEvent }>(
         `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
           extraStep.id,
         )}/`,
         { method: "DELETE" },
+      );
+      nextEvent = payload.event;
+    }
+
+    if (desiredStepIds.length) {
+      const desiredStepIdSet = new Set(desiredStepIds);
+      const remainingStepIds = sortedEventSteps(nextEvent.steps)
+        .map((step) => step.id)
+        .filter((stepId) => !desiredStepIdSet.has(stepId));
+      const payload = await apiFetch<{ event: ExperienceEvent }>(
+        `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/reorder/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            stepIds: [...desiredStepIds, ...remainingStepIds],
+          }),
+        },
       );
       nextEvent = payload.event;
     }
@@ -3296,12 +3422,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     const experiencePathId = encodeURIComponent(experience.id);
     const eventPathId = encodeURIComponent(pending.eventId);
-    const nextChatActions = parsePythonDslChatActions(pending.source);
-    const nextScriptActions = parsePythonDslScriptActions(pending.source);
-    const existingChatSteps = sortedEventSteps(targetEvent.steps).filter(
-      (step) => step.actionType === "chat_availability",
-    );
-    const existingScriptSteps = sortedScriptSteps(targetEvent);
     let latestEvent = targetEvent;
 
     try {
@@ -3314,103 +3434,15 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
       latestEvent = sourcePayload.event;
 
-      latestEvent = await syncContextStepsFromDsl({
+      latestEvent = await syncDslActionStepsFromSource({
         eventPathId,
         experiencePathId,
+        includeChatActions: true,
+        includeScriptActions: true,
         latestEvent,
         source: pending.source,
-        sourceLabel: onEntryDslContextStepSource,
+        sourceLabel: onEntryDslStepSource,
       });
-
-      for (
-        let index = existingScriptSteps.length;
-        index < nextScriptActions.length;
-        index += 1
-      ) {
-        const payload = await apiFetch<{
-          event: ExperienceEvent;
-          step: EventActionStep;
-        }>(`/api/experiences/${experiencePathId}/events/${eventPathId}/steps/`, {
-          method: "POST",
-          body: JSON.stringify({
-            actionType: "script",
-            condition: {},
-            config: { deckUrl: "", text: "" },
-            enabled: true,
-            label: "Script",
-          }),
-        });
-        latestEvent = payload.event;
-      }
-
-      if (
-        nextChatActions.length === 0 &&
-        nextScriptActions.length === 0 &&
-        existingChatSteps.length > 0 &&
-        existingChatSteps.length === targetEvent.steps.length
-      ) {
-        const payload = await apiFetch<{
-          event: ExperienceEvent;
-          step: EventActionStep;
-        }>(`/api/experiences/${experiencePathId}/events/${eventPathId}/steps/`, {
-          method: "POST",
-          body: JSON.stringify({
-            actionType: "script",
-            condition: {},
-            config: { deckUrl: "", text: "" },
-            enabled: true,
-            label: "Script",
-          }),
-        });
-        latestEvent = payload.event;
-      }
-
-      for (const [index, chatAction] of nextChatActions.entries()) {
-        const existingStep = existingChatSteps[index];
-        const stepPayload = {
-          actionType: "chat_availability",
-          condition: {},
-          config: { enabled: chatAction.enabled },
-          enabled: true,
-          label: "Set chat availability",
-        };
-
-        if (existingStep) {
-          const payload = await apiFetch<{ step: EventActionStep }>(
-            `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
-              existingStep.id,
-            )}/`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                ...stepPayload,
-                sortOrder: existingStep.sortOrder,
-              }),
-            },
-          );
-          latestEvent = replaceEventStep(latestEvent, payload.step);
-          continue;
-        }
-
-        const payload = await apiFetch<{
-          event: ExperienceEvent;
-          step: EventActionStep;
-        }>(`/api/experiences/${experiencePathId}/events/${eventPathId}/steps/`, {
-          method: "POST",
-          body: JSON.stringify(stepPayload),
-        });
-        latestEvent = payload.event;
-      }
-
-      for (const extraStep of existingChatSteps.slice(nextChatActions.length)) {
-        const payload = await apiFetch<{ event: ExperienceEvent }>(
-          `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
-            extraStep.id,
-          )}/`,
-          { method: "DELETE" },
-        );
-        latestEvent = payload.event;
-      }
 
       setExperience((current) =>
         current && current.id === experience.id
@@ -3465,12 +3497,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
       latestEvent = payload.event;
 
-      latestEvent = await syncContextStepsFromDsl({
+      latestEvent = await syncDslActionStepsFromSource({
         eventPathId: encodeURIComponent(pending.eventId),
         experiencePathId: encodeURIComponent(experience.id),
         latestEvent,
         source: pending.source,
-        sourceLabel: conversationDslContextStepSource,
+        sourceLabel: conversationDslStepSource,
       });
 
       setExperience((current) =>
@@ -4530,7 +4562,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           <button
             aria-label="On entry action help"
             className="next-event-script-help"
-            data-tooltip="Ctrl-click chat actions to toggle on/off. Click script actions to open their panel."
+            data-tooltip="Ctrl-click chat actions to toggle on/off. Ctrl-click goto destinations to choose an event. Click script actions to open their panel."
             type="button"
           >
             <HelpIcon />

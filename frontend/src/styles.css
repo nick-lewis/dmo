@@ -3041,6 +3041,10 @@ button {
   grid-column: 1 / -1;
 }
 
+.python-dsl-context-route {
+  grid-column: 1 / -1;
+}
+
 .python-dsl-context-label {
   display: flex;
   align-items: center;
@@ -3139,7 +3143,8 @@ button {
 .cm-dsl-chat-action,
 .cm-dsl-script-action,
 .cm-dsl-button-action,
-.cm-dsl-context-action {
+.cm-dsl-context-action,
+.cm-dsl-route-action {
   display: inline-block;
   min-height: 1.36em;
   margin: 0 1px;
@@ -3189,6 +3194,18 @@ button {
   border-color: color-mix(in srgb, var(--accent-4) 30%, var(--panel-border));
   color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-4));
   background: color-mix(in srgb, var(--accent-4) 12%, transparent);
+  cursor: text;
+}
+
+.cm-dsl-route-action {
+  color: color-mix(in srgb, var(--accent) 72%, var(--page-ink));
+}
+
+.cm-dsl-route-action:hover,
+.cm-focused .cm-dsl-route-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--panel-border));
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent));
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
   cursor: text;
 }
 

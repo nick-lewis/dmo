@@ -1180,7 +1180,11 @@ def validate_action_config(action_type, value):
             return None, "Context key is required."
         if len(key) > 120:
             return None, "Context key is too long."
-        return {"key": key, "value": value.get("value")}, ""
+        config = {"key": key, "value": value.get("value")}
+        source = str(value.get("source", "")).strip()
+        if source:
+            config["source"] = source[:80]
+        return config, ""
 
     if action_type == EventActionStep.ActionType.APPEND_CONTEXT_LIST:
         key = str(value.get("key", "")).strip()
@@ -1291,7 +1295,11 @@ def validate_action_config(action_type, value):
         )
         if event_error:
             return None, event_error
-        return {"triggersEvent": triggers_event}, ""
+        config = {"triggersEvent": triggers_event}
+        source = str(value.get("source", "")).strip()
+        if source:
+            config["source"] = source[:80]
+        return config, ""
 
     if action_type == EventActionStep.ActionType.BUTTON_CHOICE:
         label = str(value.get("label", "")).strip()

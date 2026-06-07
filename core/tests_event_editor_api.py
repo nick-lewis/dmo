@@ -232,6 +232,117 @@ class EventEditorApiTests(TestCase):
             "primer",
         )
 
+    def test_editor_generated_action_steps_preserve_source_marker(self):
+        start = ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Start",
+            slug="start",
+            is_start=True,
+            sort_order=0,
+        )
+        ExperienceEvent.objects.create(
+            experience=self.experience,
+            title="Next",
+            slug="next",
+            sort_order=1,
+        )
+
+        context_response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/steps/",
+            data=json.dumps(
+                {
+                    "actionType": "set_context",
+                    "condition": {},
+                    "config": {
+                        "key": "route",
+                        "source": "next-on-entry-dsl",
+                        "value": "next",
+                    },
+                    "enabled": True,
+                    "label": "Set route",
+                }
+            ),
+            content_type="application/json",
+        )
+        goto_response = self.client.post(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/steps/",
+            data=json.dumps(
+                {
+                    "actionType": "goto_event",
+                    "condition": {},
+                    "config": {
+                        "source": "next-conversation-dsl",
+                        "triggersEvent": "next",
+                    },
+                    "enabled": True,
+                    "label": "Go to next",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(context_response.status_code, 201)
+        self.assertEqual(goto_response.status_code, 201)
+        self.assertEqual(
+            context_response.json()["step"]["config"]["source"],
+            "next-on-entry-dsl",
+        )
+        self.assertEqual(
+            goto_response.json()["step"]["config"]["source"],
+            "next-conversation-dsl",
+        )
+        context_step_id = context_response.json()["step"]["id"]
+        goto_step_id = goto_response.json()["step"]["id"]
+
+        context_patch_response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/steps/{context_step_id}/",
+            data=json.dumps(
+                {
+                    "actionType": "set_context",
+                    "condition": {},
+                    "config": {
+                        "key": "route",
+                        "source": "next-on-entry-dsl",
+                        "value": "patched",
+                    },
+                    "enabled": True,
+                    "label": "Set route",
+                }
+            ),
+            content_type="application/json",
+        )
+        goto_patch_response = self.client.patch(
+            f"/api/experiences/{self.experience.id}/events/{start.id}/steps/{goto_step_id}/",
+            data=json.dumps(
+                {
+                    "actionType": "goto_event",
+                    "condition": {},
+                    "config": {
+                        "source": "next-conversation-dsl",
+                        "triggersEvent": "start",
+                    },
+                    "enabled": True,
+                    "label": "Go to start",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(context_patch_response.status_code, 200)
+        self.assertEqual(goto_patch_response.status_code, 200)
+        self.assertEqual(
+            context_patch_response.json()["step"]["config"]["source"],
+            "next-on-entry-dsl",
+        )
+        self.assertEqual(
+            goto_patch_response.json()["step"]["config"]["source"],
+            "next-conversation-dsl",
+        )
+        context_step = EventActionStep.objects.get(action_type="set_context")
+        goto_step = EventActionStep.objects.get(action_type="goto_event")
+        self.assertEqual(context_step.config["source"], "next-on-entry-dsl")
+        self.assertEqual(goto_step.config["source"], "next-conversation-dsl")
+
     def test_experience_patch_persists_choice_icon_background(self):
         response = self.client.patch(
             f"/api/experiences/{self.experience.id}/",
