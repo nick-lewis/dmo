@@ -42,6 +42,31 @@ type PythonDslChatAction = {
   to: number;
 };
 
+type PythonDslButtonStringArgument = {
+  from: number;
+  to: number;
+  value: string;
+  valueFrom: number;
+  valueTo: number;
+};
+
+type PythonDslButtonBooleanArgument = {
+  from: number;
+  to: number;
+  value: boolean;
+  valueFrom: number;
+  valueTo: number;
+};
+
+type PythonDslButtonAction = {
+  destination?: PythonDslButtonStringArgument;
+  from: number;
+  icon?: PythonDslButtonBooleanArgument;
+  lineNumber: number;
+  source: string;
+  to: number;
+};
+
 export type PythonDslEventTarget = {
   description?: string;
   id: string;
@@ -53,6 +78,12 @@ type DslContextMenuState = {
   chatTarget?: PythonDslChatAction;
   insertionPoint: DslInsertionPoint;
   mode: PythonDslEditorMode;
+  x: number;
+  y: number;
+};
+
+type DslButtonDestinationMenuState = {
+  action: PythonDslButtonAction;
   x: number;
   y: number;
 };
@@ -374,11 +405,15 @@ const pythonDslTheme = EditorView.theme({
   },
 });
 
-function eventTargetCompletions(eventTargets: PythonDslEventTarget[]) {
+function eventTargetCompletions(
+  eventTargets: PythonDslEventTarget[],
+  mode: PythonDslEditorMode,
+) {
   return eventTargets.map((event): Completion => {
     const label = event.title.trim() || event.slug || event.id;
+    const value = mode === "conversation" ? eventTargetValue(event) : event.id;
     return {
-      apply: event.id,
+      apply: value,
       boost: 20,
       detail: event.slug ? `event: ${event.slug}` : "event",
       info: event.description || event.id,
@@ -413,7 +448,7 @@ function createDslCompletionSource(
   return function dslCompletionSource(
     context: CompletionContext,
   ): CompletionResult | null {
-    const eventCompletions = eventTargetCompletions(getEventTargets());
+    const eventCompletions = eventTargetCompletions(getEventTargets(), mode);
     const currentLine = context.state.doc.lineAt(context.pos);
     const prefix = currentLine.text.slice(0, context.pos - currentLine.from);
     const routeTargetMatch =
@@ -474,6 +509,10 @@ function createDslCompletionSource(
       validFor: /^\w*$/,
     };
   };
+}
+
+function eventTargetValue(event: PythonDslEventTarget) {
+  return event.slug || event.id;
 }
 
 function isBlockStarter(line: string) {
@@ -728,6 +767,73 @@ function scriptActionAtPosition(
   return null;
 }
 
+function parseButtonActionArgumentRanges(
+  source: string,
+  actionFrom: number,
+) {
+  const destinationMatch =
+    /\bdestination\s*=\s*(["'])(.*?)\1/.exec(source);
+  const destination = destinationMatch
+    ? (() => {
+        const quoteIndex = destinationMatch[0].indexOf(destinationMatch[1]);
+        const value = destinationMatch[2];
+        const valueFrom =
+          actionFrom + destinationMatch.index + quoteIndex + 1;
+        return {
+          from: actionFrom + destinationMatch.index,
+          to: actionFrom + destinationMatch.index + destinationMatch[0].length,
+          value,
+          valueFrom,
+          valueTo: valueFrom + value.length,
+        };
+      })()
+    : undefined;
+
+  const iconMatch = /\bicon\s*=\s*(True|False|true|false)\b/.exec(source);
+  const icon = iconMatch
+    ? (() => {
+        const rawValue = iconMatch[1];
+        const valueOffset = iconMatch[0].lastIndexOf(rawValue);
+        const valueFrom = actionFrom + iconMatch.index + valueOffset;
+        return {
+          from: actionFrom + iconMatch.index,
+          to: actionFrom + iconMatch.index + iconMatch[0].length,
+          value: rawValue.toLowerCase() === "true",
+          valueFrom,
+          valueTo: valueFrom + rawValue.length,
+        };
+      })()
+    : undefined;
+
+  return { destination, icon };
+}
+
+function buttonActionAtPosition(
+  view: EditorView,
+  position: number,
+): PythonDslButtonAction | null {
+  const line = view.state.doc.lineAt(position);
+  const trimmed = line.text.trimStart();
+  if (trimmed.startsWith("#")) return null;
+
+  for (const match of line.text.matchAll(conversationButtonActionPattern)) {
+    if (typeof match.index !== "number") continue;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (position < from || position > to) continue;
+
+    return {
+      ...parseButtonActionArgumentRanges(match[0], from),
+      from,
+      lineNumber: line.number,
+      source: match[0],
+      to,
+    };
+  }
+
+  return null;
+}
+
 function insertStatementAtCursor(
   view: EditorView,
   statement: string,
@@ -788,10 +894,50 @@ function toggleChatAction(view: EditorView, chatAction: PythonDslChatAction) {
   view.focus();
 }
 
-function contextMenuPosition(clientX: number, clientY: number) {
+function replaceButtonDestination(
+  view: EditorView,
+  action: PythonDslButtonAction,
+  destination: string,
+) {
+  if (!action.destination) return;
+
+  view.dispatch({
+    changes: {
+      from: action.destination.valueFrom,
+      insert: destination,
+      to: action.destination.valueTo,
+    },
+    scrollIntoView: true,
+    selection: { anchor: action.destination.valueFrom + destination.length },
+  });
+  view.focus();
+}
+
+function toggleButtonIcon(view: EditorView, action: PythonDslButtonAction) {
+  if (!action.icon) return;
+
+  const statement = action.icon.value ? "False" : "True";
+  view.dispatch({
+    changes: {
+      from: action.icon.valueFrom,
+      insert: statement,
+      to: action.icon.valueTo,
+    },
+    scrollIntoView: true,
+    selection: { anchor: action.icon.valueFrom + statement.length },
+  });
+  view.focus();
+}
+
+function contextMenuPosition(
+  clientX: number,
+  clientY: number,
+  width = 196,
+  height = 116,
+) {
   return {
-    x: Math.min(clientX, window.innerWidth - 196),
-    y: Math.min(clientY, window.innerHeight - 116),
+    x: Math.max(12, Math.min(clientX, window.innerWidth - width)),
+    y: Math.max(12, Math.min(clientY, window.innerHeight - height)),
   };
 }
 
@@ -837,6 +983,8 @@ export function PythonDslEditor({
   const [contextMenu, setContextMenu] = useState<DslContextMenuState | null>(
     null,
   );
+  const [buttonDestinationMenu, setButtonDestinationMenu] =
+    useState<DslButtonDestinationMenuState | null>(null);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -855,15 +1003,17 @@ export function PythonDslEditor({
   }, [eventTargets]);
 
   useEffect(() => {
-    if (!contextMenu) return undefined;
+    if (!contextMenu && !buttonDestinationMenu) return undefined;
 
     function closeMenu() {
       setContextMenu(null);
+      setButtonDestinationMenu(null);
     }
 
     function closeMenuOnEscape(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         setContextMenu(null);
+        setButtonDestinationMenu(null);
       }
     }
 
@@ -875,7 +1025,7 @@ export function PythonDslEditor({
       window.removeEventListener("keydown", closeMenuOnEscape);
       window.removeEventListener("resize", closeMenu);
     };
-  }, [contextMenu]);
+  }, [buttonDestinationMenu, contextMenu]);
 
   const extensions = useMemo<Extension[]>(
     () => [
@@ -905,7 +1055,64 @@ export function PythonDslEditor({
           return runHistoryShortcut(event, view);
         },
         click(event, view) {
-          if (modeRef.current === "conversation") return false;
+          if (modeRef.current === "conversation") {
+            const clickedButtonAction = explicitDslActionTarget(
+              event,
+              view,
+              "cm-dsl-button-action",
+            );
+            const buttonPosition = clickedButtonAction
+              ? view.posAtCoords({
+                  x: event.clientX,
+                  y: event.clientY,
+                })
+              : null;
+            const buttonAction =
+              buttonPosition === null
+                ? null
+                : buttonActionAtPosition(view, buttonPosition);
+
+            if (
+              buttonPosition === null ||
+              !buttonAction ||
+              (!event.ctrlKey && !event.metaKey)
+            ) {
+              return false;
+            }
+
+            if (
+              buttonAction.icon &&
+              buttonPosition >= buttonAction.icon.from &&
+              buttonPosition <= buttonAction.icon.to
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              view.dispatch({ selection: { anchor: buttonPosition } });
+              toggleButtonIcon(view, buttonAction);
+              setContextMenu(null);
+              setButtonDestinationMenu(null);
+              return true;
+            }
+
+            if (
+              buttonAction.destination &&
+              buttonPosition >= buttonAction.destination.from &&
+              buttonPosition <= buttonAction.destination.to
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              view.dispatch({ selection: { anchor: buttonPosition } });
+              view.focus();
+              setContextMenu(null);
+              setButtonDestinationMenu({
+                action: buttonAction,
+                ...contextMenuPosition(event.clientX, event.clientY, 292, 280),
+              });
+              return true;
+            }
+
+            return false;
+          }
 
           const clickedChatAction = explicitDslActionTarget(
             event,
@@ -932,6 +1139,7 @@ export function PythonDslEditor({
             view.dispatch({ selection: { anchor: chatPosition } });
             toggleChatAction(view, chatAction);
             setContextMenu(null);
+            setButtonDestinationMenu(null);
             return true;
           }
 
@@ -956,6 +1164,7 @@ export function PythonDslEditor({
           event.stopPropagation();
           view.dispatch({ selection: { anchor: scriptPosition } });
           view.focus();
+          setButtonDestinationMenu(null);
           onOpenScriptActionRef.current?.(scriptAction);
           return true;
         },
@@ -979,6 +1188,7 @@ export function PythonDslEditor({
               ? null
               : chatActionAtPosition(view, position);
           view.focus();
+          setButtonDestinationMenu(null);
           setContextMenu({
             chatTarget: chatAction ?? undefined,
             insertionPoint,
@@ -1072,14 +1282,29 @@ export function PythonDslEditor({
     setContextMenu(null);
   }
 
+  function chooseButtonDestination(eventTarget: PythonDslEventTarget) {
+    const view = viewRef.current;
+    if (!view || !buttonDestinationMenu) return;
+
+    replaceButtonDestination(
+      view,
+      buttonDestinationMenu.action,
+      eventTargetValue(eventTarget),
+    );
+    setButtonDestinationMenu(null);
+  }
+
   function insertConversationButton() {
     const view = viewRef.current;
     if (!view) return;
 
-    const destination = eventTargetsRef.current[0]?.slug ?? "";
+    const destination = eventTargetsRef.current[0]
+      ? eventTargetValue(eventTargetsRef.current[0])
+      : "";
     const statement = `button(text="Continue", destination="${destination}", icon=True)`;
     insertStatementAtCursor(view, statement, contextMenu?.insertionPoint);
     setContextMenu(null);
+    setButtonDestinationMenu(null);
   }
 
   function openContextMenu(event: MouseEvent) {
@@ -1105,6 +1330,7 @@ export function PythonDslEditor({
           ? null
           : chatActionAtPosition(view, position);
       view.focus();
+      setButtonDestinationMenu(null);
       setContextMenu({
         chatTarget: chatAction ?? undefined,
         insertionPoint,
@@ -1119,6 +1345,7 @@ export function PythonDslEditor({
       mode: modeRef.current,
       ...contextMenuPosition(event.clientX, event.clientY),
     });
+    setButtonDestinationMenu(null);
   }
 
   return (
@@ -1177,6 +1404,54 @@ export function PythonDslEditor({
               </div>
             </>
           )}
+        </div>
+      ) : null}
+      {buttonDestinationMenu ? (
+        <div
+          className="python-dsl-context-menu python-dsl-destination-menu"
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+          role="menu"
+          style={{
+            left: buttonDestinationMenu.x,
+            top: buttonDestinationMenu.y,
+          }}
+        >
+          <div className="python-dsl-context-label">
+            Destination
+          </div>
+          <div className="python-dsl-event-options" role="group">
+            {eventTargets.length ? (
+              eventTargets.map((eventTarget) => {
+                const destinationValue = eventTargetValue(eventTarget);
+                const isSelected =
+                  buttonDestinationMenu.action.destination?.value ===
+                  destinationValue;
+                return (
+                  <button
+                    aria-checked={isSelected}
+                    key={eventTarget.id}
+                    onClick={() => chooseButtonDestination(eventTarget)}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <span className="python-dsl-event-option-title">
+                      {eventTarget.title.trim() ||
+                        eventTarget.slug ||
+                        eventTarget.id}
+                    </span>
+                    <span className="python-dsl-event-option-detail">
+                      {destinationValue}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="python-dsl-event-empty">
+                No destination events
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
     </div>
