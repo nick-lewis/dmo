@@ -289,6 +289,40 @@ def save_script_audio_display_text(script, display_text):
     return script_audio_display_text_from_slots(saved_slots, saved_breaks)
 
 
+def reset_script_audio_display_cue_offsets(script):
+    payload = load_script_audio_display_payload(script)
+    if not payload:
+        return []
+
+    display_slots = normalize_script_audio_display_slots(payload.get("displaySlots"))
+    if not display_slots and isinstance(payload.get("displayText"), str):
+        display_slots = script_audio_display_slots_from_text(payload.get("displayText"))
+    if not display_slots:
+        return []
+
+    base_slots = script_audio_display_slots_from_text(script)
+    if base_slots and len(display_slots) != len(base_slots):
+        return []
+
+    display_breaks = normalize_script_audio_display_breaks(
+        payload.get("displayBreaks"),
+        len(base_slots) or len(display_slots),
+    )
+    cue_count = staged_display_cue_count(display_breaks)
+    if not cue_count:
+        return []
+
+    reset_offsets = [0.0 for _ in range(cue_count)]
+    save_script_audio_display_slots(
+        script,
+        display_slots,
+        base_slots,
+        display_breaks,
+        reset_offsets,
+    )
+    return reset_offsets
+
+
 def script_audio_display_payload(item):
     return {
         "displayBaseSlots": item.get("displayBaseSlots", []),
@@ -667,6 +701,7 @@ def generate_script_audio_item(tutor_settings, item, force=False, safety_identif
                     path.unlink()
             except OSError:
                 pass
+        reset_script_audio_display_cue_offsets(item["script"])
 
     recording = get_or_create_script_audio(
         api_key=settings.OPENAI_API_KEY,

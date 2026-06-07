@@ -932,6 +932,88 @@ class ScriptAudioCachePayloadTests(TestCase):
         self.assertEqual(items[0]["displayBreaks"], [1, 1])
         self.assertEqual(items[0]["displayText"], "First line\n\nsecond line.")
 
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_force_generation_resets_display_cue_offsets_without_losing_breaks(self):
+        script = "First line second line."
+        display_slots = ["First", "line", "second", "line."]
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                event = ExperienceEvent.objects.create(
+                    experience=self.experience,
+                    title="Start",
+                    slug="start",
+                    is_start=True,
+                )
+                EventActionStep.objects.create(
+                    event=event,
+                    action_type=EventActionStep.ActionType.SCRIPT,
+                    config={"text": script},
+                    label="Intro",
+                )
+                self.client.force_login(self.user)
+                item = collect_experience_script_audio_items(self.experience)[0]
+
+                response = self.client.put(
+                    f"/api/experiences/{self.experience.id}/script-audio/{item['id']}/display/",
+                    data=json.dumps(
+                        {
+                            "displayBreaks": [1, 1],
+                            "displayCueOffsets": [4.25],
+                            "displaySlots": display_slots,
+                        }
+                    ),
+                    content_type="application/json",
+                )
+                updated_item = collect_experience_script_audio_items(self.experience)[0]
+                audio_path = script_audio_audio_path(updated_item["cacheKey"])
+                audio_path.parent.mkdir(parents=True, exist_ok=True)
+
+                def create_audio(*args, **kwargs):
+                    with wave.open(str(audio_path), "wb") as audio_file:
+                        audio_file.setnchannels(1)
+                        audio_file.setsampwidth(2)
+                        audio_file.setframerate(24000)
+                        audio_file.writeframes(b"\x00\x00" * 2400)
+                    return SimpleNamespace(
+                        audio_path=audio_path,
+                        cache_key=updated_item["cacheKey"],
+                        cache_hit=False,
+                    )
+
+                with (
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio",
+                        side_effect=create_audio,
+                    ),
+                    patch(
+                        "core.script_audio_services.get_or_create_script_audio_words",
+                        return_value=[
+                            {"word": "First", "start": 0.1, "end": 0.2},
+                            {"word": "line", "start": 0.2, "end": 0.3},
+                            {"word": "second", "start": 0.8, "end": 0.9},
+                            {"word": "line.", "start": 0.9, "end": 1.0},
+                        ],
+                    ),
+                ):
+                    payload, error, status_code = generate_experience_script_audio_payload(
+                        self.experience,
+                        {"force": True, "scriptId": item["id"]},
+                        "test-user",
+                    )
+
+                refreshed_item = payload["scripts"][0]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(updated_item["displayCueOffsets"], [4.25])
+        self.assertEqual(status_code, 200)
+        self.assertEqual(error, "")
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(refreshed_item["displayBreaks"], [1, 1])
+        self.assertEqual(refreshed_item["displayCueOffsets"], [0.0])
+        self.assertEqual(refreshed_item["displaySlots"], display_slots)
+        self.assertEqual(refreshed_item["displayText"], "First line\n\nsecond line.")
+
     def test_script_audio_inventory_groups_duplicate_sources(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,
