@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-import { MicIcon, StopIcon } from "../components/Icons";
+import { MicIcon, RefreshIcon, StopIcon } from "../components/Icons";
 import {
   appendScriptMarkerTimelineArg,
   buildScriptMarker,
@@ -129,12 +129,15 @@ type FineTuningTimelineVisibility = Record<FineTuningTimelineLayer, boolean>;
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
+  canRefreshSlides: boolean;
   deckUrl: string;
   displayBreaks: number[];
   displayCueOffsets: number[];
   displaySlots: string[];
+  isRefreshingSlides: boolean;
   onDisplayCueOffsetsChange: (offsets: number[]) => void;
   onMarkedTextChange: (value: string) => void;
+  onRefreshSlides: () => void;
   previews: Record<string, ScriptSlidePreview>;
   text: string;
   textRevealSpeed: number;
@@ -406,12 +409,15 @@ function FineTuningChatBubble({
 
 export function NextFineTuningPanel({
   audioItem,
+  canRefreshSlides,
   deckUrl,
   displayBreaks,
   displayCueOffsets,
   displaySlots,
+  isRefreshingSlides,
   onDisplayCueOffsetsChange,
   onMarkedTextChange,
+  onRefreshSlides,
   previews,
   text,
   textRevealSpeed,
@@ -1529,6 +1535,20 @@ export function NextFineTuningPanel({
       <audio preload="auto" ref={audioRef} src={audioPlaybackUrl} />
       <section className="next-fine-preview" aria-label="Playback preview">
         <div className="next-fine-slide-preview" aria-label="Main panel preview">
+          <button
+            aria-label="Refresh slide previews"
+            className="next-fine-slide-refresh-button"
+            disabled={!canRefreshSlides || isRefreshingSlides}
+            onClick={onRefreshSlides}
+            title={
+              canRefreshSlides
+                ? "Refresh slide previews from the deck"
+                : "Add a slides link and slide action first"
+            }
+            type="button"
+          >
+            <RefreshIcon />
+          </button>
           {slidePreview?.status === "ready" && slidePreview.imageUrl ? (
             <img
               alt={slideRef ? `Slide ${slideRef}` : ""}

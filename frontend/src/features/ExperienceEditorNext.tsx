@@ -1862,20 +1862,25 @@ function DisplayTextEditor({
 
 function ScriptActionReadOnlyView({
   actionRows,
+  canRefreshSlides,
   deckUrl,
   displayBreaks,
+  isRefreshingSlides,
   markers,
   onDeckUrlChange,
   onOpenInsert,
   onOpenMarker,
+  onRefreshSlides,
   onRemoveMarker,
   previews,
   sourceIndexByTextIndex,
   text,
 }: {
   actionRows: ScriptActionRow[];
+  canRefreshSlides: boolean;
   deckUrl: string;
   displayBreaks: number[];
+  isRefreshingSlides: boolean;
   markers: ScriptActionViewMarker[];
   onDeckUrlChange: (value: string) => void;
   onOpenInsert: (
@@ -1886,6 +1891,7 @@ function ScriptActionReadOnlyView({
     marker: ScriptMarkerInstance,
     event: ReactMouseEvent<HTMLElement>,
   ) => void;
+  onRefreshSlides: () => void;
   onRemoveMarker: (marker: ScriptMarkerInstance) => void;
   previews: Record<string, ScriptSlidePreview>;
   sourceIndexByTextIndex: number[];
@@ -2205,7 +2211,7 @@ function ScriptActionReadOnlyView({
 
   return (
     <div className="next-script-view">
-      <label className="next-script-slides-link-row">
+      <div className="next-script-slides-link-row">
         <input
           aria-label="Slides link"
           onChange={(event) => onDeckUrlChange(event.target.value)}
@@ -2231,7 +2237,20 @@ function ScriptActionReadOnlyView({
           type="url"
           value={deckUrl}
         />
-      </label>
+        <button
+          aria-label="Refresh slide previews"
+          disabled={!canRefreshSlides || isRefreshingSlides}
+          onClick={onRefreshSlides}
+          title={
+            canRefreshSlides
+              ? "Refresh slide previews from the deck"
+              : "Add a slides link and slide action first"
+          }
+          type="button"
+        >
+          <RefreshIcon />
+        </button>
+      </div>
       <div
         aria-label="Slides and actions"
         className="next-script-slide-flow"
@@ -2388,6 +2407,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [scriptSlidePreviews, setScriptSlidePreviews] = useState<
     Record<string, ScriptSlidePreview>
   >({});
+  const [isRefreshingScriptSlides, setIsRefreshingScriptSlides] =
+    useState(false);
   const [savingDisplayTextId, setSavingDisplayTextId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [onEntryDrafts, setOnEntryDrafts] = useState<Record<string, string>>({});
@@ -2556,6 +2577,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       activeScriptText,
     ],
   );
+  const activeScriptSlideRefs = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          activeScriptActionView.rows
+            .map((row) => row.slideRef.trim())
+            .filter(Boolean),
+        ),
+      ),
+    [activeScriptActionView.rows],
+  );
+  const canRefreshActiveScriptSlides =
+    Boolean(activeScriptDeckUrl.trim()) && activeScriptSlideRefs.length > 0;
   const activeAudioScriptVisualText =
     activeDisplayBreaks.length && activeAudioScriptText
       ? displayTextFromSlots(
@@ -2867,6 +2901,61 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     };
   }, [scriptActionMenu]);
 
+  function resolveScriptSlidePreview(
+    deckUrl: string,
+    slideRef: string,
+    forceRefresh = false,
+  ) {
+    const previewKey = slidePreviewKeyForDeck(deckUrl, slideRef);
+    setScriptSlidePreviews((current) => ({
+      ...current,
+      [previewKey]: { status: "loading" },
+    }));
+
+    return apiFetch<ResolvedSlide>("/api/slides/resolve/", {
+      method: "POST",
+      body: JSON.stringify({ deckUrl, forceRefresh, slideRef }),
+    })
+      .then((payload) => {
+        setScriptSlidePreviews((current) => ({
+          ...current,
+          [previewKey]: {
+            detail: payload.pageId,
+            imageUrl: `${payload.imageUrl}?v=${Date.now()}`,
+            status: "ready",
+          },
+        }));
+      })
+      .catch((error) => {
+        setScriptSlidePreviews((current) => ({
+          ...current,
+          [previewKey]: {
+            detail:
+              error instanceof Error ? error.message : "Could not load slide.",
+            status: "error",
+          },
+        }));
+      });
+  }
+
+  async function refreshActiveScriptSlidePreviews() {
+    const deckUrl = activeScriptDeckUrl.trim();
+    if (!deckUrl || !activeScriptSlideRefs.length || isRefreshingScriptSlides) {
+      return;
+    }
+
+    setIsRefreshingScriptSlides(true);
+    try {
+      await Promise.all(
+        activeScriptSlideRefs.map((slideRef) =>
+          resolveScriptSlidePreview(deckUrl, slideRef, true),
+        ),
+      );
+    } finally {
+      setIsRefreshingScriptSlides(false);
+    }
+  }
+
   useEffect(() => {
     if (
       activeScriptDetailTab !== "script" &&
@@ -2876,16 +2965,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
 
     const deckUrl = activeScriptDeckUrl.trim();
-    const slideRefs = Array.from(
-      new Set(
-        activeScriptActionView.rows
-          .map((row) => row.slideRef.trim())
-          .filter(Boolean),
-      ),
-    );
-    if (!deckUrl || !slideRefs.length) return;
+    if (!deckUrl || !activeScriptSlideRefs.length) return;
 
-    slideRefs.forEach((slideRef) => {
+    activeScriptSlideRefs.forEach((slideRef) => {
       const previewKey = slidePreviewKeyForDeck(deckUrl, slideRef);
       const currentPreview = scriptSlidePreviews[previewKey];
       if (
@@ -2895,42 +2977,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         return;
       }
 
-      setScriptSlidePreviews((current) => ({
-        ...current,
-        [previewKey]: { status: "loading" },
-      }));
-
-      void apiFetch<ResolvedSlide>("/api/slides/resolve/", {
-        method: "POST",
-        body: JSON.stringify({ deckUrl, slideRef }),
-      })
-        .then((payload) => {
-          setScriptSlidePreviews((current) => ({
-            ...current,
-            [previewKey]: {
-              detail: payload.pageId,
-              imageUrl: `${payload.imageUrl}?v=${Date.now()}`,
-              status: "ready",
-            },
-          }));
-        })
-        .catch((error) => {
-          setScriptSlidePreviews((current) => ({
-            ...current,
-            [previewKey]: {
-              detail:
-                error instanceof Error
-                  ? error.message
-                  : "Could not load slide.",
-              status: "error",
-            },
-          }));
-        });
+      void resolveScriptSlidePreview(deckUrl, slideRef);
     });
   }, [
     activeScriptDeckUrl,
     activeScriptDetailTab,
-    activeScriptActionView.rows,
+    activeScriptSlideRefs,
   ]);
 
   useEffect(() => {
@@ -4838,12 +4890,15 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView
             actionRows={activeScriptActionView.rows}
+            canRefreshSlides={canRefreshActiveScriptSlides}
             deckUrl={activeScriptDeckUrl}
             displayBreaks={[]}
+            isRefreshingSlides={isRefreshingScriptSlides}
             markers={activeScriptActionView.markers}
             onDeckUrlChange={updateActiveScriptDeckUrl}
             onOpenInsert={openScriptInsertMenu}
             onOpenMarker={openScriptMarkerMenu}
+            onRefreshSlides={refreshActiveScriptSlidePreviews}
             onRemoveMarker={removeScriptActionMarker}
             previews={scriptSlidePreviews}
             sourceIndexByTextIndex={activeScriptActionView.sourceIndexByTextIndex}
@@ -4856,10 +4911,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             displayBreaks={activeDisplayEditorBreaks}
             displayCueOffsets={activeDisplayCueOffsets}
             displaySlots={activeDisplaySlots}
+            canRefreshSlides={canRefreshActiveScriptSlides}
+            isRefreshingSlides={isRefreshingScriptSlides}
             onDisplayCueOffsetsChange={(offsets) =>
               void updateActiveDisplayCueOffsets(offsets)
             }
             onMarkedTextChange={updateActiveScriptMarkedText}
+            onRefreshSlides={refreshActiveScriptSlidePreviews}
             previews={scriptSlidePreviews}
             text={activeScriptText}
             textRevealSpeed={scriptTextRevealSpeed}
