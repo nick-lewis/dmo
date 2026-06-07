@@ -160,6 +160,14 @@ function markerLabel(marker: ScriptMarkerInstance) {
   if (isSlideMarker(marker)) {
     return `Slide ${marker.argList[0]?.trim() || "1"}`;
   }
+  if (marker.type === "side_image") {
+    const side = marker.argList[0]?.trim() || "left";
+    const mode = (marker.argList[1] || "show").trim().toLowerCase();
+    const state = ["hide", "hidden", "off", "false", "0"].includes(mode)
+      ? "hide"
+      : "show";
+    return `${side} ${state}`;
+  }
   return marker.detail || marker.label;
 }
 
