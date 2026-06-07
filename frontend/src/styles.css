@@ -1815,7 +1815,7 @@ button {
 
 .next-fine-transport {
   display: grid;
-  grid-template-columns: auto auto max-content minmax(0, 1fr);
+  grid-template-columns: auto auto auto max-content minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -1843,6 +1843,38 @@ button {
 .next-fine-speed-button:disabled {
   cursor: default;
   opacity: 0.48;
+}
+
+.next-fine-mode-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, max-content);
+  align-items: center;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 46%, transparent);
+}
+
+.next-fine-mode-toggle button {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted-ink) 84%, var(--page-ink));
+  background: transparent;
+  font-size: 0.7rem;
+  font-weight: 820;
+}
+
+.next-fine-mode-toggle button:hover,
+.next-fine-mode-toggle button:focus-visible {
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  outline: 0;
+}
+
+.next-fine-mode-toggle button.is-active {
+  color: color-mix(in srgb, var(--page-ink) 82%, var(--accent-2));
+  background: color-mix(in srgb, var(--accent-2-soft) 48%, var(--panel-bg-strong));
 }
 
 .next-fine-time {
@@ -1966,6 +1998,11 @@ button {
 .next-fine-marker.is-action {
   color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
   background: color-mix(in srgb, var(--accent-2-soft) 44%, var(--panel-bg-strong));
+}
+
+.next-fine-marker.is-chat-cue {
+  color: color-mix(in srgb, var(--accent-2) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-2-soft) 38%, var(--panel-bg-strong));
 }
 
 .next-fine-marker:hover,

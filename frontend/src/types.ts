@@ -575,6 +575,7 @@ export type MessageAudioPayload = {
   audioModel?: string;
   cached: boolean;
   displayBreaks?: number[];
+  displayCueOffsets?: number[];
   displaySlots?: string[];
   displayText?: string;
   durationSeconds?: number | null;
@@ -599,6 +600,7 @@ export type ScriptAudioItem = {
   displayBaseSlots?: string[];
   displayBaseText?: string;
   displayBreaks?: number[];
+  displayCueOffsets?: number[];
   durationSeconds: number | null;
   displayExpectedWordCount?: number;
   displaySlotCount?: number;
@@ -637,6 +639,7 @@ export type ScriptAudioDisplayPayload = {
   displayBaseSlots: string[];
   displayBaseText: string;
   displayBreaks: number[];
+  displayCueOffsets: number[];
   displayExpectedWordCount: number;
   displaySlotCount: number;
   displaySlots: string[];

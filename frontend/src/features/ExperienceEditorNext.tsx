@@ -2386,6 +2386,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         activeDisplaySlots.length,
       )
     : [];
+  const activeDisplayCueOffsets = activeScriptAudioItem?.displayCueOffsets ?? [];
   const activeScriptActionViewKey = displayDraftKey(
     activeDisplaySlots,
     activeDisplayEditorBreaks,
@@ -3708,6 +3709,29 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
   }
 
+  async function updateActiveDisplayCueOffsets(offsets: number[]) {
+    if (!activeScriptAudioItem) return;
+
+    const scriptId = activeScriptAudioItem.id;
+    setSavingDisplayTextId(scriptId);
+    try {
+      await saveDisplayTranscriptRef.current(
+        scriptId,
+        activeDisplaySlots,
+        activeDisplayEditorBreaks,
+        offsets,
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save chat cue timing.",
+      );
+    } finally {
+      setSavingDisplayTextId((current) => (current === scriptId ? "" : current));
+    }
+  }
+
   function resetDisplayTextToAudioScript() {
     if (!activeScriptAudioItem) return;
 
@@ -4378,6 +4402,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           <NextFineTuningPanel
             audioItem={activeScriptAudioItem}
             deckUrl={activeScriptDeckUrl}
+            displayBreaks={activeDisplayEditorBreaks}
+            displayCueOffsets={activeDisplayCueOffsets}
+            displaySlots={activeDisplaySlots}
+            onDisplayCueOffsetsChange={(offsets) =>
+              void updateActiveDisplayCueOffsets(offsets)
+            }
             onMarkedTextChange={updateActiveScriptMarkedText}
             previews={scriptSlidePreviews}
             text={activeScriptText}

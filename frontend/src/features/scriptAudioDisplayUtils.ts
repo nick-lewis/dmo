@@ -10,6 +10,7 @@ export type ScriptAudioDisplayFields = {
   displayBaseSlots?: string[];
   displayBaseText?: string;
   displayBreaks?: number[];
+  displayCueOffsets?: number[];
   displaySlots?: string[];
   displayText?: string;
   preview?: string;

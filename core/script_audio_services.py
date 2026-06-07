@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 from collections import Counter
 
@@ -83,6 +84,32 @@ def normalize_script_audio_display_breaks(value, slot_count=0):
     return sorted(breaks)
 
 
+def staged_display_cue_count(display_breaks):
+    break_counts = Counter(display_breaks)
+    return sum(1 for count in break_counts.values() if count >= 2)
+
+
+def normalize_script_audio_display_cue_offsets(value, cue_count=0):
+    if not isinstance(value, list):
+        return []
+
+    offsets = []
+    for item in value:
+        try:
+            offset = float(item)
+        except (TypeError, ValueError):
+            offset = 0.0
+        if not math.isfinite(offset):
+            offset = 0.0
+        offsets.append(round(offset, 3))
+
+    if cue_count:
+        if len(offsets) < cue_count:
+            offsets.extend([0.0 for _ in range(cue_count - len(offsets))])
+        return offsets[:cue_count]
+    return offsets
+
+
 def script_audio_display_text_from_slots(slots, breaks=None):
     normalized_breaks = normalize_script_audio_display_breaks(breaks, len(slots))
     break_counts = Counter(normalized_breaks)
@@ -128,6 +155,14 @@ def load_script_audio_display_breaks(script, slot_count=0):
     return normalize_script_audio_display_breaks(payload.get("displayBreaks"), slot_count)
 
 
+def load_script_audio_display_cue_offsets(script, cue_count=0):
+    payload = load_script_audio_display_payload(script)
+    return normalize_script_audio_display_cue_offsets(
+        payload.get("displayCueOffsets"),
+        cue_count,
+    )
+
+
 def load_script_audio_display_text(script):
     display_slots = load_script_audio_display_slots(script)
     return script_audio_display_text_from_slots(
@@ -155,6 +190,7 @@ def runtime_script_audio_display_payload(script, expected_word_count=0):
     if not display_slots:
         return {
             "displayBreaks": [],
+            "displayCueOffsets": [],
             "displaySlots": [],
             "displayText": "",
         }
@@ -163,13 +199,19 @@ def runtime_script_audio_display_payload(script, expected_word_count=0):
     if expected_count and len(display_slots) != expected_count:
         return {
             "displayBreaks": [],
+            "displayCueOffsets": [],
             "displaySlots": [],
             "displayText": "",
         }
 
     display_breaks = load_script_audio_display_breaks(script, len(display_slots))
+    display_cue_offsets = load_script_audio_display_cue_offsets(
+        script,
+        staged_display_cue_count(display_breaks),
+    )
     return {
         "displayBreaks": display_breaks,
+        "displayCueOffsets": display_cue_offsets,
         "displaySlots": display_slots,
         "displayText": script_audio_display_text_from_slots(
             display_slots,
@@ -183,9 +225,11 @@ def save_script_audio_display_slots(
     display_slots,
     base_slots=None,
     display_breaks=None,
+    display_cue_offsets=None,
 ):
     display_key = compute_script_audio_display_key(script)
     display_path = script_audio_display_path(display_key)
+    existing_payload = load_script_audio_display_payload(script)
     normalized_slots = normalize_script_audio_display_slots(display_slots)
     normalized_base_slots = normalize_script_audio_display_slots(base_slots)
     if not normalized_base_slots:
@@ -194,10 +238,24 @@ def save_script_audio_display_slots(
         display_breaks,
         len(normalized_base_slots) or len(normalized_slots),
     )
+    cue_count = staged_display_cue_count(normalized_breaks)
+    normalized_cue_offsets = normalize_script_audio_display_cue_offsets(
+        existing_payload.get("displayCueOffsets")
+        if display_cue_offsets is None
+        else display_cue_offsets,
+        cue_count,
+    )
+    has_nonzero_cue_offset = any(
+        abs(offset) >= 0.001 for offset in normalized_cue_offsets
+    )
 
     if (
         not normalized_slots
-        or (normalized_slots == normalized_base_slots and not normalized_breaks)
+        or (
+            normalized_slots == normalized_base_slots
+            and not normalized_breaks
+            and not has_nonzero_cue_offset
+        )
     ):
         try:
             display_path.unlink()
@@ -210,6 +268,7 @@ def save_script_audio_display_slots(
         json.dumps(
             {
                 "displayBreaks": normalized_breaks,
+                "displayCueOffsets": normalized_cue_offsets,
                 "displaySlots": normalized_slots,
                 "displayText": script_audio_display_text_from_slots(
                     normalized_slots,
@@ -236,6 +295,7 @@ def script_audio_display_payload(item):
         "displayBaseText": item.get("displayBaseText", ""),
         "displayExpectedWordCount": item.get("displayExpectedWordCount", 0),
         "displayBreaks": item.get("displayBreaks", []),
+        "displayCueOffsets": item.get("displayCueOffsets", []),
         "displaySlotCount": item.get("displaySlotCount", 0),
         "displaySlots": item.get("displaySlots", []),
         "displayText": item.get("displayText", ""),
@@ -299,9 +359,20 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
     display_breaks = load_script_audio_display_breaks(script, len(display_base_slots))
     if not display_slots:
         display_breaks = []
+    display_cue_offsets = load_script_audio_display_cue_offsets(
+        script,
+        staged_display_cue_count(display_breaks),
+    )
+    if not display_breaks:
+        display_cue_offsets = []
     display_text = script_audio_display_text_from_slots(display_slots, display_breaks)
     has_display_transcript = bool(
-        display_slots and (display_slots != display_base_slots or display_breaks)
+        display_slots
+        and (
+            display_slots != display_base_slots
+            or display_breaks
+            or any(abs(offset) >= 0.001 for offset in display_cue_offsets)
+        )
     )
     return {
         "audioUrl": f"/api/script-audio/{cache_key}.wav/" if cached else "",
@@ -313,6 +384,7 @@ def script_audio_item_from_text(experience, tutor_settings, source, raw_text, in
         "displayBaseSlots": display_base_slots,
         "displayBaseText": display_base_text,
         "displayBreaks": display_breaks,
+        "displayCueOffsets": display_cue_offsets,
         "displayExpectedWordCount": len(display_base_slots),
         "displayKey": display_key,
         "displaySlotCount": len(display_slots) if display_slots else 0,
@@ -695,6 +767,11 @@ def script_audio_display_transcript_payload(experience, script_id, data=None):
         data.get("displayBreaks"),
         len(base_slots),
     )
+    display_cue_offsets = (
+        data.get("displayCueOffsets")
+        if isinstance(data, dict) and "displayCueOffsets" in data
+        else None
+    )
     expected_slot_count = len(base_slots)
     display_slot_count = len(display_slots)
     if display_slots and expected_slot_count and display_slot_count != expected_slot_count:
@@ -717,6 +794,7 @@ def script_audio_display_transcript_payload(experience, script_id, data=None):
         display_slots,
         base_slots,
         display_breaks,
+        display_cue_offsets,
     )
     refreshed_item = next(
         (
@@ -766,6 +844,7 @@ def cached_script_audio_payload(session, script, script_cues=None):
         "cached": True,
         "durationSeconds": audio_duration_seconds(audio_path),
         "displayBreaks": display_payload["displayBreaks"],
+        "displayCueOffsets": display_payload["displayCueOffsets"],
         "displaySlots": display_payload["displaySlots"],
         "displayText": display_payload["displayText"],
         "messageId": "",
@@ -869,6 +948,7 @@ def generate_message_script_audio_payload(
                 "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
                 "cached": recording.cached,
                 "displayBreaks": display_payload["displayBreaks"],
+                "displayCueOffsets": display_payload["displayCueOffsets"],
                 "displaySlots": display_payload["displaySlots"],
                 "displayText": display_payload["displayText"],
                 "durationSeconds": duration_seconds,
@@ -891,6 +971,7 @@ def generate_message_script_audio_payload(
         "audioUrl": f"/api/script-audio/{recording.cache_key}.wav/",
         "cached": recording.cached,
         "displayBreaks": display_payload["displayBreaks"],
+        "displayCueOffsets": display_payload["displayCueOffsets"],
         "displaySlots": display_payload["displaySlots"],
         "displayText": display_payload["displayText"],
         "durationSeconds": duration_seconds,

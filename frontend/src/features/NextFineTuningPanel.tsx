@@ -27,6 +27,11 @@ import {
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
 import { formatTimelineSeconds } from "./ScriptAudioPanel";
+import {
+  normalizeScriptDisplayCueOffsets,
+  scriptDisplayChunkSpecsFromValues,
+  type ScriptDisplayChunkSpec,
+} from "./scriptDisplayTiming";
 
 type WaveformState = {
   peaks: number[];
@@ -40,8 +45,20 @@ type MarkerDragState = {
   timeSeconds: number;
 };
 
+type DisplayCueDragState = {
+  cueIndex: number;
+  lastClientX: number;
+  moved: boolean;
+  timeSeconds: number;
+};
+
 type ActiveMarkerDrag = {
   markerIndex: number;
+  timeSeconds: number;
+} | null;
+
+type ActiveDisplayCueDrag = {
+  cueIndex: number;
   timeSeconds: number;
 } | null;
 
@@ -67,9 +84,23 @@ type TimelineMarkerLayout = {
   timeSeconds: number;
 };
 
+type DisplayCueLayout = {
+  chunk: ScriptDisplayChunkSpec;
+  hasTimeMatch: boolean;
+  index: number;
+  lane: number;
+  timeSeconds: number;
+};
+
+type FineTuningTimelineMode = "actions" | "chat-cues";
+
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
   deckUrl: string;
+  displayBreaks: number[];
+  displayCueOffsets: number[];
+  displaySlots: string[];
+  onDisplayCueOffsetsChange: (offsets: number[]) => void;
   onMarkedTextChange: (value: string) => void;
   previews: Record<string, ScriptSlidePreview>;
   text: string;
@@ -105,6 +136,14 @@ function estimateMarkerWidthPx(marker: ScriptMarkerInstance) {
   const labelLength = markerLabel(marker).length;
   const iconWidth = markerHasIcon(marker) ? 20 : 0;
   return Math.min(178, Math.max(74, 48 + iconWidth + labelLength * 6.2));
+}
+
+function displayCueLabel(chunk: ScriptDisplayChunkSpec) {
+  return `Chunk ${chunk.index + 1}`;
+}
+
+function estimateDisplayCueWidthPx(chunk: ScriptDisplayChunkSpec) {
+  return Math.min(150, Math.max(92, 66 + displayCueLabel(chunk).length * 6.2));
 }
 
 function decodePeaks(audioBuffer: AudioBuffer, bucketCount: number) {
@@ -249,12 +288,17 @@ function playbackRateFromStorage() {
 export function NextFineTuningPanel({
   audioItem,
   deckUrl,
+  displayBreaks,
+  displayCueOffsets,
+  displaySlots,
+  onDisplayCueOffsetsChange,
   onMarkedTextChange,
   previews,
   text,
 }: FineTuningPanelProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
+  const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
   const ignoreMarkerClickRef = useRef(false);
   const ignoreWaveformClickRef = useRef(false);
   const manualSeekRef = useRef<ManualSeekState | null>(null);
@@ -263,12 +307,22 @@ export function NextFineTuningPanel({
   const scrubRef = useRef<ScrubState | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [draggingDisplayCue, setDraggingDisplayCue] =
+    useState<ActiveDisplayCueDrag>(null);
   const [draggingMarker, setDraggingMarker] = useState<ActiveMarkerDrag>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(playbackRateFromStorage);
+  const [selectedDisplayCueIndex, setSelectedDisplayCueIndex] = useState<
+    number | null
+  >(null);
   const [selectedMarkerIndex, setSelectedMarkerIndex] = useState<number | null>(
     null,
   );
+  const [timelineMode, setTimelineMode] =
+    useState<FineTuningTimelineMode>("actions");
+  const [draftDisplayCueOffsets, setDraftDisplayCueOffsets] =
+    useState<number[]>(displayCueOffsets);
+  const displayCueOffsetKey = displayCueOffsets.join("|");
   const [waveformBucketCount, setWaveformBucketCount] = useState(
     defaultWaveformBucketCount,
   );
@@ -293,6 +347,20 @@ export function NextFineTuningPanel({
   const currentWord =
     timingWords.find((word) => visibleTime >= word.start && visibleTime <= word.end)
       ?.word ?? "";
+  const effectiveDisplayCueOffsets = draftDisplayCueOffsets.length
+    ? draftDisplayCueOffsets
+    : displayCueOffsets;
+  const displayChunks = scriptDisplayChunkSpecsFromValues({
+    displayBreaks,
+    displayCueOffsets: effectiveDisplayCueOffsets,
+    displaySlots,
+    durationSeconds,
+    messageId: audioItem?.id ?? "",
+    scriptWords: timingWords,
+  });
+  const displayCueChunks = displayChunks.filter(
+    (chunk) => chunk.boundaryIndex >= 0,
+  );
 
   function timeFromClientX(clientX: number) {
     const rect = waveformRef.current?.getBoundingClientRect();
@@ -364,6 +432,38 @@ export function NextFineTuningPanel({
       appendScriptMarkerTimelineArg(marker.argList, seconds * 1000),
     );
     onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
+  }
+
+  function displayCueTime(cueIndex: number) {
+    if (draggingDisplayCue?.cueIndex === cueIndex) {
+      return draggingDisplayCue.timeSeconds;
+    }
+    return displayCueChunks[cueIndex]?.startTime ?? 0;
+  }
+
+  function clampDisplayCueTime(cueIndex: number, seconds: number) {
+    const previousTime = cueIndex > 0 ? displayCueTime(cueIndex - 1) + 0.05 : 0;
+    const nextTime =
+      cueIndex < displayCueChunks.length - 1
+        ? displayCueTime(cueIndex + 1) - 0.05
+        : durationSeconds || seconds;
+    return clamp(seconds, previousTime, Math.max(previousTime, nextTime));
+  }
+
+  function updateDisplayCueTime(cueIndex: number, seconds: number) {
+    const cue = displayCueChunks[cueIndex];
+    if (!cue) return;
+
+    const nextOffsets = normalizeScriptDisplayCueOffsets(
+      effectiveDisplayCueOffsets,
+      displayCueChunks.length,
+    );
+    const nextTime = clampDisplayCueTime(cueIndex, seconds);
+    nextOffsets[cueIndex] = Number(
+      (nextTime - cue.automaticStartTime).toFixed(3),
+    );
+    setDraftDisplayCueOffsets(nextOffsets);
+    onDisplayCueOffsetsChange(nextOffsets);
   }
 
   function snapMarkerTime(seconds: number, markerIndex: number) {
@@ -545,6 +645,65 @@ export function NextFineTuningPanel({
     setDraggingMarker(null);
   }
 
+  function beginDisplayCueDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    cueIndex: number,
+    seconds: number,
+  ) {
+    if (!durationSeconds) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    displayCueDragRef.current = {
+      cueIndex,
+      lastClientX: event.clientX,
+      moved: false,
+      timeSeconds: seconds,
+    };
+    setSelectedDisplayCueIndex(cueIndex);
+    setDraggingDisplayCue({ cueIndex, timeSeconds: seconds });
+    setCurrentTime(seconds);
+  }
+
+  function updateDisplayCueDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = displayCueDragRef.current;
+    if (!dragState) return;
+    const previousPointerSeconds = timeFromClientX(dragState.lastClientX);
+    const nextPointerSeconds = timeFromClientX(event.clientX);
+    const dragRatio = event.shiftKey ? markerFineDragRatio : 1;
+    const nextSeconds = clampDisplayCueTime(
+      dragState.cueIndex,
+      dragState.timeSeconds +
+        (nextPointerSeconds - previousPointerSeconds) * dragRatio,
+    );
+    dragState.lastClientX = event.clientX;
+    dragState.timeSeconds = nextSeconds;
+    dragState.moved = true;
+    setDraggingDisplayCue({
+      cueIndex: dragState.cueIndex,
+      timeSeconds: nextSeconds,
+    });
+    setCurrentTime(nextSeconds);
+  }
+
+  function endDisplayCueDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const dragState = displayCueDragRef.current;
+    if (!dragState || !draggingDisplayCue) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (dragState.moved) {
+      ignoreMarkerClickRef.current = true;
+      window.setTimeout(() => {
+        ignoreMarkerClickRef.current = false;
+      }, 120);
+      updateDisplayCueTime(dragState.cueIndex, draggingDisplayCue.timeSeconds);
+    }
+    seek(draggingDisplayCue.timeSeconds);
+    displayCueDragRef.current = null;
+    setDraggingDisplayCue(null);
+  }
+
   function moveMarkerByKeyboard(
     event: ReactKeyboardEvent<HTMLButtonElement>,
     markerIndex: number,
@@ -569,6 +728,29 @@ export function NextFineTuningPanel({
     seek(nextTime, { pause: true });
   }
 
+  function moveDisplayCueByKeyboard(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    cueIndex: number,
+  ) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const cue = displayCueChunks[cueIndex];
+    if (!cue) return;
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const step = event.shiftKey
+      ? markerKeyboardFineStepSeconds
+      : markerKeyboardStepSeconds;
+    const nextTime = clampDisplayCueTime(
+      cueIndex,
+      displayCueTime(cueIndex) + direction * step,
+    );
+    setSelectedDisplayCueIndex(cueIndex);
+    updateDisplayCueTime(cueIndex, nextTime);
+    seek(nextTime, { pause: true });
+  }
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return undefined;
@@ -576,6 +758,7 @@ export function NextFineTuningPanel({
 
     function syncTime() {
       if (
+        displayCueDragRef.current ||
         markerDragRef.current ||
         scrubRef.current !== null ||
         mouseScrubRef.current !== null
@@ -671,10 +854,17 @@ export function NextFineTuningPanel({
   }, [playbackRate]);
 
   useEffect(() => {
+    setDraftDisplayCueOffsets(displayCueOffsets);
+  }, [audioItem?.id, displayCueOffsetKey]);
+
+  useEffect(() => {
     setCurrentTime(0);
+    setDraggingDisplayCue(null);
     setDraggingMarker(null);
+    setSelectedDisplayCueIndex(null);
     setSelectedMarkerIndex(null);
     manualSeekRef.current = null;
+    displayCueDragRef.current = null;
     markerDragRef.current = null;
     mouseScrubRef.current = null;
     scrubRef.current = null;
@@ -685,6 +875,12 @@ export function NextFineTuningPanel({
       current !== null && current >= markers.length ? null : current,
     );
   }, [markers.length]);
+
+  useEffect(() => {
+    setSelectedDisplayCueIndex((current) =>
+      current !== null && current >= displayCueChunks.length ? null : current,
+    );
+  }, [displayCueChunks.length]);
 
   useEffect(() => {
     const element = waveformRef.current;
@@ -759,7 +955,61 @@ export function NextFineTuningPanel({
   const timelineMarkers = rawTimelineMarkers
     .map((item) => layoutByIndex.get(item.index))
     .filter((item): item is TimelineMarkerLayout => Boolean(item));
-  const laneCount = Math.max(1, ...timelineMarkers.map((item) => item.lane + 1));
+  const rawDisplayCueMarkers = displayCueChunks.map((chunk, index) => {
+    const timeSeconds = displayCueTime(index);
+    return {
+      chunk,
+      index,
+      timeMs: Math.round(timeSeconds * 1000),
+      timeSeconds,
+      widthPx: estimateDisplayCueWidthPx(chunk),
+    };
+  });
+  const displayCueTimeMatchCounts = new Map<number, number>();
+  rawDisplayCueMarkers.forEach((item) => {
+    displayCueTimeMatchCounts.set(
+      item.timeMs,
+      (displayCueTimeMatchCounts.get(item.timeMs) ?? 0) + 1,
+    );
+  });
+  const displayCueLaneRightEdges: number[] = [];
+  const displayCueLayoutByIndex = new Map<number, DisplayCueLayout>();
+  [...rawDisplayCueMarkers]
+    .sort(
+      (left, right) =>
+        left.timeSeconds - right.timeSeconds || left.index - right.index,
+    )
+    .forEach((item) => {
+      const markerCenterPx =
+        (item.timeSeconds / durationForLayout) * waveformWidthForLayout;
+      const markerLeftPx = markerCenterPx - item.widthPx / 2;
+      const markerRightPx = markerCenterPx + item.widthPx / 2;
+      const laneIndex = displayCueLaneRightEdges.findIndex(
+        (rightEdge) => markerLeftPx > rightEdge + 6,
+      );
+      const lane = laneIndex >= 0 ? laneIndex : displayCueLaneRightEdges.length;
+      displayCueLaneRightEdges[lane] = markerRightPx;
+      displayCueLayoutByIndex.set(item.index, {
+        chunk: item.chunk,
+        hasTimeMatch: (displayCueTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
+        index: item.index,
+        lane,
+        timeSeconds: item.timeSeconds,
+      });
+    });
+  const displayCueLayouts = rawDisplayCueMarkers
+    .map((item) => displayCueLayoutByIndex.get(item.index))
+    .filter((item): item is DisplayCueLayout => Boolean(item));
+  const actionLaneCount = Math.max(
+    1,
+    ...timelineMarkers.map((item) => item.lane + 1),
+  );
+  const displayCueLaneCount = Math.max(
+    1,
+    ...displayCueLayouts.map((item) => item.lane + 1),
+  );
+  const laneCount =
+    timelineMode === "chat-cues" ? displayCueLaneCount : actionLaneCount;
   const waveformMarkerTop = 68;
   const waveformMarkerGap = 28;
   const waveformHeight = Math.max(124, 96 + laneCount * waveformMarkerGap);
@@ -803,6 +1053,24 @@ export function NextFineTuningPanel({
         >
           {playbackRate}x
         </button>
+        <div className="next-fine-mode-toggle" role="group" aria-label="Fine tuning view">
+          <button
+            aria-pressed={timelineMode === "actions"}
+            className={timelineMode === "actions" ? "is-active" : ""}
+            onClick={() => setTimelineMode("actions")}
+            type="button"
+          >
+            Actions
+          </button>
+          <button
+            aria-pressed={timelineMode === "chat-cues"}
+            className={timelineMode === "chat-cues" ? "is-active" : ""}
+            onClick={() => setTimelineMode("chat-cues")}
+            type="button"
+          >
+            Chat cues
+          </button>
+        </div>
         <span className="next-fine-time">
           {formatTimelineSeconds(visibleTime)} / {formatTimelineSeconds(durationSeconds)}
         </span>
@@ -815,7 +1083,7 @@ export function NextFineTuningPanel({
         className={[
           "next-fine-waveform",
           audioUrl ? "" : "is-disabled",
-          draggingMarker ? "is-dragging-marker" : "",
+          draggingMarker || draggingDisplayCue ? "is-dragging-marker" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -858,12 +1126,18 @@ export function NextFineTuningPanel({
         {!audioUrl ? (
           <span className="next-fine-wave-status">Generate audio first</span>
         ) : null}
+        {audioUrl &&
+        timelineMode === "chat-cues" &&
+        !displayCueLayouts.length ? (
+          <span className="next-fine-wave-status">No chat cues</span>
+        ) : null}
         <span
           aria-hidden="true"
           className="next-fine-playhead"
           style={{ left: `${progressPercent}%` }}
         />
-        {timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
+        {timelineMode === "actions"
+          ? timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
           const markerPercent = clamp(
             (timeSeconds / durationForLayout) * 100,
             0,
@@ -944,7 +1218,68 @@ export function NextFineTuningPanel({
               ) : null}
             </button>
           );
-        })}
+        })
+          : displayCueLayouts.map(({ chunk, hasTimeMatch, index, lane, timeSeconds }) => {
+              const markerPercent = clamp(
+                (timeSeconds / durationForLayout) * 100,
+                0,
+                100,
+              );
+              const previewText = chunk.fullText.replace(/\s+/g, " ").trim();
+              const offsetLabel =
+                Math.abs(chunk.offsetSeconds) < 0.001
+                  ? "auto"
+                  : `${chunk.offsetSeconds > 0 ? "+" : ""}${chunk.offsetSeconds.toFixed(
+                      2,
+                    )}s`;
+
+              return (
+                <button
+                  aria-label={`${displayCueLabel(chunk)} at ${formatTimelineSeconds(
+                    timeSeconds,
+                  )}`}
+                  aria-pressed={selectedDisplayCueIndex === index}
+                  className={[
+                    "next-fine-marker",
+                    "is-chat-cue",
+                    selectedDisplayCueIndex === index ? "is-selected" : "",
+                    hasTimeMatch ? "is-time-match" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={`cue-${chunk.boundaryIndex}-${chunk.startSlot}`}
+                  onClick={(event) => {
+                    if (ignoreMarkerClickRef.current) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      return;
+                    }
+                    event.stopPropagation();
+                    setSelectedDisplayCueIndex(index);
+                    seek(timeSeconds);
+                  }}
+                  onKeyDown={(event) => moveDisplayCueByKeyboard(event, index)}
+                  onPointerCancel={endDisplayCueDrag}
+                  onPointerDown={(event) =>
+                    beginDisplayCueDrag(event, index, timeSeconds)
+                  }
+                  onPointerMove={updateDisplayCueDrag}
+                  onPointerUp={endDisplayCueDrag}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  style={{
+                    left: `${markerPercent}%`,
+                    top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
+                  }}
+                  title={`${previewText || displayCueLabel(chunk)} (${offsetLabel})`}
+                  type="button"
+                >
+                  <strong>{displayCueLabel(chunk)}</strong>
+                  <span className="next-fine-marker-time">
+                    {timeSeconds.toFixed(2)}
+                  </span>
+                </button>
+              );
+            })}
       </div>
     </div>
   );

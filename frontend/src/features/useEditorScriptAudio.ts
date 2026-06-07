@@ -94,6 +94,7 @@ export function useEditorScriptAudio({
     scriptId: string,
     displaySlots: string[],
     displayBreaks: number[],
+    displayCueOffsets?: number[],
   ) {
     if (!experience) {
       throw new Error("Experience is not loaded.");
@@ -110,7 +111,11 @@ export function useEditorScriptAudio({
         `/api/experiences/${experience.id}/script-audio/${scriptId}/display/`,
         {
           method: "PUT",
-          body: JSON.stringify({ displayBreaks, displaySlots }),
+          body: JSON.stringify({
+            displayBreaks,
+            ...(displayCueOffsets ? { displayCueOffsets } : {}),
+            displaySlots,
+          }),
         },
       );
       setScriptAudioItems((current) =>
@@ -124,6 +129,7 @@ export function useEditorScriptAudio({
                 displaySlotCount: payload.displaySlotCount,
                 displaySlots: payload.displaySlots,
                 displayBreaks: payload.displayBreaks,
+                displayCueOffsets: payload.displayCueOffsets,
                 displayText: payload.displayText,
                 displayWordCount: payload.displayWordCount,
                 hasDisplayTranscript: payload.hasDisplayTranscript,

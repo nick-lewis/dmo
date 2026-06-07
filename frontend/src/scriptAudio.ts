@@ -53,6 +53,30 @@ function displayBreaksFromValue(value: unknown, slotCount = 0) {
     .sort((left, right) => left - right);
 }
 
+function displayCueCountFromBreaks(breaks: number[]) {
+  const counts = new Map<number, number>();
+  breaks.forEach((breakIndex) =>
+    counts.set(breakIndex, (counts.get(breakIndex) ?? 0) + 1),
+  );
+  return [...counts.values()].filter((count) => count >= 2).length;
+}
+
+function displayCueOffsetsFromValue(value: unknown, cueCount = 0) {
+  if (!Array.isArray(value)) return [];
+  const offsets = value.map((item) => {
+    const offset = Number(item);
+    return Number.isFinite(offset) ? offset : 0;
+  });
+  if (!cueCount) return offsets;
+  if (offsets.length < cueCount) {
+    return [
+      ...offsets,
+      ...Array.from({ length: cueCount - offsets.length }, () => 0),
+    ];
+  }
+  return offsets.slice(0, cueCount);
+}
+
 
 export function scriptCuesFromValue(value: unknown): ScriptCue[] {
   if (!Array.isArray(value)) return [];
@@ -141,6 +165,11 @@ export function cachedScriptAudioFromMessage(
   if (!audioUrl || !realtimeModel || !voice) return null;
   const audioScriptCues = scriptCuesFromValue(audio.scriptCues);
   const displaySlots = displaySlotsFromValue(audio.displaySlots);
+  const displayBreaks = displayBreaksFromValue(
+    audio.displayBreaks,
+    displaySlots.length,
+  );
+  const displayCueCount = displayCueCountFromBreaks(displayBreaks);
 
   return {
     audioUrl,
@@ -148,7 +177,11 @@ export function cachedScriptAudioFromMessage(
       typeof audio.audioEngine === "string" ? audio.audioEngine : "",
     audioModel: typeof audio.audioModel === "string" ? audio.audioModel : "",
     cached: Boolean(audio.cached),
-    displayBreaks: displayBreaksFromValue(audio.displayBreaks, displaySlots.length),
+    displayBreaks,
+    displayCueOffsets: displayCueOffsetsFromValue(
+      audio.displayCueOffsets,
+      displayCueCount,
+    ),
     displaySlots,
     displayText: typeof audio.displayText === "string" ? audio.displayText : "",
     durationSeconds:
