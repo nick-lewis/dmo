@@ -1924,6 +1924,7 @@ function ScriptActionReadOnlyView({
   onDeckUrlChange,
   onOpenInsert,
   onOpenMarker,
+  onMoveMarker,
   onRefreshSlides,
   onRemoveMarker,
   previews,
@@ -1945,6 +1946,7 @@ function ScriptActionReadOnlyView({
     marker: ScriptMarkerInstance,
     event: ReactMouseEvent<HTMLElement>,
   ) => void;
+  onMoveMarker: (marker: ScriptActionViewMarker, targetSourceIndex: number) => void;
   onRefreshSlides: () => void;
   onRemoveMarker: (marker: ScriptMarkerInstance) => void;
   previews: Record<string, ScriptSlidePreview>;
@@ -1953,6 +1955,7 @@ function ScriptActionReadOnlyView({
 }) {
   const [insertionPreview, setInsertionPreview] =
     useState<ScriptInsertionPreview | null>(null);
+  const [selectedMarkerKey, setSelectedMarkerKey] = useState("");
   const breakCounts = new Map<number, number>();
   normalizeDisplayBreaks(displayBreaks).forEach((breakIndex) => {
     breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
@@ -1963,6 +1966,14 @@ function ScriptActionReadOnlyView({
   useEffect(() => {
     setInsertionPreview(null);
   }, [text]);
+
+  useEffect(() => {
+    setSelectedMarkerKey((current) =>
+      current && markers.some((marker) => viewMarkerEditKey(marker) === current)
+        ? current
+        : "",
+    );
+  }, [markers]);
 
   function elementFromEventTarget(target: EventTarget | null) {
     if (target instanceof HTMLElement) return target;
@@ -2083,21 +2094,97 @@ function ScriptActionReadOnlyView({
     );
   }
 
+  function textTokenRangesOutsideMarkers() {
+    const ranges: Array<{ end: number; start: number }> = [];
+    const wordPattern = /\S+/g;
+    let cursor = 0;
+
+    [...markers]
+      .sort((left, right) => left.start - right.start)
+      .forEach((marker) => {
+        if (marker.start > cursor) {
+          const segment = text.slice(cursor, marker.start);
+          wordPattern.lastIndex = 0;
+          for (const match of segment.matchAll(wordPattern)) {
+            const start = cursor + (match.index ?? 0);
+            ranges.push({
+              end: start + match[0].length,
+              start,
+            });
+          }
+        }
+        cursor = Math.max(cursor, marker.end);
+      });
+
+    if (cursor < text.length) {
+      const segment = text.slice(cursor);
+      wordPattern.lastIndex = 0;
+      for (const match of segment.matchAll(wordPattern)) {
+        const start = cursor + (match.index ?? 0);
+        ranges.push({
+          end: start + match[0].length,
+          start,
+        });
+      }
+    }
+
+    return ranges;
+  }
+
+  function sourceIndexForMarkerNudge(
+    marker: ScriptActionViewMarker,
+    direction: -1 | 1,
+  ) {
+    const tokenRanges = textTokenRangesOutsideMarkers();
+    const targetTextIndex =
+      direction < 0
+        ? tokenRanges
+            .filter((range) => range.end <= marker.start)
+            .at(-1)?.start
+        : tokenRanges.find((range) => range.start >= marker.end)?.end;
+
+    if (targetTextIndex === undefined) return null;
+    return sourceIndexForTextIndex(targetTextIndex);
+  }
+
   function renderActionToken(marker: ScriptActionViewMarker) {
     const sourceMarker = sourceMarkerForView(marker);
+    const markerKey = viewMarkerEditKey(marker);
     return (
       <button
         className={[
           "next-script-action-token",
           markerStyleType(marker) === "slide" ? "is-slide" : "is-action",
+          selectedMarkerKey === markerKey ? "is-selected" : "",
         ].join(" ")}
-        key={viewMarkerEditKey(marker)}
-        onClick={(event) => onOpenMarker(sourceMarker, event)}
-        onContextMenu={(event) => onOpenMarker(sourceMarker, event)}
-        onKeyDown={(event) => {
-          if (event.key !== "Backspace" && event.key !== "Delete") return;
+        key={markerKey}
+        onClick={(event) => {
           event.preventDefault();
-          onRemoveMarker(sourceMarker);
+          event.stopPropagation();
+          setSelectedMarkerKey(markerKey);
+        }}
+        onContextMenu={(event) => {
+          setSelectedMarkerKey(markerKey);
+          onOpenMarker(sourceMarker, event);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Backspace" || event.key === "Delete") {
+            event.preventDefault();
+            onRemoveMarker(sourceMarker);
+            return;
+          }
+
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+          const targetSourceIndex = sourceIndexForMarkerNudge(
+            marker,
+            event.key === "ArrowLeft" ? -1 : 1,
+          );
+          if (targetSourceIndex === null) return;
+
+          event.preventDefault();
+          event.stopPropagation();
+          onMoveMarker(marker, targetSourceIndex);
         }}
         title={sourceMarker.marker}
         type="button"
@@ -4196,6 +4283,47 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
   }
 
+  function moveScriptActionMarker(
+    marker: ScriptActionViewMarker,
+    targetSourceIndex: number,
+  ) {
+    if (!activeScriptStep) return;
+
+    const sourceMarker = sourceMarkerForView(marker);
+    const insertionIndex = Math.round(
+      clamp(targetSourceIndex, 0, activeScriptText.length),
+    );
+    if (
+      insertionIndex >= sourceMarker.start &&
+      insertionIndex <= sourceMarker.end
+    ) {
+      return;
+    }
+
+    const markerWithoutTimeline = buildScriptMarker(
+      sourceMarker.type,
+      sourceMarker.argList,
+    );
+    const textWithoutMarker = `${activeScriptText.slice(
+      0,
+      sourceMarker.start,
+    )}${activeScriptText.slice(sourceMarker.end)}`;
+    const adjustedInsertionIndex =
+      insertionIndex > sourceMarker.start
+        ? insertionIndex - sourceMarker.marker.length
+        : insertionIndex;
+
+    updateActiveScriptMarkedText(
+      insertScriptMarkerAt(
+        textWithoutMarker,
+        adjustedInsertionIndex,
+        markerWithoutTimeline,
+      ),
+    );
+    setScriptActionMenu(null);
+    setActiveScriptDetailTab("script");
+  }
+
   function removeScriptActionMarker(marker: ScriptMarkerInstance) {
     updateActiveScriptMarkedText(removeScriptMarker(activeScriptText, marker));
     setScriptActionMenu(null);
@@ -5093,6 +5221,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             onDeckUrlChange={updateActiveScriptDeckUrl}
             onOpenInsert={openScriptInsertMenu}
             onOpenMarker={openScriptMarkerMenu}
+            onMoveMarker={moveScriptActionMarker}
             onRefreshSlides={refreshActiveScriptSlidePreviews}
             onRemoveMarker={removeScriptActionMarker}
             previews={scriptSlidePreviews}

@@ -16,6 +16,7 @@ import {
   countScriptWords,
   parseScriptMarkerInstances,
   scriptMarkerIcon,
+  scriptSoundOptions,
   spokenTextFromMarkedScript,
   type ScriptMarkerInstance,
   type ScriptSlidePreview,
@@ -30,6 +31,7 @@ import {
   clamp,
   isSlideMarker,
   markerTimelineTimeSeconds,
+  nextSlideRefAfterInsertion,
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
 import { formatTimelineSeconds } from "./ScriptAudioPanel";
@@ -106,6 +108,12 @@ type TimelineContextMenuState =
       targetTimeSeconds: number;
       x: number;
       y: number;
+    }
+  | {
+      kind: "insert";
+      targetTimeSeconds: number;
+      x: number;
+      y: number;
     };
 
 type TimelineMarkerLayout = {
@@ -155,6 +163,7 @@ const waveformZoomWheelRatio = 0.0015;
 const chatPreviewAutoScrollResumeThresholdPx = 28;
 const chatPreviewProgrammaticScrollIgnoreMs = 220;
 const chatPreviewUserScrollIntentMs = 900;
+const defaultFineTuningSideImagePath = "test-images/dLU-right.png";
 
 function replaceScriptMarker(
   text: string,
@@ -162,6 +171,15 @@ function replaceScriptMarker(
   nextMarker: string,
 ) {
   return `${text.slice(0, marker.start)}${nextMarker}${text.slice(marker.end)}`;
+}
+
+function insertScriptMarkerAt(text: string, insertionIndex: number, marker: string) {
+  const safeIndex = Math.min(Math.max(0, insertionIndex), text.length);
+  const before = text.slice(0, safeIndex);
+  const after = text.slice(safeIndex);
+  const prefix = before && !/\s$/.test(before) ? " " : "";
+  const suffix = after && !/^\s/.test(after) ? " " : "";
+  return `${before}${prefix}${marker}${suffix}${after}`;
 }
 
 function markerLabel(marker: ScriptMarkerInstance) {
@@ -366,9 +384,12 @@ function shiftedWaveformWindow(
   };
 }
 
-function timelineContextMenuPosition(clientX: number, clientY: number) {
+function timelineContextMenuPosition(
+  clientX: number,
+  clientY: number,
+  height = 54,
+) {
   const width = 220;
-  const height = 54;
   return {
     x: Math.max(12, Math.min(clientX, window.innerWidth - width - 12)),
     y: Math.max(12, Math.min(clientY, window.innerHeight - height - 12)),
@@ -665,6 +686,122 @@ export function NextFineTuningPanel({
       appendScriptMarkerTimelineArg(marker.argList, seconds * 1000),
     );
     onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
+  }
+
+  function sourceInsertionIndexBeforeSpokenWord(wordIndex: number) {
+    if (wordIndex <= 0) return 0;
+
+    const wordPattern = /[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g;
+    let spokenIndex = 0;
+    let cursor = 0;
+
+    function scanSegment(segment: string, offset: number) {
+      wordPattern.lastIndex = 0;
+      for (const match of segment.matchAll(wordPattern)) {
+        if (spokenIndex === wordIndex) {
+          return offset + (match.index ?? 0);
+        }
+        spokenIndex += 1;
+      }
+      return null;
+    }
+
+    for (const marker of [...markers].sort((left, right) => left.start - right.start)) {
+      if (marker.start > cursor) {
+        const matchIndex = scanSegment(text.slice(cursor, marker.start), cursor);
+        if (matchIndex !== null) return matchIndex;
+      }
+      cursor = Math.max(cursor, marker.end);
+    }
+
+    if (cursor < text.length) {
+      const matchIndex = scanSegment(text.slice(cursor), cursor);
+      if (matchIndex !== null) return matchIndex;
+    }
+
+    return text.length;
+  }
+
+  function sourceInsertionIndexForTimelineTime(seconds: number) {
+    if (timingWords.length) {
+      const firstWordStart = timingWords[0]?.start ?? 0;
+      if (seconds <= firstWordStart) return 0;
+
+      const wordIndex = timingWords.findIndex(
+        (word) => Number.isFinite(word.start) && word.start >= seconds,
+      );
+      return sourceInsertionIndexBeforeSpokenWord(
+        wordIndex >= 0 ? wordIndex : timingWords.length,
+      );
+    }
+
+    const approximateWordIndex = Math.round(
+      spokenWordCount * clamp(seconds / durationForLayout, 0, 1),
+    );
+    return sourceInsertionIndexBeforeSpokenWord(approximateWordIndex);
+  }
+
+  function nextTimelineSlideRef(seconds: number, insertionIndex: number) {
+    const previousSlide = markers
+      .map((marker, index) => ({
+        marker,
+        timeSeconds: markerTime(marker, index),
+      }))
+      .filter(({ marker }) => isSlideMarker(marker))
+      .filter(({ timeSeconds }) => timeSeconds <= seconds + 0.001)
+      .sort((left, right) => left.timeSeconds - right.timeSeconds)
+      .at(-1)?.marker;
+    const previousRef = previousSlide?.argList[0]?.trim() ?? "";
+
+    if (/^\d+$/.test(previousRef)) {
+      const numericRef = Number.parseInt(previousRef, 10);
+      if (Number.isFinite(numericRef) && numericRef > 0) {
+        return String(numericRef + 1);
+      }
+    }
+
+    return nextSlideRefAfterInsertion(markers, insertionIndex);
+  }
+
+  function insertTimelineMarker(type: "slide" | "side-image" | "sound") {
+    if (!timelineContextMenu || timelineContextMenu.kind !== "insert") return;
+
+    const targetTimeSeconds = clamp(
+      timelineContextMenu.targetTimeSeconds,
+      0,
+      durationSeconds || 0,
+    );
+    const insertionIndex = sourceInsertionIndexForTimelineTime(targetTimeSeconds);
+    const targetTimeMs = Math.round(targetTimeSeconds * 1000);
+    let nextMarker = buildScriptMarker(
+      "play_sound",
+      appendScriptMarkerTimelineArg(
+        [scriptSoundOptions[0]?.path ?? "sounds/thud.mp3", "0.5"],
+        targetTimeMs,
+      ),
+    );
+
+    if (type === "slide") {
+      nextMarker = buildScriptMarker(
+        "gslide",
+        appendScriptMarkerTimelineArg(
+          [nextTimelineSlideRef(targetTimeSeconds, insertionIndex)],
+          targetTimeMs,
+        ),
+      );
+    } else if (type === "side-image") {
+      nextMarker = buildScriptMarker(
+        "side_image",
+        appendScriptMarkerTimelineArg(
+          ["left", "show", defaultFineTuningSideImagePath],
+          targetTimeMs,
+        ),
+      );
+    }
+
+    onMarkedTextChange(insertScriptMarkerAt(text, insertionIndex, nextMarker));
+    seek(targetTimeSeconds, { pause: true });
+    setTimelineContextMenu(null);
   }
 
   function displayCueTime(cueIndex: number) {
@@ -1130,6 +1267,22 @@ export function NextFineTuningPanel({
     });
   }
 
+  function openWaveformInsertMenu(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!audioUrl || !durationSeconds) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const targetTimeSeconds = timeFromWaveformEvent(event, currentTime);
+    setSelectedMarkerIndex(null);
+    setSelectedDisplayCueIndex(null);
+    setTimelineContextMenu({
+      kind: "insert",
+      targetTimeSeconds,
+      ...timelineContextMenuPosition(event.clientX, event.clientY, 118),
+    });
+    seek(targetTimeSeconds, { pause: true });
+  }
+
   function handleMarkerMouseDown(
     event: ReactMouseEvent<HTMLButtonElement>,
     markerIndex: number,
@@ -1148,6 +1301,8 @@ export function NextFineTuningPanel({
 
   function moveContextMenuItemToCurrentTime() {
     if (!timelineContextMenu) return;
+    if (timelineContextMenu.kind === "insert") return;
+
     const nextTime = clamp(
       timelineContextMenu.targetTimeSeconds,
       0,
@@ -1724,6 +1879,7 @@ export function NextFineTuningPanel({
         onMouseLeave={endMouseScrub}
         onMouseMove={updateMouseScrub}
         onMouseUp={endMouseScrub}
+        onContextMenu={openWaveformInsertMenu}
         onPointerCancel={endScrub}
         onPointerDown={beginScrub}
         onPointerMove={updateScrub}
@@ -1959,13 +2115,41 @@ export function NextFineTuningPanel({
               top: `${timelineContextMenu.y}px`,
             }}
           >
-            <button
-              onClick={handleContextMenuMoveClick}
-              role="menuitem"
-              type="button"
-            >
-              Move to {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
-            </button>
+            {timelineContextMenu.kind === "insert" ? (
+              <>
+                <button
+                  onClick={() => insertTimelineMarker("slide")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Add slide at{" "}
+                  {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
+                </button>
+                <button
+                  onClick={() => insertTimelineMarker("side-image")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Add interface image
+                </button>
+                <button
+                  onClick={() => insertTimelineMarker("sound")}
+                  role="menuitem"
+                  type="button"
+                >
+                  Add sound
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleContextMenuMoveClick}
+                role="menuitem"
+                type="button"
+              >
+                Move to{" "}
+                {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
+              </button>
+            )}
           </div>
         ) : null}
       </div>
