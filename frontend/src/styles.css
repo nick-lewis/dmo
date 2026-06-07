@@ -1933,7 +1933,7 @@ button {
 
 .next-fine-mode-toggle {
   display: inline-grid;
-  grid-template-columns: repeat(2, max-content);
+  grid-template-columns: repeat(3, max-content);
   align-items: center;
   padding: 2px;
   border: 1px solid color-mix(in srgb, var(--panel-soft-border) 72%, transparent);

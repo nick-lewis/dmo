@@ -121,7 +121,9 @@ type DisplayCueLayout = {
   timeSeconds: number;
 };
 
-type FineTuningTimelineMode = "actions" | "chat-cues";
+type FineTuningTimelineLayer = "actions" | "chatCues" | "slides";
+
+type FineTuningTimelineVisibility = Record<FineTuningTimelineLayer, boolean>;
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
@@ -439,8 +441,12 @@ export function NextFineTuningPanel({
   const [selectedMarkerIndex, setSelectedMarkerIndex] = useState<number | null>(
     null,
   );
-  const [timelineMode, setTimelineMode] =
-    useState<FineTuningTimelineMode>("actions");
+  const [timelineVisibility, setTimelineVisibility] =
+    useState<FineTuningTimelineVisibility>({
+      actions: true,
+      chatCues: true,
+      slides: true,
+    });
   const [draftDisplayCueOffsets, setDraftDisplayCueOffsets] =
     useState<number[]>(displayCueOffsets);
   const [timelineContextMenu, setTimelineContextMenu] =
@@ -729,6 +735,14 @@ export function NextFineTuningPanel({
         (currentIndex + 1) % scriptAudioPlaybackRateOptions.length
       ] ?? 1;
     setPlaybackRate(nextRate);
+  }
+
+  function toggleTimelineLayer(layer: FineTuningTimelineLayer) {
+    setTimelineContextMenu(null);
+    setTimelineVisibility((current) => ({
+      ...current,
+      [layer]: !current[layer],
+    }));
   }
 
   function handleWaveformWheel(event: ReactWheelEvent<HTMLDivElement>) {
@@ -1382,6 +1396,7 @@ export function NextFineTuningPanel({
     .map((marker, index) => {
       const timeSeconds = markerTime(marker, index);
       return {
+        category: isSlideMarker(marker) ? ("slide" as const) : ("action" as const),
         index,
         marker,
         timeMs: Math.round(timeSeconds * 1000),
@@ -1389,18 +1404,54 @@ export function NextFineTuningPanel({
         widthPx: estimateMarkerWidthPx(marker),
       };
     })
+    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds))
+    .filter((item) =>
+      item.category === "slide"
+        ? timelineVisibility.slides
+        : timelineVisibility.actions,
+    );
+  const rawDisplayCueMarkers = displayCueChunks
+    .map((chunk, index) => {
+      const timeSeconds = displayCueTime(index);
+      return {
+        chunk,
+        index,
+        timeMs: Math.round(timeSeconds * 1000),
+        timeSeconds,
+        widthPx: estimateDisplayCueWidthPx(chunk),
+      };
+    })
+    .filter((item) => timelineVisibility.chatCues)
     .filter((item) => isTimeVisibleInWaveform(item.timeSeconds));
-  const timeMatchCounts = new Map<number, number>();
-  rawTimelineMarkers.forEach((item) => {
-    timeMatchCounts.set(item.timeMs, (timeMatchCounts.get(item.timeMs) ?? 0) + 1);
+  const visibleTimelineLayoutItems = [
+    ...rawTimelineMarkers.map((item) => ({
+      ...item,
+      kind: "marker" as const,
+      sortGroup: item.category === "slide" ? 0 : 1,
+    })),
+    ...rawDisplayCueMarkers.map((item) => ({
+      ...item,
+      kind: "display-cue" as const,
+      sortGroup: 2,
+    })),
+  ];
+  const visibleTimeMatchCounts = new Map<number, number>();
+  visibleTimelineLayoutItems.forEach((item) => {
+    visibleTimeMatchCounts.set(
+      item.timeMs,
+      (visibleTimeMatchCounts.get(item.timeMs) ?? 0) + 1,
+    );
   });
   const laneRightEdges: number[] = [];
   const waveformWidthForLayout = Math.max(waveformWidth || 0, 1);
   const layoutByIndex = new Map<number, TimelineMarkerLayout>();
-  [...rawTimelineMarkers]
+  const displayCueLayoutByIndex = new Map<number, DisplayCueLayout>();
+  [...visibleTimelineLayoutItems]
     .sort(
       (left, right) =>
-        left.timeSeconds - right.timeSeconds || left.index - right.index,
+        left.timeSeconds - right.timeSeconds ||
+        left.sortGroup - right.sortGroup ||
+        left.index - right.index,
     )
     .forEach((item) => {
       const markerCenterPx =
@@ -1413,75 +1464,37 @@ export function NextFineTuningPanel({
       );
       const lane = laneIndex >= 0 ? laneIndex : laneRightEdges.length;
       laneRightEdges[lane] = markerRightPx;
-      layoutByIndex.set(item.index, {
-        hasTimeMatch: (timeMatchCounts.get(item.timeMs) ?? 0) > 1,
+
+      if (item.kind === "marker") {
+        layoutByIndex.set(item.index, {
+          hasTimeMatch: (visibleTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
+          index: item.index,
+          lane,
+          marker: item.marker,
+          timeSeconds: item.timeSeconds,
+        });
+        return;
+      }
+
+      displayCueLayoutByIndex.set(item.index, {
+        chunk: item.chunk,
+        hasTimeMatch: (visibleTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
         index: item.index,
         lane,
-        marker: item.marker,
         timeSeconds: item.timeSeconds,
       });
     });
   const timelineMarkers = rawTimelineMarkers
     .map((item) => layoutByIndex.get(item.index))
     .filter((item): item is TimelineMarkerLayout => Boolean(item));
-  const rawDisplayCueMarkers = displayCueChunks
-    .map((chunk, index) => {
-      const timeSeconds = displayCueTime(index);
-      return {
-        chunk,
-        index,
-        timeMs: Math.round(timeSeconds * 1000),
-        timeSeconds,
-        widthPx: estimateDisplayCueWidthPx(chunk),
-      };
-    })
-    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds));
-  const displayCueTimeMatchCounts = new Map<number, number>();
-  rawDisplayCueMarkers.forEach((item) => {
-    displayCueTimeMatchCounts.set(
-      item.timeMs,
-      (displayCueTimeMatchCounts.get(item.timeMs) ?? 0) + 1,
-    );
-  });
-  const displayCueLaneRightEdges: number[] = [];
-  const displayCueLayoutByIndex = new Map<number, DisplayCueLayout>();
-  [...rawDisplayCueMarkers]
-    .sort(
-      (left, right) =>
-        left.timeSeconds - right.timeSeconds || left.index - right.index,
-    )
-    .forEach((item) => {
-      const markerCenterPx =
-        (waveformPercentForTime(item.timeSeconds) / 100) *
-        waveformWidthForLayout;
-      const markerLeftPx = markerCenterPx - item.widthPx / 2;
-      const markerRightPx = markerCenterPx + item.widthPx / 2;
-      const laneIndex = displayCueLaneRightEdges.findIndex(
-        (rightEdge) => markerLeftPx > rightEdge + 6,
-      );
-      const lane = laneIndex >= 0 ? laneIndex : displayCueLaneRightEdges.length;
-      displayCueLaneRightEdges[lane] = markerRightPx;
-      displayCueLayoutByIndex.set(item.index, {
-        chunk: item.chunk,
-        hasTimeMatch: (displayCueTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
-        index: item.index,
-        lane,
-        timeSeconds: item.timeSeconds,
-      });
-    });
   const displayCueLayouts = rawDisplayCueMarkers
     .map((item) => displayCueLayoutByIndex.get(item.index))
     .filter((item): item is DisplayCueLayout => Boolean(item));
-  const actionLaneCount = Math.max(
+  const laneCount = Math.max(
     1,
     ...timelineMarkers.map((item) => item.lane + 1),
-  );
-  const displayCueLaneCount = Math.max(
-    1,
     ...displayCueLayouts.map((item) => item.lane + 1),
   );
-  const laneCount =
-    timelineMode === "chat-cues" ? displayCueLaneCount : actionLaneCount;
   const waveformMarkerTop = 68;
   const waveformMarkerGap = 28;
   const waveformHeight = Math.max(124, 96 + laneCount * waveformMarkerGap);
@@ -1563,19 +1576,27 @@ export function NextFineTuningPanel({
         >
           {playbackRate}x
         </button>
-        <div className="next-fine-mode-toggle" role="group" aria-label="Fine tuning view">
+        <div className="next-fine-mode-toggle" role="group" aria-label="Timeline layers">
           <button
-            aria-pressed={timelineMode === "actions"}
-            className={timelineMode === "actions" ? "is-active" : ""}
-            onClick={() => setTimelineMode("actions")}
+            aria-pressed={timelineVisibility.slides}
+            className={timelineVisibility.slides ? "is-active" : ""}
+            onClick={() => toggleTimelineLayer("slides")}
+            type="button"
+          >
+            Slides
+          </button>
+          <button
+            aria-pressed={timelineVisibility.actions}
+            className={timelineVisibility.actions ? "is-active" : ""}
+            onClick={() => toggleTimelineLayer("actions")}
             type="button"
           >
             Actions
           </button>
           <button
-            aria-pressed={timelineMode === "chat-cues"}
-            className={timelineMode === "chat-cues" ? "is-active" : ""}
-            onClick={() => setTimelineMode("chat-cues")}
+            aria-pressed={timelineVisibility.chatCues}
+            className={timelineVisibility.chatCues ? "is-active" : ""}
+            onClick={() => toggleTimelineLayer("chatCues")}
             type="button"
           >
             Chat cues
@@ -1638,7 +1659,7 @@ export function NextFineTuningPanel({
           <span className="next-fine-wave-status">Generate audio first</span>
         ) : null}
         {audioUrl &&
-        timelineMode === "chat-cues" &&
+        timelineVisibility.chatCues &&
         !displayCueChunks.length ? (
           <span className="next-fine-wave-status">No chat cues</span>
         ) : null}
@@ -1656,8 +1677,7 @@ export function NextFineTuningPanel({
             {formatTimelineSeconds(visibleWaveformWindow.end * durationForLayout)}
           </span>
         ) : null}
-        {timelineMode === "actions"
-          ? timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
+        {timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
           const markerPercent = clamp(waveformPercentForTime(timeSeconds), 0, 100);
           const slideMarkerForPreview = isSlideMarker(marker);
           const markerPreview = slideMarkerForPreview
@@ -1744,8 +1764,8 @@ export function NextFineTuningPanel({
               ) : null}
             </button>
           );
-        })
-          : displayCueLayouts.map(({ chunk, hasTimeMatch, index, lane, timeSeconds }) => {
+        })}
+        {displayCueLayouts.map(({ chunk, hasTimeMatch, index, lane, timeSeconds }) => {
               const markerPercent = clamp(waveformPercentForTime(timeSeconds), 0, 100);
               const previewText = chunk.fullText.replace(/\s+/g, " ").trim();
               const offsetLabel =
