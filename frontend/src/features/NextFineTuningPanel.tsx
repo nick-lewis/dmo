@@ -4,11 +4,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
+import { publicAsset } from "../assets";
 import { MicIcon, RefreshIcon, StopIcon } from "../components/Icons";
 import {
   appendScriptMarkerTimelineArg,
@@ -164,6 +167,15 @@ const chatPreviewAutoScrollResumeThresholdPx = 28;
 const chatPreviewProgrammaticScrollIgnoreMs = 220;
 const chatPreviewUserScrollIntentMs = 900;
 const defaultFineTuningSideImagePath = "test-images/dLU-right.png";
+const fineTuningSideImageScaleMin = 0.2;
+const fineTuningSideImageScaleMax = 3;
+
+type FineTuningSideImageState = {
+  imagePath: string;
+  scale: number;
+  side: "left" | "right";
+  visible: boolean;
+};
 
 function replaceScriptMarker(
   text: string,
@@ -205,6 +217,112 @@ function markerLabel(marker: ScriptMarkerInstance) {
 
 function markerHasIcon(marker: ScriptMarkerInstance) {
   return !isSlideMarker(marker) && marker.type !== "side_image";
+}
+
+function normalizeFineTuningSideImageScale(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 1;
+  return clamp(
+    numeric,
+    fineTuningSideImageScaleMin,
+    fineTuningSideImageScaleMax,
+  );
+}
+
+function formatFineTuningSideImageScale(value: number) {
+  return String(Number(normalizeFineTuningSideImageScale(value).toFixed(2)));
+}
+
+function sideImageStateFromMarker(
+  marker: ScriptMarkerInstance,
+): FineTuningSideImageState {
+  if (marker.type === "show_image" || marker.type === "agent_image_on") {
+    return {
+      imagePath: marker.argList[0] || defaultFineTuningSideImagePath,
+      scale: 1,
+      side: "left",
+      visible: true,
+    };
+  }
+
+  if (marker.type === "agent_image_off") {
+    return {
+      imagePath: marker.argList[0] || "",
+      scale: 1,
+      side: "left",
+      visible: false,
+    };
+  }
+
+  const firstArg = marker.argList[0]?.trim().toLowerCase() || "";
+  const hasSideArg = [
+    "agent",
+    "avatar",
+    "left",
+    "main",
+    "right",
+    "side",
+    "tutor",
+  ].includes(firstArg);
+  const side = ["right", "side"].includes(firstArg) ? "right" : "left";
+  const remainingArgs = hasSideArg ? marker.argList.slice(1) : marker.argList;
+  const rawMode = remainingArgs[0]?.trim() || "show";
+  const mode = rawMode.toLowerCase();
+  const hideModes = ["hide", "hidden", "off", "false", "0"];
+  const showModes = ["show", "on", "visible", "true", "1"];
+  const usesExplicitMode = showModes.includes(mode) || hideModes.includes(mode);
+  const imageArgIndex = usesExplicitMode ? 1 : 0;
+  const imagePath =
+    remainingArgs.length > imageArgIndex
+      ? remainingArgs[imageArgIndex]
+      : usesExplicitMode
+        ? ""
+        : remainingArgs[0] || "";
+  const scale = normalizeFineTuningSideImageScale(
+    remainingArgs[imageArgIndex + 1],
+  );
+
+  return {
+    imagePath,
+    scale,
+    side,
+    visible: !hideModes.includes(mode),
+  };
+}
+
+function sideImageArgsFromState(state: FineTuningSideImageState) {
+  const imagePath = state.imagePath.trim();
+  const scale = normalizeFineTuningSideImageScale(state.scale);
+  const scaleArg =
+    imagePath && Math.abs(scale - 1) > 0.001
+      ? formatFineTuningSideImageScale(scale)
+      : "";
+  const args = imagePath
+    ? [state.side, state.visible ? "show" : "hide", imagePath]
+    : [state.side, state.visible ? "show" : "hide"];
+  if (scaleArg) args.push(scaleArg);
+  return args;
+}
+
+function markerSupportsFineTuningSettings(marker: ScriptMarkerInstance) {
+  return (
+    isSlideMarker(marker) ||
+    marker.type === "play_sound" ||
+    marker.type === "side_image" ||
+    marker.type === "show_image" ||
+    marker.type === "agent_image_on" ||
+    marker.type === "agent_image_off"
+  );
+}
+
+function markerContextMenuEstimatedHeight(marker: ScriptMarkerInstance) {
+  if (!markerSupportsFineTuningSettings(marker)) return 54;
+  if (marker.type === "side_image" || marker.type === "show_image") return 336;
+  if (marker.type === "agent_image_on" || marker.type === "agent_image_off") {
+    return 336;
+  }
+  if (marker.type === "play_sound") return 214;
+  return 138;
 }
 
 function estimateMarkerWidthPx(marker: ScriptMarkerInstance) {
@@ -388,8 +506,8 @@ function timelineContextMenuPosition(
   clientX: number,
   clientY: number,
   height = 54,
+  width = 220,
 ) {
-  const width = 220;
   return {
     x: Math.max(12, Math.min(clientX, window.innerWidth - width - 12)),
     y: Math.max(12, Math.min(clientY, window.innerHeight - height - 12)),
@@ -450,6 +568,7 @@ export function NextFineTuningPanel({
   const chatPreviewProgrammaticScrollIgnoreUntilRef = useRef(0);
   const chatPreviewRef = useRef<HTMLDivElement | null>(null);
   const chatPreviewUserScrollIntentUntilRef = useRef(0);
+  const timelineContextMenuRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
   const ignoreMarkerClickRef = useRef(false);
@@ -684,6 +803,22 @@ export function NextFineTuningPanel({
     const nextMarker = buildScriptMarker(
       marker.type,
       appendScriptMarkerTimelineArg(marker.argList, seconds * 1000),
+    );
+    onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
+  }
+
+  function updateMarkerArgs(
+    markerIndex: number,
+    nextArgs: string[],
+    nextType?: string,
+  ) {
+    const marker = markers[markerIndex];
+    if (!marker) return;
+
+    const timeMs = Math.round(markerTime(marker, markerIndex) * 1000);
+    const nextMarker = buildScriptMarker(
+      nextType ?? marker.type,
+      appendScriptMarkerTimelineArg(nextArgs, timeMs),
     );
     onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
   }
@@ -1040,13 +1175,19 @@ export function NextFineTuningPanel({
     if (event.button === 2) {
       event.preventDefault();
       event.stopPropagation();
+      const marker = markers[markerIndex];
       setSelectedMarkerIndex(markerIndex);
       setSelectedDisplayCueIndex(null);
       setTimelineContextMenu({
         index: markerIndex,
         kind: "marker",
         targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
-        ...timelineContextMenuPosition(event.clientX, event.clientY),
+        ...timelineContextMenuPosition(
+          event.clientX,
+          event.clientY,
+          marker ? markerContextMenuEstimatedHeight(marker) : 54,
+          marker && markerSupportsFineTuningSettings(marker) ? 312 : 220,
+        ),
       });
       return;
     }
@@ -1241,13 +1382,19 @@ export function NextFineTuningPanel({
   ) {
     event.preventDefault();
     event.stopPropagation();
+    const marker = markers[markerIndex];
     setSelectedMarkerIndex(markerIndex);
     setSelectedDisplayCueIndex(null);
     setTimelineContextMenu({
       index: markerIndex,
       kind: "marker",
       targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
-      ...timelineContextMenuPosition(event.clientX, event.clientY),
+      ...timelineContextMenuPosition(
+        event.clientX,
+        event.clientY,
+        marker ? markerContextMenuEstimatedHeight(marker) : 54,
+        marker && markerSupportsFineTuningSettings(marker) ? 312 : 220,
+      ),
     });
   }
 
@@ -1329,6 +1476,184 @@ export function NextFineTuningPanel({
     event.preventDefault();
     event.stopPropagation();
     moveContextMenuItemToCurrentTime();
+  }
+
+  function renderMarkerSettingsEditor(markerIndex: number) {
+    const marker = markers[markerIndex];
+    if (!marker || !markerSupportsFineTuningSettings(marker)) return null;
+
+    if (isSlideMarker(marker)) {
+      return (
+        <div className="next-fine-context-editor">
+          <div className="next-fine-context-title">Settings</div>
+          <label>
+            <span>Slide</span>
+            <input
+              aria-label="Slide reference"
+              onChange={(event) =>
+                updateMarkerArgs(markerIndex, [event.target.value])
+              }
+              value={marker.argList[0] ?? ""}
+            />
+          </label>
+        </div>
+      );
+    }
+
+    if (
+      marker.type === "side_image" ||
+      marker.type === "show_image" ||
+      marker.type === "agent_image_on" ||
+      marker.type === "agent_image_off"
+    ) {
+      const imageState = sideImageStateFromMarker(marker);
+      const updateImageState = (nextState: FineTuningSideImageState) =>
+        updateMarkerArgs(
+          markerIndex,
+          sideImageArgsFromState(nextState),
+          "side_image",
+        );
+
+      return (
+        <div className="next-fine-context-editor">
+          <div className="next-fine-context-title">Interface image</div>
+          <label>
+            <span>Side</span>
+            <select
+              aria-label="Interface image side"
+              onChange={(event) =>
+                updateImageState({
+                  ...imageState,
+                  side: event.target.value === "right" ? "right" : "left",
+                })
+              }
+              value={imageState.side}
+            >
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+          <label>
+            <span>State</span>
+            <select
+              aria-label="Interface image state"
+              onChange={(event) =>
+                updateImageState({
+                  ...imageState,
+                  visible: event.target.value !== "hide",
+                })
+              }
+              value={imageState.visible ? "show" : "hide"}
+            >
+              <option value="show">Show</option>
+              <option value="hide">Hide</option>
+            </select>
+          </label>
+          <div className="next-fine-image-field">
+            <span>Image</span>
+            <div className="next-fine-image-control">
+              <div className="next-fine-image-preview" aria-hidden="true">
+                {imageState.imagePath ? (
+                  <img alt="" src={publicAsset(imageState.imagePath)} />
+                ) : (
+                  <span>No image</span>
+                )}
+              </div>
+              <input
+                aria-label="Interface image path"
+                onChange={(event) =>
+                  updateImageState({
+                    ...imageState,
+                    imagePath: event.target.value,
+                  })
+                }
+                placeholder={defaultFineTuningSideImagePath}
+                value={imageState.imagePath}
+              />
+            </div>
+          </div>
+          <label>
+            <span>Scale</span>
+            <input
+              aria-label="Interface image scale"
+              max={fineTuningSideImageScaleMax}
+              min={fineTuningSideImageScaleMin}
+              onChange={(event) =>
+                updateImageState({
+                  ...imageState,
+                  scale: normalizeFineTuningSideImageScale(event.target.value),
+                })
+              }
+              step="0.05"
+              type="number"
+              value={formatFineTuningSideImageScale(imageState.scale)}
+            />
+          </label>
+        </div>
+      );
+    }
+
+    if (marker.type === "play_sound") {
+      const soundPath = marker.argList[0] || scriptSoundOptions[0]?.path || "";
+      const volume = marker.argList[1] || "0.5";
+      const isKnownSound = scriptSoundOptions.some(
+        (option) => option.path === soundPath,
+      );
+
+      return (
+        <div className="next-fine-context-editor">
+          <div className="next-fine-context-title">Sound</div>
+          <label>
+            <span>Sound</span>
+            <select
+              aria-label="Sound effect"
+              onChange={(event) =>
+                updateMarkerArgs(markerIndex, [
+                  event.target.value === "custom" ? soundPath : event.target.value,
+                  volume,
+                ])
+              }
+              value={isKnownSound ? soundPath : "custom"}
+            >
+              {scriptSoundOptions.map((option) => (
+                <option key={option.path} value={option.path}>
+                  {option.label}
+                </option>
+              ))}
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label>
+            <span>Volume</span>
+            <input
+              aria-label="Sound volume"
+              max="1"
+              min="0"
+              onChange={(event) =>
+                updateMarkerArgs(markerIndex, [soundPath, event.target.value])
+              }
+              step="0.05"
+              type="number"
+              value={volume}
+            />
+          </label>
+          {!isKnownSound ? (
+            <label>
+              <span>Path</span>
+              <input
+                aria-label="Custom sound path"
+                onChange={(event) =>
+                  updateMarkerArgs(markerIndex, [event.target.value, volume])
+                }
+                value={soundPath}
+              />
+            </label>
+          ) : null}
+        </div>
+      );
+    }
+
+    return null;
   }
 
   useEffect(() => {
@@ -1460,6 +1785,35 @@ export function NextFineTuningPanel({
       window.removeEventListener("resize", closeTimelineContextMenu);
     };
   }, [timelineContextMenu]);
+
+  useLayoutEffect(() => {
+    if (!timelineContextMenu) return;
+
+    const menuElement = timelineContextMenuRef.current;
+    if (!menuElement) return;
+
+    const rect = menuElement.getBoundingClientRect();
+    const nextX = Math.max(
+      12,
+      Math.min(timelineContextMenu.x, window.innerWidth - rect.width - 12),
+    );
+    const nextY = Math.max(
+      12,
+      Math.min(timelineContextMenu.y, window.innerHeight - rect.height - 12),
+    );
+    if (nextX === timelineContextMenu.x && nextY === timelineContextMenu.y) {
+      return;
+    }
+    setTimelineContextMenu((current) =>
+      current
+        ? {
+            ...current,
+            x: Math.round(nextX),
+            y: Math.round(nextY),
+          }
+        : current,
+    );
+  }, [text, timelineContextMenu]);
 
   useEffect(() => {
     setDraftDisplayCueOffsets(displayCueOffsets);
@@ -1692,6 +2046,14 @@ export function NextFineTuningPanel({
   const waveformMarkerTop = 68;
   const waveformMarkerGap = 28;
   const waveformHeight = Math.max(124, 96 + laneCount * waveformMarkerGap);
+  const timelineContextMarker =
+    timelineContextMenu?.kind === "marker"
+      ? markers[timelineContextMenu.index] ?? null
+      : null;
+  const timelineContextMenuHasEditor = Boolean(
+    timelineContextMarker &&
+      markerSupportsFineTuningSettings(timelineContextMarker),
+  );
 
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
@@ -2086,9 +2448,15 @@ export function NextFineTuningPanel({
                 </button>
               );
             })}
-        {timelineContextMenu ? (
+        {timelineContextMenu && typeof document !== "undefined" ? (
+          createPortal(
           <div
-            className="next-fine-context-menu"
+            className={[
+              "next-fine-context-menu",
+              timelineContextMenuHasEditor ? "is-editor" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -2109,6 +2477,7 @@ export function NextFineTuningPanel({
             onPointerUp={(event) => {
               event.stopPropagation();
             }}
+            ref={timelineContextMenuRef}
             role="menu"
             style={{
               left: `${timelineContextMenu.x}px`,
@@ -2118,6 +2487,7 @@ export function NextFineTuningPanel({
             {timelineContextMenu.kind === "insert" ? (
               <>
                 <button
+                  className="next-fine-context-action"
                   onClick={() => insertTimelineMarker("slide")}
                   role="menuitem"
                   type="button"
@@ -2126,6 +2496,7 @@ export function NextFineTuningPanel({
                   {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
                 </button>
                 <button
+                  className="next-fine-context-action"
                   onClick={() => insertTimelineMarker("side-image")}
                   role="menuitem"
                   type="button"
@@ -2133,6 +2504,7 @@ export function NextFineTuningPanel({
                   Add interface image
                 </button>
                 <button
+                  className="next-fine-context-action"
                   onClick={() => insertTimelineMarker("sound")}
                   role="menuitem"
                   type="button"
@@ -2141,16 +2513,24 @@ export function NextFineTuningPanel({
                 </button>
               </>
             ) : (
-              <button
-                onClick={handleContextMenuMoveClick}
-                role="menuitem"
-                type="button"
-              >
-                Move to{" "}
-                {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
-              </button>
+              <>
+                <button
+                  className="next-fine-context-action"
+                  onClick={handleContextMenuMoveClick}
+                  role="menuitem"
+                  type="button"
+                >
+                  Move to{" "}
+                  {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
+                </button>
+                {timelineContextMenu.kind === "marker"
+                  ? renderMarkerSettingsEditor(timelineContextMenu.index)
+                  : null}
+              </>
             )}
-          </div>
+          </div>,
+            document.body,
+          )
         ) : null}
       </div>
     </div>

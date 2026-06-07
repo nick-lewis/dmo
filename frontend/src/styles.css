@@ -2420,7 +2420,16 @@ button {
   box-shadow: 0 16px 34px color-mix(in srgb, var(--page-ink) 16%, transparent);
 }
 
-.next-fine-context-menu button {
+.next-fine-context-menu.is-editor {
+  display: grid;
+  gap: 8px;
+  width: min(312px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 8px;
+}
+
+.next-fine-context-action {
   display: block;
   width: 100%;
   height: 30px;
@@ -2434,10 +2443,86 @@ button {
   text-align: left;
 }
 
-.next-fine-context-menu button:hover,
-.next-fine-context-menu button:focus-visible {
+.next-fine-context-action:hover,
+.next-fine-context-action:focus-visible {
   background: color-mix(in srgb, var(--accent-2-soft) 46%, transparent);
   outline: 0;
+}
+
+.next-fine-context-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-soft-border) 76%, transparent);
+}
+
+.next-fine-context-title {
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 860;
+}
+
+.next-fine-context-editor label,
+.next-fine-image-field {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.next-fine-image-field {
+  align-items: start;
+}
+
+.next-fine-context-editor label span,
+.next-fine-image-field > span {
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.next-fine-context-editor input,
+.next-fine-context-editor select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 82%, transparent);
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: color-mix(in srgb, var(--panel-bg-strong) 86%, transparent);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.next-fine-image-control {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.next-fine-image-preview {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 44px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted-ink) 76%, var(--page-ink));
+  background: color-mix(in srgb, var(--panel-bg-strong) 72%, transparent);
+}
+
+.next-fine-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.next-fine-image-preview span {
+  font-size: 0.58rem;
+  font-weight: 760;
 }
 
 .next-script-view {
