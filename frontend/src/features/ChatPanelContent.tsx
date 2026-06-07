@@ -1,6 +1,8 @@
 import {
+  type CSSProperties,
   type FormEvent,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -56,6 +58,7 @@ type ScriptDisplayChunkView = {
 };
 
 type RenderedChatItem = {
+  active: boolean;
   author: string;
   body: string;
   id: string;
@@ -167,6 +170,7 @@ export function ChatPanelContent({
       return chunks
         .filter((chunk) => chunk.visible)
         .map((chunk) => ({
+          active: chunk.active,
           author,
           body:
             chunk.text ||
@@ -187,6 +191,7 @@ export function ChatPanelContent({
 
     return [
       {
+        active: false,
         author,
         body:
           (isStreaming
@@ -200,9 +205,17 @@ export function ChatPanelContent({
       },
     ];
   });
-  const turnAnchorMessage = turnAnchorMessageId
+  const requestedTurnAnchorMessage = turnAnchorMessageId
     ? renderedMessages.find((message) => message.id === turnAnchorMessageId)
     : null;
+  const activeTopAnchorMessage =
+    renderedMessages.find((message) => message.topAnchor && message.active) ??
+    [...renderedMessages]
+      .reverse()
+      .find((message) => message.topAnchor && message.streaming) ??
+    null;
+  const turnAnchorMessage = requestedTurnAnchorMessage ?? activeTopAnchorMessage;
+  const effectiveTurnAnchorMessageId = turnAnchorMessage?.id ?? null;
   const turnAnchorIsStreaming = Boolean(
     turnAnchorMessage?.streaming,
   );
@@ -213,12 +226,48 @@ export function ChatPanelContent({
   const turnAnchorScrollKey = turnAnchorMessage
     ? `${turnAnchorMessage.id}:${turnAnchorMessage.body.length}`
     : "";
+  const [turnAnchorSpacerHeight, setTurnAnchorSpacerHeight] = useState(0);
+  const chatMessageListStyle = {
+    "--turn-blank-space": `${turnAnchorSpacerHeight}px`,
+  } as CSSProperties;
   const runtimeButtonsLayoutKey = runtimeButtons
     .map(
       (button) =>
         `${button.stepId || button.label}:${button.triggersEvent}:${button.label}`,
     )
     .join("|");
+
+  useLayoutEffect(() => {
+    const messageList = messageListRef.current;
+    const target = effectiveTurnAnchorMessageId
+      ? messageRefs.current.get(effectiveTurnAnchorMessageId)
+      : null;
+    if (!messageList || !target || !turnAnchorShouldTopAnchor) {
+      setTurnAnchorSpacerHeight(0);
+      return;
+    }
+
+    const updateSpacerHeight = () => {
+      const nextHeight = Math.max(
+        0,
+        messageList.clientHeight - target.offsetHeight + 12,
+      );
+      setTurnAnchorSpacerHeight((currentHeight) =>
+        Math.abs(currentHeight - nextHeight) < 1 ? currentHeight : nextHeight,
+      );
+    };
+
+    updateSpacerHeight();
+
+    const resizeObserver = new ResizeObserver(updateSpacerHeight);
+    resizeObserver.observe(messageList);
+    resizeObserver.observe(target);
+    return () => resizeObserver.disconnect();
+  }, [
+    effectiveTurnAnchorMessageId,
+    turnAnchorScrollKey,
+    turnAnchorShouldTopAnchor,
+  ]);
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -235,8 +284,8 @@ export function ChatPanelContent({
     };
 
     const scrollToAnchor = () => {
-      if (turnAnchorMessageId) {
-        const target = messageRefs.current.get(turnAnchorMessageId);
+      if (effectiveTurnAnchorMessageId) {
+        const target = messageRefs.current.get(effectiveTurnAnchorMessageId);
         if (target) {
           if (turnAnchorIsStreaming) {
             if (turnAnchorShouldTopAnchor) {
@@ -286,8 +335,9 @@ export function ChatPanelContent({
     turnAnchorShouldTopAnchor,
     turnAnchorIsStreaming,
     turnAnchorIsVisible,
-    turnAnchorMessageId,
+    effectiveTurnAnchorMessageId,
     turnAnchorScrollKey,
+    turnAnchorSpacerHeight,
   ]);
 
   function handleMessageListScroll() {
@@ -357,7 +407,7 @@ export function ChatPanelContent({
         <div
           className={[
             "chat-message-list",
-            turnAnchorMessageId ? "turn-anchored" : "",
+            turnAnchorShouldTopAnchor ? "turn-anchored" : "",
             runtimeButtons.length ? "has-runtime-choices" : "",
           ]
             .filter(Boolean)
@@ -368,6 +418,7 @@ export function ChatPanelContent({
           onTouchStart={markMessageListUserScrollIntent}
           onWheel={markMessageListUserScrollIntent}
           ref={messageListRef}
+          style={chatMessageListStyle}
         >
           {status === "loading" ? (
             <div className="chat-status">Loading session...</div>
