@@ -45,6 +45,7 @@ import {
 } from "../uiHelpers";
 import { stringConfigValue } from "../runtimeUtils";
 import {
+  appendScriptMarkerTimelineArg,
   buildScriptMarker,
   customSoundOptionValue,
   displayTranscriptSlotsFromText,
@@ -72,6 +73,7 @@ import type {
   ExperiencesPayload,
   ResolvedSlide,
   ScriptAudioItem,
+  ScriptWord,
   SessionPayload,
   TutorSettings,
 } from "../types";
@@ -98,6 +100,7 @@ import {
 } from "./useExperienceAutosave";
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
+import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
 import {
   clamp,
   dropIndexForTextTarget,
@@ -1060,6 +1063,44 @@ function displayInsertionIndexForSourceIndex(
   );
 }
 
+function displayWordIndexForTimelineTime(
+  timeSeconds: number,
+  timingWords: ScriptWord[],
+) {
+  if (!timingWords.length || !Number.isFinite(timeSeconds)) return null;
+
+  const firstStart = timingWords[0]?.start ?? 0;
+  if (timeSeconds <= firstStart) return 0;
+
+  const nextWordIndex = timingWords.findIndex(
+    (word) => Number.isFinite(word.start) && word.start >= timeSeconds,
+  );
+  return nextWordIndex >= 0 ? nextWordIndex : timingWords.length;
+}
+
+function timedDisplayInsertionIndexForMarker(
+  marker: ScriptMarkerInstance,
+  timingWords: ScriptWord[],
+  displayText: string,
+  displayRangesBySourceWord: Array<{ end: number; start: number } | undefined>,
+) {
+  if (typeof marker.timeMs !== "number" || !Number.isFinite(marker.timeMs)) {
+    return null;
+  }
+
+  const displayWordIndex = displayWordIndexForTimelineTime(
+    marker.timeMs / 1000,
+    timingWords,
+  );
+  if (displayWordIndex === null) return null;
+
+  return displayInsertionIndexForSourceWordIndex(
+    displayWordIndex,
+    displayText,
+    displayRangesBySourceWord,
+  );
+}
+
 function insertViewMarkerAt(
   text: string,
   sourceIndexByTextIndex: number[],
@@ -1109,11 +1150,13 @@ function projectScriptActionsToDisplayText({
   displaySlots,
   markers,
   sourceText,
+  timingWords = [],
 }: {
   displayBreaks: number[];
   displaySlots: string[];
   markers: ScriptMarkerInstance[];
   sourceText: string;
+  timingWords?: ScriptWord[];
 }) {
   let {
     displayRangesBySourceWord,
@@ -1131,13 +1174,20 @@ function projectScriptActionsToDisplayText({
 
   markers
     .map((marker, index) => ({
-      displayIndex: displayInsertionIndexForSourceIndex(
-        marker.start,
-        marker.wordIndex,
-        text,
-        displayRangesBySourceWord,
-        sourceIndexByTextIndex,
-      ),
+      displayIndex:
+        timedDisplayInsertionIndexForMarker(
+          marker,
+          timingWords,
+          text,
+          displayRangesBySourceWord,
+        ) ??
+        displayInsertionIndexForSourceIndex(
+          marker.start,
+          marker.wordIndex,
+          text,
+          displayRangesBySourceWord,
+          sourceIndexByTextIndex,
+        ),
       index,
       marker,
     }))
@@ -2587,6 +2637,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeDisplaySlots,
     activeDisplayEditorBreaks,
   );
+  const activeScriptActionTimingWords = useMemo(
+    () =>
+      alignScriptWordsToDisplaySlots(
+        activeDisplaySlots,
+        activeScriptAudioItem?.timingWords ?? [],
+      ),
+    [activeScriptActionViewKey, activeScriptAudioItem?.timingWords],
+  );
   const activeScriptActionView = useMemo(
     () =>
       projectScriptActionsToDisplayText({
@@ -2594,10 +2652,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         displaySlots: activeDisplaySlots,
         markers: activeScriptMarkers,
         sourceText: activeScriptText,
+        timingWords: activeScriptActionTimingWords,
       }),
     [
       activeScriptActionViewKey,
       activeScriptMarkers,
+      activeScriptActionTimingWords,
       activeScriptText,
     ],
   );
@@ -4107,7 +4167,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     marker: ScriptMarkerInstance,
     args: string[],
   ) {
-    const nextMarker = buildScriptMarker(marker.type, args);
+    const nextMarker = buildScriptMarker(
+      marker.type,
+      appendScriptMarkerTimelineArg(args, marker.timeMs),
+    );
     const currentMarkerKey = markerEditKey(marker);
     const nextMarkerKey = markerEditKeyFrom(
       marker.start,
