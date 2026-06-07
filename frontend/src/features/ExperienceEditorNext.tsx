@@ -2423,8 +2423,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     useState(false);
   const [audioVoiceInstructionsDraft, setAudioVoiceInstructionsDraft] =
     useState("");
-  const [savingAudioVoiceSettingsId, setSavingAudioVoiceSettingsId] =
-    useState("");
   const eventAutosaveTimerRef = useRef<number | null>(null);
   const onEntryAutosaveTimerRef = useRef<number | null>(null);
   const conversationAutosaveTimerRef = useRef<number | null>(null);
@@ -2446,7 +2444,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
   const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const audioVoiceInstructionsRef = useRef<HTMLTextAreaElement | null>(null);
+  const audioVoiceInstructionsRef = useRef<HTMLInputElement | null>(null);
   const pendingAudioScriptSelectionRef = useRef<AudioScriptSelection | null>(
     null,
   );
@@ -2683,15 +2681,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeAudioVoiceSettingsStepId,
     activeScriptAudioItem?.id,
   ]);
-
-  useEffect(() => {
-    if (!isAudioVoiceSettingsOpen) return;
-
-    resizeTextareaToContent(audioVoiceInstructionsRef.current, {
-      maxHeight: 220,
-      minHeight: 52,
-    });
-  }, [audioVoiceInstructionsDraft, isAudioVoiceSettingsOpen]);
 
   useLayoutEffect(() => {
     const pendingSelection = pendingAudioScriptSelectionRef.current;
@@ -3960,12 +3949,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         : "";
     if (nextOverride === currentOverride) return;
 
-    setSavingAudioVoiceSettingsId(item.id);
-    try {
-      await saveScriptAudioVoiceInstructionsOverride(item.id, nextOverride);
-    } finally {
-      setSavingAudioVoiceSettingsId("");
-    }
+    await saveScriptAudioVoiceInstructionsOverride(item.id, nextOverride);
   }
 
   function changeActiveScriptText(
@@ -4923,41 +4907,21 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
-          <div className="next-audio-script-panel">
-            {isAudioVoiceSettingsOpen ? (
-              <div className="next-script-voice-panel">
-                <div className="next-script-voice-panel-heading">
-                  <span>Personality &amp; tone</span>
-                  <small>
-                    {savingAudioVoiceSettingsId === activeScriptAudioItem?.id
-                      ? "Saving"
-                      : activeAudioHasCustomVoiceInstructions
-                        ? "Custom"
-                        : "Default"}
-                  </small>
-                </div>
-                <textarea
-                  aria-label="Audio script personality and tone"
-                  className="next-script-voice-textarea"
-                  disabled={!activeScriptAudioItem}
-                  onBlur={() => void saveActiveAudioVoiceInstructionsOverride()}
-                  onChange={(event) => {
-                    setAudioVoiceInstructionsDraft(event.currentTarget.value);
-                    resizeTextareaToContent(event.currentTarget, {
-                      maxHeight: 220,
-                      minHeight: 52,
-                    });
-                  }}
-                  onContextMenu={(event) => event.stopPropagation()}
-                  ref={audioVoiceInstructionsRef}
-                  spellCheck
-                  value={audioVoiceInstructionsDraft}
-                />
-              </div>
-            ) : null}
-            <div className="next-script-textarea-shell">
+          <div
+            className={[
+              "next-audio-script-panel",
+              isAudioVoiceSettingsOpen ? "has-voice-settings" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <div className="next-audio-script-toolbar">
+              {activeAudioHasCustomVoiceInstructions ? (
+                <span>custom personality and tone</span>
+              ) : null}
               <button
                 aria-label="Audio script personality and tone"
+                aria-expanded={isAudioVoiceSettingsOpen}
                 aria-pressed={isAudioVoiceSettingsOpen}
                 className={[
                   "next-script-voice-settings-button",
@@ -4972,12 +4936,39 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                 title={
                   activeAudioHasCustomVoiceInstructions
                     ? "Custom personality and tone for this audio script"
-                    : "Using default personality and tone"
+                    : "Personality and tone for this audio script"
                 }
                 type="button"
               >
                 <SettingsIcon />
               </button>
+            </div>
+            <div
+              aria-hidden={!isAudioVoiceSettingsOpen}
+              className={[
+                "next-script-voice-panel",
+                isAudioVoiceSettingsOpen ? "is-open" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <input
+                aria-label="Audio script personality and tone"
+                className="next-script-voice-input"
+                disabled={!activeScriptAudioItem || !isAudioVoiceSettingsOpen}
+                onBlur={() => void saveActiveAudioVoiceInstructionsOverride()}
+                onChange={(event) =>
+                  setAudioVoiceInstructionsDraft(event.currentTarget.value)
+                }
+                onContextMenu={(event) => event.stopPropagation()}
+                ref={audioVoiceInstructionsRef}
+                spellCheck
+                tabIndex={isAudioVoiceSettingsOpen ? 0 : -1}
+                type="text"
+                value={audioVoiceInstructionsDraft}
+              />
+            </div>
+            <div className="next-script-textarea-shell">
               <textarea
                 aria-label="Audio script text"
                 className="next-script-textarea"

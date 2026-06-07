@@ -1725,43 +1725,57 @@ button {
 
 .next-audio-script-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto 0 minmax(0, 1fr);
   align-content: stretch;
-  gap: 8px;
+  gap: 5px;
   height: 100%;
   min-height: 0;
   min-width: 0;
 }
 
-.next-script-voice-panel {
-  display: grid;
-  gap: 5px;
+.next-audio-script-panel.has-voice-settings {
+  grid-template-rows: auto 31px minmax(0, 1fr);
+}
+
+.next-audio-script-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-height: 24px;
   min-width: 0;
 }
 
-.next-script-voice-panel-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: color-mix(in srgb, var(--muted-ink) 78%, transparent);
+.next-audio-script-toolbar span {
+  color: color-mix(in srgb, var(--accent) 72%, var(--muted-ink));
   font-size: 0.58rem;
   font-weight: 880;
   text-transform: uppercase;
 }
 
-.next-script-voice-panel-heading small {
-  color: color-mix(in srgb, var(--accent-2) 76%, var(--muted-ink));
-  font-size: inherit;
-  font-weight: 880;
+.next-script-voice-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
 }
 
-.next-script-voice-textarea {
+.next-script-voice-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.next-script-voice-input {
   width: 100%;
-  min-height: 52px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 9px 10px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
   border-radius: 7px;
   outline: 0;
@@ -1770,29 +1784,25 @@ button {
   font-family: var(--ui-font);
   font-size: 0.78rem;
   font-weight: 520;
-  line-height: 1.42;
-  resize: none;
+  line-height: 30px;
 }
 
-.next-script-voice-textarea:focus {
+.next-script-voice-input:focus {
   border-color: color-mix(in srgb, var(--accent-2) 26%, var(--panel-soft-border));
 }
 
 .next-script-textarea-shell {
   position: relative;
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
 
 .next-script-voice-settings-button {
-  position: absolute;
-  z-index: 2;
-  top: 7px;
-  right: 7px;
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 25px;
+  height: 25px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--accent-2) 13%, var(--panel-soft-border));
   border-radius: 999px;
@@ -1827,7 +1837,7 @@ button {
   min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: 10px 44px 18px 12px;
+  padding: 10px 12px 18px;
   border: 1px solid color-mix(in srgb, var(--accent-2) 12%, var(--panel-soft-border));
   border-radius: 7px;
   outline: 0;
