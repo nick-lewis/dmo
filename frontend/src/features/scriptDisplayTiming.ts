@@ -118,20 +118,43 @@ function normalizeTimingToken(value: string) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-function alignDisplaySlotsToScriptWords(
+type SlotWordSpan = {
+  index: number;
+  span: number;
+};
+
+function alignDisplaySlotsToScriptWordSpans(
   displaySlots: string[],
   scriptWords: ScriptWord[],
 ) {
   if (!displaySlots.length || !scriptWords.length) return [];
 
   if (displaySlots.length === scriptWords.length) {
-    return displaySlots.map((_, index) => index);
+    return displaySlots.map((_, index) => ({ index, span: 1 }));
   }
 
   const displayTokens = displaySlots.map(normalizeTimingToken);
   const timingTokens = scriptWords.map((word) =>
     normalizeTimingToken(word.word),
   );
+
+  function matchingTimingSpan(row: number, column: number) {
+    let combinedToken = "";
+    const displayToken = displayTokens[row] ?? "";
+    if (!displayToken) return 0;
+
+    for (let span = 1; span <= 4; span += 1) {
+      const timingToken = timingTokens[column + span - 1];
+      if (timingToken === undefined) return 0;
+
+      combinedToken += timingToken;
+      if (combinedToken === displayToken) return span;
+      if (combinedToken.length > displayToken.length + 2) return 0;
+    }
+
+    return 0;
+  }
+
   const rowCount = displayTokens.length + 1;
   const columnCount = timingTokens.length + 1;
   const costs = Array.from({ length: rowCount }, () =>
@@ -140,28 +163,32 @@ function alignDisplaySlotsToScriptWords(
 
   for (let row = displayTokens.length - 1; row >= 0; row -= 1) {
     for (let column = timingTokens.length - 1; column >= 0; column -= 1) {
-      costs[row][column] =
-        displayTokens[row] && displayTokens[row] === timingTokens[column]
-          ? (costs[row + 1]?.[column + 1] ?? 0) + 1
-          : Math.max(
-              costs[row + 1]?.[column] ?? 0,
-              costs[row]?.[column + 1] ?? 0,
-            );
+      const timingSpan = matchingTimingSpan(row, column);
+      costs[row][column] = timingSpan
+        ? (costs[row + 1]?.[column + timingSpan] ?? 0) + 1
+        : Math.max(
+            costs[row + 1]?.[column] ?? 0,
+            costs[row]?.[column + 1] ?? 0,
+          );
     }
   }
 
-  const indexes = Array.from({ length: displaySlots.length }, () => -1);
+  const spans: SlotWordSpan[] = Array.from(
+    { length: displaySlots.length },
+    () => ({ index: -1, span: 0 }),
+  );
   let row = 0;
   let column = 0;
   while (row < displayTokens.length && column < timingTokens.length) {
+    const timingSpan = matchingTimingSpan(row, column);
     if (
-      displayTokens[row] &&
-      displayTokens[row] === timingTokens[column] &&
-      costs[row][column] === (costs[row + 1]?.[column + 1] ?? 0) + 1
+      timingSpan &&
+      costs[row][column] ===
+        (costs[row + 1]?.[column + timingSpan] ?? 0) + 1
     ) {
-      indexes[row] = column;
+      spans[row] = { index: column, span: timingSpan };
       row += 1;
-      column += 1;
+      column += timingSpan;
     } else if (
       (costs[row + 1]?.[column] ?? 0) >= (costs[row]?.[column + 1] ?? 0)
     ) {
@@ -171,7 +198,52 @@ function alignDisplaySlotsToScriptWords(
     }
   }
 
-  return indexes;
+  return spans;
+}
+
+function alignDisplaySlotsToScriptWords(
+  displaySlots: string[],
+  scriptWords: ScriptWord[],
+) {
+  return alignDisplaySlotsToScriptWordSpans(displaySlots, scriptWords).map(
+    (span) => span.index,
+  );
+}
+
+export function alignScriptWordsToDisplaySlots(
+  displaySlots: string[] | undefined,
+  scriptWords: ScriptWord[] | undefined,
+) {
+  const normalizedDisplaySlots = normalizeScriptDisplaySlots(displaySlots);
+  const normalizedScriptWords = Array.isArray(scriptWords) ? scriptWords : [];
+  if (!normalizedDisplaySlots.length || !normalizedScriptWords.length) {
+    return normalizedScriptWords;
+  }
+
+  const spans = alignDisplaySlotsToScriptWordSpans(
+    normalizedDisplaySlots,
+    normalizedScriptWords,
+  );
+  if (!spans.length) return normalizedScriptWords;
+
+  const alignedWords = spans
+    .map((span, slotIndex): ScriptWord | null => {
+      const firstWord = normalizedScriptWords[span.index];
+      if (!firstWord) return null;
+
+      const lastWord =
+        normalizedScriptWords[
+          Math.max(span.index, span.index + span.span - 1)
+        ] ?? firstWord;
+      return {
+        end: lastWord.end,
+        start: firstWord.start,
+        word: normalizedDisplaySlots[slotIndex] || firstWord.word,
+      };
+    })
+    .filter((word): word is ScriptWord => Boolean(word));
+
+  return alignedWords.length ? alignedWords : normalizedScriptWords;
 }
 
 function scriptWordStart(scriptWords: ScriptWord[], wordIndex: number) {

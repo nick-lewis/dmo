@@ -34,6 +34,7 @@ import {
 } from "./scriptActionEditorUtils";
 import { formatTimelineSeconds } from "./ScriptAudioPanel";
 import {
+  alignScriptWordsToDisplaySlots,
   normalizeScriptDisplayCueOffsets,
   scriptDisplayChunkSpecsFromValues,
   type ScriptDisplayChunkSpec,
@@ -475,10 +476,15 @@ export function NextFineTuningPanel({
   const spokenText = spokenTextFromMarkedScript(text);
   const spokenWordCount = countScriptWords(spokenText);
   const timingWords = audioItem?.timingWords ?? [];
+  const displayTimingWords = useMemo(
+    () => alignScriptWordsToDisplaySlots(displaySlots, timingWords),
+    [displaySlots, timingWords],
+  );
   const durationSeconds = Math.max(
     0,
     audioItem?.durationSeconds ||
       audioDuration ||
+      displayTimingWords[displayTimingWords.length - 1]?.end ||
       timingWords[timingWords.length - 1]?.end ||
       0,
   );
@@ -510,7 +516,9 @@ export function NextFineTuningPanel({
     100,
   );
   const currentWord =
-    timingWords.find((word) => visibleTime >= word.start && visibleTime <= word.end)
+    displayTimingWords.find(
+      (word) => visibleTime >= word.start && visibleTime <= word.end,
+    )
       ?.word ?? "";
   const effectiveDisplayCueOffsets = draftDisplayCueOffsets.length
     ? draftDisplayCueOffsets
@@ -521,7 +529,7 @@ export function NextFineTuningPanel({
     displaySlots,
     durationSeconds,
     messageId: audioItem?.id ?? "",
-    scriptWords: timingWords,
+    scriptWords: displayTimingWords,
   });
   const displayCueChunks = displayChunks.filter(
     (chunk) => chunk.boundaryIndex >= 0,
@@ -626,7 +634,7 @@ export function NextFineTuningPanel({
     if (draggingMarker?.markerIndex === index) return draggingMarker.timeSeconds;
     return markerTimelineTimeSeconds(
       marker,
-      timingWords,
+      displayTimingWords,
       durationSeconds,
       spokenWordCount,
     );

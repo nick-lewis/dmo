@@ -63,13 +63,26 @@ def align_script_words_to_timing_words(script_text, words):
     if len(script_tokens) == len(timing_tokens):
         return list(range(len(script_tokens)))
 
+    def matching_timing_span(row, column):
+        combined = ""
+        for span in range(1, 5):
+            if column + span > len(timing_tokens):
+                return 0
+            combined += timing_tokens[column + span - 1]
+            if script_tokens[row] and combined == script_tokens[row]:
+                return span
+            if script_tokens[row] and len(combined) > len(script_tokens[row]) + 2:
+                return 0
+        return 0
+
     row_count = len(script_tokens) + 1
     column_count = len(timing_tokens) + 1
     costs = [[0 for _ in range(column_count)] for _ in range(row_count)]
     for row in range(len(script_tokens) - 1, -1, -1):
         for column in range(len(timing_tokens) - 1, -1, -1):
-            if script_tokens[row] and script_tokens[row] == timing_tokens[column]:
-                costs[row][column] = costs[row + 1][column + 1] + 1
+            timing_span = matching_timing_span(row, column)
+            if timing_span:
+                costs[row][column] = costs[row + 1][column + timing_span] + 1
             else:
                 costs[row][column] = max(
                     costs[row + 1][column],
@@ -80,14 +93,15 @@ def align_script_words_to_timing_words(script_text, words):
     row = 0
     column = 0
     while row < len(script_tokens) and column < len(timing_tokens):
+        timing_span = matching_timing_span(row, column)
         if (
-            script_tokens[row]
-            and script_tokens[row] == timing_tokens[column]
-            and costs[row][column] == costs[row + 1][column + 1] + 1
+            timing_span
+            and costs[row][column]
+            == costs[row + 1][column + timing_span] + 1
         ):
             word_indexes[row] = column
             row += 1
-            column += 1
+            column += timing_span
         elif costs[row + 1][column] >= costs[row][column + 1]:
             row += 1
         else:

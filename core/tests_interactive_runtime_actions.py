@@ -895,6 +895,37 @@ class InteractiveRuntimeActionTests(TestCase):
         self.assertEqual(aligned_cues[0]["time"], 0.224)
         self.assertEqual(aligned_cues[1]["time"], 9.88)
 
+    def test_script_cue_word_times_align_when_timing_splits_script_word(self):
+        script = "Ah hello there my name is D-Lou and Now the idea is simple"
+        words = [
+            {"word": "Ah", "start": 0.0, "end": 0.2},
+            {"word": "hello", "start": 0.3, "end": 0.6},
+            {"word": "there", "start": 0.7, "end": 1.0},
+            {"word": "my", "start": 1.1, "end": 1.3},
+            {"word": "name", "start": 1.4, "end": 1.6},
+            {"word": "is", "start": 1.7, "end": 1.8},
+            {"word": "D", "start": 1.9, "end": 2.0},
+            {"word": "Lou", "start": 2.0, "end": 2.2},
+            {"word": "and", "start": 2.4, "end": 2.6},
+            {"word": "Now", "start": 2.8, "end": 3.0},
+            {"word": "the", "start": 3.0, "end": 3.1},
+            {"word": "idea", "start": 3.1, "end": 3.4},
+            {"word": "is", "start": 3.4, "end": 3.5},
+            {"word": "simple", "start": 3.5, "end": 3.9},
+        ]
+
+        aligned_cues = script_cues_with_word_times(
+            [
+                {"progress": 0.1, "wordIndex": 6},
+                {"progress": 0.8, "wordIndex": 7},
+            ],
+            words,
+            script,
+        )
+
+        self.assertEqual(aligned_cues[0]["time"], 1.9)
+        self.assertEqual(aligned_cues[1]["time"], 2.4)
+
     def test_visual_runtime_actions_update_ui_state(self):
         state = apply_runtime_actions_to_state(
             {},
