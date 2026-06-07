@@ -4567,7 +4567,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               updateSelectedEventDraft("chatInstructions", event.target.value)
             }
             onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-            placeholder="Add context the tutor should use here."
             ref={selectedEventChatInstructionsRef}
             rows={1}
             value={selectedEvent.chatInstructions ?? ""}
