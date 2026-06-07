@@ -101,6 +101,16 @@ type DslInsertionPoint = {
   position: number;
 };
 
+type DslActionLineTarget = {
+  from: number;
+  lineNumber: number;
+  to: number;
+};
+
+type ActiveDslActionLine = {
+  lineNumber: number;
+};
+
 const indent = "    ";
 
 const pythonKeywordCompletions: Completion[] = [
@@ -689,6 +699,95 @@ const gotoActionDecoration = Decoration.mark({
   class: "cm-dsl-route-action",
 });
 
+function dslActionPatternsForMode(mode: PythonDslEditorMode) {
+  return [
+    setContextActionPattern,
+    gotoActionPattern,
+    ...(mode === "conversation"
+      ? [conversationButtonActionPattern]
+      : [chatActionPattern, scriptActionPattern]),
+  ];
+}
+
+function dslActionClassNamesForMode(mode: PythonDslEditorMode) {
+  return [
+    "cm-dsl-context-action",
+    "cm-dsl-route-action",
+    ...(mode === "conversation"
+      ? ["cm-dsl-button-action"]
+      : ["cm-dsl-chat-action", "cm-dsl-script-action"]),
+  ];
+}
+
+function dslActionLineTargetAtPosition(
+  view: EditorView,
+  position: number,
+  mode: PythonDslEditorMode,
+): DslActionLineTarget | null {
+  const line = view.state.doc.lineAt(position);
+  const trimmed = line.text.trimStart();
+  if (trimmed.startsWith("#")) return null;
+
+  for (const pattern of dslActionPatternsForMode(mode)) {
+    for (const match of line.text.matchAll(pattern)) {
+      if (typeof match.index !== "number") continue;
+      const from = line.from + match.index;
+      const to = from + match[0].length;
+      if (position < from || position > to) continue;
+
+      return {
+        from,
+        lineNumber: line.number,
+        to,
+      };
+    }
+  }
+
+  return null;
+}
+
+function firstDslActionLineTargetOnLine(
+  view: EditorView,
+  lineNumber: number,
+  mode: PythonDslEditorMode,
+): DslActionLineTarget | null {
+  if (lineNumber < 1 || lineNumber > view.state.doc.lines) return null;
+
+  const line = view.state.doc.line(lineNumber);
+  const trimmed = line.text.trimStart();
+  if (trimmed.startsWith("#")) return null;
+
+  for (const pattern of dslActionPatternsForMode(mode)) {
+    for (const match of line.text.matchAll(pattern)) {
+      if (typeof match.index !== "number") continue;
+      const from = line.from + match.index;
+      return {
+        from,
+        lineNumber: line.number,
+        to: from + match[0].length,
+      };
+    }
+  }
+
+  return null;
+}
+
+function explicitDslAnyActionTarget(
+  event: globalThis.MouseEvent | MouseEvent,
+  view: EditorView,
+  mode: PythonDslEditorMode,
+) {
+  const target = event.target;
+  if (!(target instanceof Element)) return null;
+
+  for (const className of dslActionClassNamesForMode(mode)) {
+    const actionTarget = target.closest(`.${className}`);
+    if (actionTarget && view.dom.contains(actionTarget)) return actionTarget;
+  }
+
+  return null;
+}
+
 function dslActionDecorations(
   view: EditorView,
   mode: PythonDslEditorMode,
@@ -1067,6 +1166,101 @@ function toggleButtonIcon(view: EditorView, action: PythonDslButtonAction) {
   view.focus();
 }
 
+function lineStartOffset(lines: string[], lineIndex: number) {
+  let offset = 0;
+  for (let index = 0; index < lineIndex; index += 1) {
+    offset += lines[index].length + 1;
+  }
+  return offset;
+}
+
+function leadingWhitespaceLength(line: string) {
+  return line.match(/^\s*/)?.[0].length ?? 0;
+}
+
+function lineStartsIndentedBlock(lines: string[], lineIndex: number) {
+  const line = lines[lineIndex] ?? "";
+  const trimmed = line.trim();
+  if (!trimmed.endsWith(":")) return false;
+
+  const indentation = leadingWhitespaceLength(line);
+  for (let index = lineIndex + 1; index < lines.length; index += 1) {
+    const nextLine = lines[index] ?? "";
+    if (!nextLine.trim()) continue;
+    return leadingWhitespaceLength(nextLine) > indentation;
+  }
+
+  return false;
+}
+
+function canSwapDslActionLine(
+  lines: string[],
+  currentIndex: number,
+  nextIndex: number,
+  direction: -1 | 1,
+) {
+  const currentLine = lines[currentIndex] ?? "";
+  const nextLine = lines[nextIndex] ?? "";
+  if (!nextLine.trim()) return true;
+  if (leadingWhitespaceLength(nextLine) !== leadingWhitespaceLength(currentLine)) {
+    return false;
+  }
+  return direction === -1 || !lineStartsIndentedBlock(lines, nextIndex);
+}
+
+function moveActiveDslActionLine(
+  view: EditorView,
+  mode: PythonDslEditorMode,
+  activeLine: ActiveDslActionLine | null,
+  direction: -1 | 1,
+) {
+  if (!activeLine) return null;
+
+  const doc = view.state.doc;
+  const selectionLine = doc.lineAt(view.state.selection.main.head);
+  if (selectionLine.number !== activeLine.lineNumber) return null;
+
+  const target = firstDslActionLineTargetOnLine(
+    view,
+    activeLine.lineNumber,
+    mode,
+  );
+  if (!target) return null;
+
+  const currentIndex = target.lineNumber - 1;
+  const nextIndex = currentIndex + direction;
+  if (nextIndex < 0 || nextIndex >= doc.lines) return null;
+
+  const source = doc.toString();
+  const lines = source.split("\n");
+  if (!canSwapDslActionLine(lines, currentIndex, nextIndex, direction)) {
+    return null;
+  }
+
+  const currentLine = doc.line(target.lineNumber);
+  const actionFromOffset = target.from - currentLine.from;
+  const actionToOffset = target.to - currentLine.from;
+
+  [lines[currentIndex], lines[nextIndex]] = [
+    lines[nextIndex],
+    lines[currentIndex],
+  ];
+
+  const nextLineStart = lineStartOffset(lines, nextIndex);
+  const nextLineLength = lines[nextIndex]?.length ?? 0;
+  const selectionFrom = nextLineStart + Math.min(actionFromOffset, nextLineLength);
+  const selectionTo = nextLineStart + Math.min(actionToOffset, nextLineLength);
+
+  view.dispatch({
+    changes: { from: 0, insert: lines.join("\n"), to: doc.length },
+    scrollIntoView: true,
+    selection: { anchor: selectionFrom, head: selectionTo },
+  });
+  view.focus();
+
+  return { lineNumber: target.lineNumber + direction };
+}
+
 function contextMenuPosition(
   clientX: number,
   clientY: number,
@@ -1120,6 +1314,7 @@ export function PythonDslEditor({
   const editorParentRef = useRef<HTMLDivElement | null>(null);
   const eventTargetsRef = useRef(eventTargets);
   const viewRef = useRef<EditorView | null>(null);
+  const activeDslActionLineRef = useRef<ActiveDslActionLine | null>(null);
   const onChangeRef = useRef(onChange);
   const modeRef = useRef(mode);
   const onOpenScriptActionRef = useRef(onOpenScriptAction);
@@ -1144,6 +1339,64 @@ export function PythonDslEditor({
   useEffect(() => {
     eventTargetsRef.current = eventTargets;
   }, [eventTargets]);
+
+  function markActiveActionLineFromClick(
+    event: globalThis.MouseEvent,
+    view: EditorView,
+  ) {
+    const clickedAction = explicitDslAnyActionTarget(
+      event,
+      view,
+      modeRef.current,
+    );
+    if (!clickedAction) {
+      activeDslActionLineRef.current = null;
+      return null;
+    }
+
+    const position = view.posAtCoords({
+      x: event.clientX,
+      y: event.clientY,
+    });
+    const actionLine =
+      position === null
+        ? null
+        : dslActionLineTargetAtPosition(view, position, modeRef.current);
+    activeDslActionLineRef.current = actionLine
+      ? { lineNumber: actionLine.lineNumber }
+      : null;
+    return actionLine;
+  }
+
+  function moveActiveActionLineFromKeyboard(
+    event: globalThis.KeyboardEvent,
+    view: EditorView,
+  ) {
+    if (
+      (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      return false;
+    }
+
+    const movedLine = moveActiveDslActionLine(
+      view,
+      modeRef.current,
+      activeDslActionLineRef.current,
+      event.key === "ArrowUp" ? -1 : 1,
+    );
+    if (!movedLine) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+    activeDslActionLineRef.current = movedLine;
+    setContextMenu(null);
+    setButtonDestinationMenu(null);
+    return true;
+  }
 
   useEffect(() => {
     if (!contextMenu && !buttonDestinationMenu) return undefined;
@@ -1195,9 +1448,12 @@ export function PythonDslEditor({
       }),
       EditorView.domEventHandlers({
         keydown(event, view) {
-          return runHistoryShortcut(event, view);
+          if (runHistoryShortcut(event, view)) return true;
+          return moveActiveActionLineFromKeyboard(event, view);
         },
         click(event, view) {
+          markActiveActionLineFromClick(event, view);
+
           const clickedRouteAction = explicitDslActionTarget(
             event,
             view,
