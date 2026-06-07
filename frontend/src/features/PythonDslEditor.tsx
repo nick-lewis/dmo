@@ -1086,17 +1086,22 @@ function contextMenuInsertionPoint(
   const position = view.posAtCoords({
     x: event.clientX,
     y: event.clientY,
-  });
+  }, false);
   const doc = view.state.doc;
-  const lastLine = doc.line(doc.lines);
-  const lastLineCoords =
-    view.coordsAtPos(lastLine.to, 1) ?? view.coordsAtPos(lastLine.from, -1);
-  const isBelowLastLine =
-    lastLineCoords !== null && event.clientY > lastLineCoords.bottom + 6;
+  const documentBottom = view.documentTop + view.contentHeight;
+  const isBelowDocument = event.clientY > documentBottom + 6;
+  const clickedLine = isBelowDocument
+    ? null
+    : doc.lineAt(
+        Math.min(
+          view.lineBlockAtHeight(event.clientY - view.documentTop).from,
+          doc.length,
+        ),
+      );
   const insertionPoint =
-    position === null || isBelowLastLine
+    clickedLine === null
       ? { mode: "append" as const, position: doc.length }
-      : { mode: "line" as const, position: doc.lineAt(position).from };
+      : { mode: "line" as const, position: clickedLine.from };
 
   view.dispatch({
     selection: { anchor: insertionPoint.position },
