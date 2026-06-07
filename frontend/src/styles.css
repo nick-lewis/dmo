@@ -2894,8 +2894,8 @@ button {
 .next-event-script-help::after {
   position: absolute;
   z-index: 1322;
-  top: calc(100% + 8px);
-  left: 50%;
+  top: 50%;
+  left: calc(100% + 8px);
   width: min(280px, calc(100vw - 48px));
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-border));
@@ -2909,14 +2909,27 @@ button {
   line-height: 1.35;
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, -3px);
+  transform: translate(3px, -50%);
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
 .next-event-script-help:hover::after,
 .next-event-script-help:focus-visible::after {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translate(0, -50%);
+}
+
+@media (max-width: 760px) {
+  .next-event-script-help::after {
+    top: calc(100% + 8px);
+    left: 0;
+    transform: translate(0, -3px);
+  }
+
+  .next-event-script-help:hover::after,
+  .next-event-script-help:focus-visible::after {
+    transform: translate(0, 0);
+  }
 }
 
 .python-dsl-editor {
