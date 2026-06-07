@@ -61,6 +61,17 @@ type RenderedChatItem = {
   tone: "student" | "tutor";
 };
 
+const chatAutoScrollResumeThresholdPx = 28;
+const chatProgrammaticScrollIgnoreMs = 520;
+const chatUserScrollIntentMs = 900;
+
+function isScrolledNearBottom(element: HTMLElement) {
+  return (
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    chatAutoScrollResumeThresholdPx
+  );
+}
+
 function scriptDisplayChunksFromMetadata(
   metadata: Record<string, unknown> | undefined,
 ) {
@@ -116,8 +127,11 @@ export function ChatPanelContent({
   user,
 }: ChatPanelContentProps) {
   const [draft, setDraft] = useState("");
+  const autoScrollRef = useRef(true);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
+  const programmaticScrollIgnoreUntilRef = useRef(0);
+  const userScrollIntentUntilRef = useRef(0);
   const assistantDisplayName = assistantName.trim() || "dee-lou";
   const assistantAvatarPath = avatarPath.trim() || "test-images/dLU-right.png";
   const sideImageBySlot = new Map(
@@ -201,9 +215,16 @@ export function ChatPanelContent({
   useEffect(() => {
     const messageList = messageListRef.current;
     if (!messageList) return;
+    if (!autoScrollRef.current) return;
 
     let firstFrame = 0;
     let secondFrame = 0;
+
+    const scrollMessageList = (options: ScrollToOptions) => {
+      programmaticScrollIgnoreUntilRef.current =
+        window.performance.now() + chatProgrammaticScrollIgnoreMs;
+      messageList.scrollTo(options);
+    };
 
     const scrollToAnchor = () => {
       if (turnAnchorMessageId) {
@@ -211,13 +232,13 @@ export function ChatPanelContent({
         if (target) {
           if (turnAnchorIsStreaming) {
             if (turnAnchorIsScriptDisplayChunk) {
-              messageList.scrollTo({
+              scrollMessageList({
                 top: Math.max(0, target.offsetTop - 2),
               });
               return;
             }
 
-            messageList.scrollTo({
+            scrollMessageList({
               top: Math.max(
                 0,
                 target.offsetTop +
@@ -229,7 +250,7 @@ export function ChatPanelContent({
             return;
           }
 
-          messageList.scrollTo({
+          scrollMessageList({
             behavior: "smooth",
             top: Math.max(0, target.offsetTop - 2),
           });
@@ -237,7 +258,7 @@ export function ChatPanelContent({
         return;
       }
 
-      messageList.scrollTo({
+      scrollMessageList({
         top: messageList.scrollHeight,
       });
     };
@@ -261,6 +282,26 @@ export function ChatPanelContent({
     turnAnchorScrollKey,
   ]);
 
+  function handleMessageListScroll() {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+    const now = window.performance.now();
+    const hasUserScrollIntent = now < userScrollIntentUntilRef.current;
+    if (
+      !hasUserScrollIntent &&
+      now < programmaticScrollIgnoreUntilRef.current
+    ) {
+      return;
+    }
+
+    autoScrollRef.current = isScrolledNearBottom(messageList);
+  }
+
+  function markMessageListUserScrollIntent() {
+    userScrollIntentUntilRef.current =
+      window.performance.now() + chatUserScrollIntentMs;
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -277,6 +318,7 @@ export function ChatPanelContent({
     }
 
     setDraft("");
+    autoScrollRef.current = true;
 
     try {
       await onSendMessage(nextMessage);
@@ -313,6 +355,10 @@ export function ChatPanelContent({
             .filter(Boolean)
             .join(" ")}
           aria-live="polite"
+          onPointerDown={markMessageListUserScrollIntent}
+          onScroll={handleMessageListScroll}
+          onTouchStart={markMessageListUserScrollIntent}
+          onWheel={markMessageListUserScrollIntent}
           ref={messageListRef}
         >
           {status === "loading" ? (

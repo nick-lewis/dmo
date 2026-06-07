@@ -1835,6 +1835,7 @@ button {
 }
 
 .next-fine-chat-scroll {
+  --fine-chat-anchor-space: max(88px, calc(100% - 76px));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1843,6 +1844,17 @@ button {
   overflow: auto;
   padding: 10px;
   scrollbar-width: thin;
+}
+
+.next-fine-chat-scroll::after {
+  content: "";
+  display: block;
+  flex: 0 0 0;
+  transition: flex-basis 160ms ease;
+}
+
+.next-fine-chat-scroll.is-turn-anchored::after {
+  flex-basis: var(--fine-chat-anchor-space);
 }
 
 .next-fine-chat-bubble {

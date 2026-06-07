@@ -122,6 +122,9 @@ const markerKeyboardStepSeconds = 0.005;
 const markerKeyboardFineStepSeconds = 0.001;
 const markerSnapThresholdSeconds = 0.03;
 const fineTuningSpeedStorageKey = "dlu.next-fine-tuning-speed.v1";
+const chatPreviewAutoScrollResumeThresholdPx = 28;
+const chatPreviewProgrammaticScrollIgnoreMs = 220;
+const chatPreviewUserScrollIntentMs = 900;
 
 function replaceScriptMarker(
   text: string,
@@ -295,6 +298,13 @@ function playbackRateFromStorage() {
   }
 }
 
+function isScrolledNearBottom(element: HTMLElement) {
+  return (
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    chatPreviewAutoScrollResumeThresholdPx
+  );
+}
+
 function FineTuningChatBubble({
   chunk,
   registerRef,
@@ -334,8 +344,11 @@ export function NextFineTuningPanel({
   textRevealSpeed,
 }: FineTuningPanelProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const chatPreviewAutoScrollRef = useRef(true);
   const chatPreviewChunkRefs = useRef(new Map<string, HTMLDivElement>());
+  const chatPreviewProgrammaticScrollIgnoreUntilRef = useRef(0);
   const chatPreviewRef = useRef<HTMLDivElement | null>(null);
+  const chatPreviewUserScrollIntentUntilRef = useRef(0);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
   const ignoreMarkerClickRef = useRef(false);
@@ -413,6 +426,12 @@ export function NextFineTuningPanel({
     (chunk) => chunk.visible,
   ) ?? [];
   const activeChatChunkId = chatPreviewState?.activeChunkId ?? "";
+  const activeChatChunk = activeChatChunkId
+    ? visibleChatChunks.find((chunk) => chunk.id === activeChatChunkId)
+    : null;
+  const activeChatChunkScrollKey = activeChatChunk
+    ? `${activeChatChunk.id}:${activeChatChunk.text.length}`
+    : "";
 
   function timeFromClientX(clientX: number) {
     const rect = waveformRef.current?.getBoundingClientRect();
@@ -1007,15 +1026,39 @@ export function NextFineTuningPanel({
 
   useEffect(() => {
     if (!activeChatChunkId) return;
+    if (!chatPreviewAutoScrollRef.current) return;
 
     const container = chatPreviewRef.current;
     const target = chatPreviewChunkRefs.current.get(activeChatChunkId);
     if (!container || !target) return;
 
+    chatPreviewProgrammaticScrollIgnoreUntilRef.current =
+      window.performance.now() + chatPreviewProgrammaticScrollIgnoreMs;
     container.scrollTo({
-      top: Math.max(0, target.offsetTop - 8),
+      top: Math.max(0, target.offsetTop - 10),
     });
-  }, [activeChatChunkId]);
+  }, [activeChatChunkId, activeChatChunkScrollKey]);
+
+  function handleChatPreviewScroll() {
+    const container = chatPreviewRef.current;
+    if (!container) return;
+    const now = window.performance.now();
+    const hasUserScrollIntent = now < chatPreviewUserScrollIntentUntilRef.current;
+    if (
+      !hasUserScrollIntent &&
+      now <
+      chatPreviewProgrammaticScrollIgnoreUntilRef.current
+    ) {
+      return;
+    }
+
+    chatPreviewAutoScrollRef.current = isScrolledNearBottom(container);
+  }
+
+  function markChatPreviewUserScrollIntent() {
+    chatPreviewUserScrollIntentUntilRef.current =
+      window.performance.now() + chatPreviewUserScrollIntentMs;
+  }
 
   const chatPreviewPlaceholder = useMemo(() => {
     if (!audioUrl) return "Generate audio first";
@@ -1156,7 +1199,19 @@ export function NextFineTuningPanel({
           )}
         </div>
         <div className="next-fine-chat-preview" aria-label="Chat simulator">
-          <div className="next-fine-chat-scroll" ref={chatPreviewRef}>
+          <div
+            className={[
+              "next-fine-chat-scroll",
+              activeChatChunkId ? "is-turn-anchored" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onPointerDown={markChatPreviewUserScrollIntent}
+            onScroll={handleChatPreviewScroll}
+            onTouchStart={markChatPreviewUserScrollIntent}
+            onWheel={markChatPreviewUserScrollIntent}
+            ref={chatPreviewRef}
+          >
             {visibleChatChunks.length ? (
               visibleChatChunks.map((chunk) => (
                 <FineTuningChatBubble
