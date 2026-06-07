@@ -2012,7 +2012,10 @@ function ScriptActionReadOnlyView({
     marker: ScriptMarkerInstance,
     event: ReactMouseEvent<HTMLElement>,
   ) => void;
-  onMoveMarker: (marker: ScriptActionViewMarker, targetSourceIndex: number) => void;
+  onMoveMarker: (
+    marker: ScriptActionViewMarker,
+    targetSourceIndex: number,
+  ) => string | null;
   onRefreshSlides: () => void;
   onRemoveMarker: (marker: ScriptMarkerInstance) => void;
   previews: Record<string, ScriptSlidePreview>;
@@ -2021,7 +2024,9 @@ function ScriptActionReadOnlyView({
 }) {
   const [insertionPreview, setInsertionPreview] =
     useState<ScriptInsertionPreview | null>(null);
+  const [pendingFocusMarkerKey, setPendingFocusMarkerKey] = useState("");
   const [selectedMarkerKey, setSelectedMarkerKey] = useState("");
+  const pendingFocusMarkerRef = useRef<HTMLButtonElement | null>(null);
   const breakCounts = new Map<number, number>();
   normalizeDisplayBreaks(displayBreaks).forEach((breakIndex) => {
     breakCounts.set(breakIndex, (breakCounts.get(breakIndex) ?? 0) + 1);
@@ -2040,6 +2045,15 @@ function ScriptActionReadOnlyView({
         : "",
     );
   }, [markers]);
+
+  useLayoutEffect(() => {
+    if (!pendingFocusMarkerKey || selectedMarkerKey !== pendingFocusMarkerKey) {
+      return;
+    }
+
+    pendingFocusMarkerRef.current?.focus({ preventScroll: true });
+    setPendingFocusMarkerKey("");
+  }, [markers, pendingFocusMarkerKey, selectedMarkerKey]);
 
   function elementFromEventTarget(target: EventTarget | null) {
     if (target instanceof HTMLElement) return target;
@@ -2250,8 +2264,15 @@ function ScriptActionReadOnlyView({
 
           event.preventDefault();
           event.stopPropagation();
-          onMoveMarker(marker, targetSourceIndex);
+          const nextMarkerKey = onMoveMarker(marker, targetSourceIndex);
+          if (nextMarkerKey) {
+            setSelectedMarkerKey(nextMarkerKey);
+            setPendingFocusMarkerKey(nextMarkerKey);
+          }
         }}
+        ref={
+          pendingFocusMarkerKey === markerKey ? pendingFocusMarkerRef : undefined
+        }
         title={sourceMarker.marker}
         type="button"
       >
@@ -4482,7 +4503,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     marker: ScriptActionViewMarker,
     targetSourceIndex: number,
   ) {
-    if (!activeScriptStep) return;
+    if (!activeScriptStep) return null;
 
     const sourceMarker = sourceMarkerForView(marker);
     const insertionIndex = Math.round(
@@ -4492,7 +4513,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       insertionIndex >= sourceMarker.start &&
       insertionIndex <= sourceMarker.end
     ) {
-      return;
+      return viewMarkerEditKey(marker);
     }
 
     const markerWithoutTimeline = buildScriptMarker(
@@ -4507,16 +4528,25 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       insertionIndex > sourceMarker.start
         ? insertionIndex - sourceMarker.marker.length
         : insertionIndex;
+    const beforeInsertion = textWithoutMarker.slice(0, adjustedInsertionIndex);
+    const afterInsertion = textWithoutMarker.slice(adjustedInsertionIndex);
+    const prefix =
+      beforeInsertion && !/\s$/.test(beforeInsertion) ? " " : "";
+    const suffix =
+      afterInsertion && !/^\s/.test(afterInsertion) ? " " : "";
+    const nextMarkerStart = beforeInsertion.length + prefix.length;
+    const nextMarkerEnd = nextMarkerStart + markerWithoutTimeline.length;
 
     updateActiveScriptMarkedText(
-      insertScriptMarkerAt(
-        textWithoutMarker,
-        adjustedInsertionIndex,
-        markerWithoutTimeline,
-      ),
+      `${beforeInsertion}${prefix}${markerWithoutTimeline}${suffix}${afterInsertion}`,
     );
     setScriptActionMenu(null);
     setActiveScriptDetailTab("script");
+    return markerEditKeyFrom(
+      nextMarkerStart,
+      nextMarkerEnd,
+      markerWithoutTimeline,
+    );
   }
 
   function removeScriptActionMarker(marker: ScriptMarkerInstance) {
