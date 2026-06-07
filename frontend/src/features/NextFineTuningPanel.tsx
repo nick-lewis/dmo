@@ -2,6 +2,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
   useRef,
@@ -80,10 +81,29 @@ type MouseScrubState = {
   timeSeconds: number;
 };
 
+type WaveformWindow = {
+  end: number;
+  start: number;
+};
+
 type ManualSeekState = {
   expiresAt: number;
   timeSeconds: number;
 };
+
+type TimelineContextMenuState =
+  | {
+      index: number;
+      kind: "marker";
+      x: number;
+      y: number;
+    }
+  | {
+      index: number;
+      kind: "display-cue";
+      x: number;
+      y: number;
+    };
 
 type TimelineMarkerLayout = {
   hasTimeMatch: boolean;
@@ -122,6 +142,8 @@ const markerKeyboardStepSeconds = 0.005;
 const markerKeyboardFineStepSeconds = 0.001;
 const markerSnapThresholdSeconds = 0.03;
 const fineTuningSpeedStorageKey = "dlu.next-fine-tuning-speed.v1";
+const waveformPanWheelRatio = 0.0018;
+const waveformZoomWheelRatio = 0.0015;
 const chatPreviewAutoScrollResumeThresholdPx = 28;
 const chatPreviewProgrammaticScrollIgnoreMs = 220;
 const chatPreviewUserScrollIntentMs = 900;
@@ -298,6 +320,39 @@ function playbackRateFromStorage() {
   }
 }
 
+function normalizedWaveformWindow(
+  windowValue: WaveformWindow,
+  minSpan = 0.04,
+): WaveformWindow {
+  const span = clamp(windowValue.end - windowValue.start, minSpan, 1);
+  const start = clamp(windowValue.start, 0, 1 - span);
+  return {
+    end: start + span,
+    start,
+  };
+}
+
+function shiftedWaveformWindow(
+  windowValue: WaveformWindow,
+  shift: number,
+): WaveformWindow {
+  const span = windowValue.end - windowValue.start;
+  const start = clamp(windowValue.start + shift, 0, 1 - span);
+  return {
+    end: start + span,
+    start,
+  };
+}
+
+function timelineContextMenuPosition(clientX: number, clientY: number) {
+  const width = 220;
+  const height = 54;
+  return {
+    x: Math.max(12, Math.min(clientX, window.innerWidth - width - 12)),
+    y: Math.max(12, Math.min(clientY, window.innerHeight - height - 12)),
+  };
+}
+
 function isScrolledNearBottom(element: HTMLElement) {
   return (
     element.scrollHeight - element.scrollTop - element.clientHeight <=
@@ -374,6 +429,12 @@ export function NextFineTuningPanel({
     useState<FineTuningTimelineMode>("actions");
   const [draftDisplayCueOffsets, setDraftDisplayCueOffsets] =
     useState<number[]>(displayCueOffsets);
+  const [timelineContextMenu, setTimelineContextMenu] =
+    useState<TimelineContextMenuState | null>(null);
+  const [waveformWindow, setWaveformWindow] = useState<WaveformWindow>({
+    end: 1,
+    start: 0,
+  });
   const displayCueOffsetKey = displayCueOffsets.join("|");
   const [waveformBucketCount, setWaveformBucketCount] = useState(
     defaultWaveformBucketCount,
@@ -394,9 +455,32 @@ export function NextFineTuningPanel({
       0,
   );
   const durationForLayout = durationSeconds || 1;
+  const minimumWaveformWindowSpan = durationSeconds
+    ? clamp(1 / durationSeconds, 0.04, 0.18)
+    : 0.04;
+  const visibleWaveformWindow = normalizedWaveformWindow(
+    waveformWindow,
+    minimumWaveformWindowSpan,
+  );
+  const visibleWaveformWindowSpan = Math.max(
+    minimumWaveformWindowSpan,
+    visibleWaveformWindow.end - visibleWaveformWindow.start,
+  );
+  const waveformIsZoomed = visibleWaveformWindowSpan < 0.995;
   const visibleTime =
     draggingMarker?.timeSeconds ?? draggingDisplayCue?.timeSeconds ?? currentTime;
-  const progressPercent = clamp((visibleTime / durationForLayout) * 100, 0, 100);
+  const visibleTimeProgress = clamp(
+    visibleTime / durationForLayout,
+    0,
+    1,
+  );
+  const progressPercent = clamp(
+    ((visibleTimeProgress - visibleWaveformWindow.start) /
+      visibleWaveformWindowSpan) *
+      100,
+    0,
+    100,
+  );
   const currentWord =
     timingWords.find((word) => visibleTime >= word.start && visibleTime <= word.end)
       ?.word ?? "";
@@ -436,7 +520,11 @@ export function NextFineTuningPanel({
   function timeFromClientX(clientX: number) {
     const rect = waveformRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || !durationSeconds) return 0;
-    return clamp((clientX - rect.left) / rect.width, 0, 1) * durationSeconds;
+    const visibleProgress =
+      visibleWaveformWindow.start +
+      clamp((clientX - rect.left) / rect.width, 0, 1) *
+        visibleWaveformWindowSpan;
+    return clamp(visibleProgress, 0, 1) * durationSeconds;
   }
 
   function timeFromWaveformEvent(
@@ -465,7 +553,27 @@ export function NextFineTuningPanel({
         : Number.NaN;
 
     if (!Number.isFinite(offsetX)) return fallbackSeconds;
-    return clamp(offsetX / rect.width, 0, 1) * durationSeconds;
+    const visibleProgress =
+      visibleWaveformWindow.start +
+      clamp(offsetX / rect.width, 0, 1) * visibleWaveformWindowSpan;
+    return clamp(visibleProgress, 0, 1) * durationSeconds;
+  }
+
+  function waveformPercentForTime(seconds: number) {
+    const normalizedTime = clamp(seconds / durationForLayout, 0, 1);
+    return (
+      ((normalizedTime - visibleWaveformWindow.start) /
+        visibleWaveformWindowSpan) *
+      100
+    );
+  }
+
+  function isTimeVisibleInWaveform(seconds: number) {
+    const normalizedTime = clamp(seconds / durationForLayout, 0, 1);
+    return (
+      normalizedTime >= visibleWaveformWindow.start - 0.01 &&
+      normalizedTime <= visibleWaveformWindow.end + 0.01
+    );
   }
 
   function dragAdjustedTime(
@@ -609,6 +717,49 @@ export function NextFineTuningPanel({
     setPlaybackRate(nextRate);
   }
 
+  function handleWaveformWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (!audioUrl || !durationSeconds) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const currentWindow = visibleWaveformWindow;
+    const currentSpan = visibleWaveformWindowSpan;
+    const horizontalWheel =
+      Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey;
+
+    if (horizontalWheel && waveformIsZoomed) {
+      const wheelDelta = event.deltaX || event.deltaY;
+      const shift = wheelDelta * waveformPanWheelRatio * currentSpan;
+      setWaveformWindow(
+        shiftedWaveformWindow(currentWindow, shift),
+      );
+      return;
+    }
+
+    const pointerRatio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const anchor = currentWindow.start + pointerRatio * currentSpan;
+    const zoomFactor = Math.exp(event.deltaY * waveformZoomWheelRatio);
+    const nextSpan = clamp(
+      currentSpan * zoomFactor,
+      minimumWaveformWindowSpan,
+      1,
+    );
+    const nextStart = anchor - pointerRatio * nextSpan;
+    setWaveformWindow(
+      normalizedWaveformWindow(
+        {
+          end: nextStart + nextSpan,
+          start: nextStart,
+        },
+        minimumWaveformWindowSpan,
+      ),
+    );
+  }
+
   function beginScrub(event: ReactPointerEvent<HTMLDivElement>) {
     if (!audioUrl || event.button > 0) return;
     event.preventDefault();
@@ -705,6 +856,22 @@ export function NextFineTuningPanel({
     markerIndex: number,
     seconds: number,
   ) {
+    if (event.button === 2) {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedMarkerIndex(markerIndex);
+      setSelectedDisplayCueIndex(null);
+      setTimelineContextMenu({
+        index: markerIndex,
+        kind: "marker",
+        ...timelineContextMenuPosition(event.clientX, event.clientY),
+      });
+      return;
+    }
+    if (event.button > 0) {
+      event.stopPropagation();
+      return;
+    }
     if (!durationSeconds) return;
     event.preventDefault();
     event.stopPropagation();
@@ -768,6 +935,22 @@ export function NextFineTuningPanel({
     cueIndex: number,
     seconds: number,
   ) {
+    if (event.button === 2) {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedDisplayCueIndex(cueIndex);
+      setSelectedMarkerIndex(null);
+      setTimelineContextMenu({
+        index: cueIndex,
+        kind: "display-cue",
+        ...timelineContextMenuPosition(event.clientX, event.clientY),
+      });
+      return;
+    }
+    if (event.button > 0) {
+      event.stopPropagation();
+      return;
+    }
     if (!durationSeconds) return;
     event.preventDefault();
     event.stopPropagation();
@@ -867,6 +1050,70 @@ export function NextFineTuningPanel({
     setSelectedDisplayCueIndex(cueIndex);
     updateDisplayCueTime(cueIndex, nextTime);
     seek(nextTime, { pause: true });
+  }
+
+  function openMarkerContextMenu(
+    event: ReactMouseEvent<HTMLButtonElement>,
+    markerIndex: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedMarkerIndex(markerIndex);
+    setSelectedDisplayCueIndex(null);
+    setTimelineContextMenu({
+      index: markerIndex,
+      kind: "marker",
+      ...timelineContextMenuPosition(event.clientX, event.clientY),
+    });
+  }
+
+  function openDisplayCueContextMenu(
+    event: ReactMouseEvent<HTMLButtonElement>,
+    cueIndex: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedDisplayCueIndex(cueIndex);
+    setSelectedMarkerIndex(null);
+    setTimelineContextMenu({
+      index: cueIndex,
+      kind: "display-cue",
+      ...timelineContextMenuPosition(event.clientX, event.clientY),
+    });
+  }
+
+  function handleMarkerMouseDown(
+    event: ReactMouseEvent<HTMLButtonElement>,
+    markerIndex: number,
+  ) {
+    event.stopPropagation();
+    if (event.button === 2) openMarkerContextMenu(event, markerIndex);
+  }
+
+  function handleDisplayCueMouseDown(
+    event: ReactMouseEvent<HTMLButtonElement>,
+    cueIndex: number,
+  ) {
+    event.stopPropagation();
+    if (event.button === 2) openDisplayCueContextMenu(event, cueIndex);
+  }
+
+  function moveContextMenuItemToCurrentTime() {
+    if (!timelineContextMenu) return;
+    const nextTime = clamp(visibleTime, 0, durationSeconds || 0);
+
+    if (timelineContextMenu.kind === "marker") {
+      updateMarkerTime(timelineContextMenu.index, nextTime);
+      setSelectedMarkerIndex(timelineContextMenu.index);
+      setSelectedDisplayCueIndex(null);
+    } else {
+      updateDisplayCueTime(timelineContextMenu.index, nextTime);
+      setSelectedDisplayCueIndex(timelineContextMenu.index);
+      setSelectedMarkerIndex(null);
+    }
+
+    seek(nextTime, { pause: true });
+    setTimelineContextMenu(null);
   }
 
   useEffect(() => {
@@ -972,6 +1219,27 @@ export function NextFineTuningPanel({
   }, [playbackRate]);
 
   useEffect(() => {
+    if (!timelineContextMenu) return undefined;
+
+    function closeTimelineContextMenu() {
+      setTimelineContextMenu(null);
+    }
+
+    function closeTimelineContextMenuOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setTimelineContextMenu(null);
+    }
+
+    window.addEventListener("pointerdown", closeTimelineContextMenu);
+    window.addEventListener("keydown", closeTimelineContextMenuOnEscape);
+    window.addEventListener("resize", closeTimelineContextMenu);
+    return () => {
+      window.removeEventListener("pointerdown", closeTimelineContextMenu);
+      window.removeEventListener("keydown", closeTimelineContextMenuOnEscape);
+      window.removeEventListener("resize", closeTimelineContextMenu);
+    };
+  }, [timelineContextMenu]);
+
+  useEffect(() => {
     setDraftDisplayCueOffsets(displayCueOffsets);
   }, [audioItem?.id, displayCueOffsetKey]);
 
@@ -986,7 +1254,14 @@ export function NextFineTuningPanel({
     markerDragRef.current = null;
     mouseScrubRef.current = null;
     scrubRef.current = null;
+    setTimelineContextMenu(null);
   }, [audioItem?.id]);
+
+  useEffect(() => {
+    setWaveformWindow((current) =>
+      normalizedWaveformWindow(current, minimumWaveformWindowSpan),
+    );
+  }, [minimumWaveformWindowSpan]);
 
   useEffect(() => {
     setSelectedMarkerIndex((current) =>
@@ -1012,7 +1287,7 @@ export function NextFineTuningPanel({
       setWaveformWidth((current) =>
         current === roundedWidth ? current : roundedWidth,
       );
-      const nextBucketCount = Math.round(clamp(width / 1.45, 360, 960));
+      const nextBucketCount = Math.round(clamp(width * 2.4, 720, 2600));
       setWaveformBucketCount((current) =>
         current === nextBucketCount ? current : nextBucketCount,
       );
@@ -1074,16 +1349,33 @@ export function NextFineTuningPanel({
     slideRef && deckUrl
       ? previews[slidePreviewKeyForDeck(deckUrl, slideRef)]
       : null;
-  const rawTimelineMarkers = markers.map((marker, index) => {
-    const timeSeconds = markerTime(marker, index);
-    return {
-      index,
-      marker,
-      timeMs: Math.round(timeSeconds * 1000),
-      timeSeconds,
-      widthPx: estimateMarkerWidthPx(marker),
-    };
-  });
+  const visibleWaveformPeaks = (() => {
+    if (!waveform.peaks.length) return [];
+    const firstPeakIndex = Math.max(
+      0,
+      Math.floor(visibleWaveformWindow.start * waveform.peaks.length),
+    );
+    const lastPeakIndex = Math.min(
+      waveform.peaks.length,
+      Math.ceil(visibleWaveformWindow.end * waveform.peaks.length),
+    );
+    return waveform.peaks.slice(
+      firstPeakIndex,
+      Math.max(firstPeakIndex + 1, lastPeakIndex),
+    );
+  })();
+  const rawTimelineMarkers = markers
+    .map((marker, index) => {
+      const timeSeconds = markerTime(marker, index);
+      return {
+        index,
+        marker,
+        timeMs: Math.round(timeSeconds * 1000),
+        timeSeconds,
+        widthPx: estimateMarkerWidthPx(marker),
+      };
+    })
+    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds));
   const timeMatchCounts = new Map<number, number>();
   rawTimelineMarkers.forEach((item) => {
     timeMatchCounts.set(item.timeMs, (timeMatchCounts.get(item.timeMs) ?? 0) + 1);
@@ -1098,7 +1390,8 @@ export function NextFineTuningPanel({
     )
     .forEach((item) => {
       const markerCenterPx =
-        (item.timeSeconds / durationForLayout) * waveformWidthForLayout;
+        (waveformPercentForTime(item.timeSeconds) / 100) *
+        waveformWidthForLayout;
       const markerLeftPx = markerCenterPx - item.widthPx / 2;
       const markerRightPx = markerCenterPx + item.widthPx / 2;
       const laneIndex = laneRightEdges.findIndex(
@@ -1117,16 +1410,18 @@ export function NextFineTuningPanel({
   const timelineMarkers = rawTimelineMarkers
     .map((item) => layoutByIndex.get(item.index))
     .filter((item): item is TimelineMarkerLayout => Boolean(item));
-  const rawDisplayCueMarkers = displayCueChunks.map((chunk, index) => {
-    const timeSeconds = displayCueTime(index);
-    return {
-      chunk,
-      index,
-      timeMs: Math.round(timeSeconds * 1000),
-      timeSeconds,
-      widthPx: estimateDisplayCueWidthPx(chunk),
-    };
-  });
+  const rawDisplayCueMarkers = displayCueChunks
+    .map((chunk, index) => {
+      const timeSeconds = displayCueTime(index);
+      return {
+        chunk,
+        index,
+        timeMs: Math.round(timeSeconds * 1000),
+        timeSeconds,
+        widthPx: estimateDisplayCueWidthPx(chunk),
+      };
+    })
+    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds));
   const displayCueTimeMatchCounts = new Map<number, number>();
   rawDisplayCueMarkers.forEach((item) => {
     displayCueTimeMatchCounts.set(
@@ -1143,7 +1438,8 @@ export function NextFineTuningPanel({
     )
     .forEach((item) => {
       const markerCenterPx =
-        (item.timeSeconds / durationForLayout) * waveformWidthForLayout;
+        (waveformPercentForTime(item.timeSeconds) / 100) *
+        waveformWidthForLayout;
       const markerLeftPx = markerCenterPx - item.widthPx / 2;
       const markerRightPx = markerCenterPx + item.widthPx / 2;
       const laneIndex = displayCueLaneRightEdges.findIndex(
@@ -1303,13 +1599,14 @@ export function NextFineTuningPanel({
         onPointerDown={beginScrub}
         onPointerMove={updateScrub}
         onPointerUp={endScrub}
+        onWheel={handleWaveformWheel}
         ref={waveformRef}
         role="slider"
         style={{ height: `${waveformHeight}px` }}
         tabIndex={audioUrl ? 0 : -1}
       >
         <div className="next-fine-wave-bars">
-          {waveform.peaks.map((peak, index) => (
+          {visibleWaveformPeaks.map((peak, index) => (
             <span
               aria-hidden="true"
               key={index}
@@ -1328,7 +1625,7 @@ export function NextFineTuningPanel({
         ) : null}
         {audioUrl &&
         timelineMode === "chat-cues" &&
-        !displayCueLayouts.length ? (
+        !displayCueChunks.length ? (
           <span className="next-fine-wave-status">No chat cues</span>
         ) : null}
         <span
@@ -1336,13 +1633,18 @@ export function NextFineTuningPanel({
           className="next-fine-playhead"
           style={{ left: `${progressPercent}%` }}
         />
+        {waveformIsZoomed ? (
+          <span className="next-fine-zoom-status">
+            {formatTimelineSeconds(
+              visibleWaveformWindow.start * durationForLayout,
+            )}{" "}
+            -{" "}
+            {formatTimelineSeconds(visibleWaveformWindow.end * durationForLayout)}
+          </span>
+        ) : null}
         {timelineMode === "actions"
           ? timelineMarkers.map(({ hasTimeMatch, index, lane, marker, timeSeconds }) => {
-          const markerPercent = clamp(
-            (timeSeconds / durationForLayout) * 100,
-            0,
-            100,
-          );
+          const markerPercent = clamp(waveformPercentForTime(timeSeconds), 0, 100);
           const slideMarkerForPreview = isSlideMarker(marker);
           const markerPreview = slideMarkerForPreview
             ? slidePreviewForMarker(marker)
@@ -1395,7 +1697,8 @@ export function NextFineTuningPanel({
               onPointerDown={(event) => beginMarkerDrag(event, index, timeSeconds)}
               onPointerMove={updateMarkerDrag}
               onPointerUp={endMarkerDrag}
-              onMouseDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => openMarkerContextMenu(event, index)}
+              onMouseDown={(event) => handleMarkerMouseDown(event, index)}
               style={{
                 left: `${markerPercent}%`,
                 top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
@@ -1429,11 +1732,7 @@ export function NextFineTuningPanel({
           );
         })
           : displayCueLayouts.map(({ chunk, hasTimeMatch, index, lane, timeSeconds }) => {
-              const markerPercent = clamp(
-                (timeSeconds / durationForLayout) * 100,
-                0,
-                100,
-              );
+              const markerPercent = clamp(waveformPercentForTime(timeSeconds), 0, 100);
               const previewText = chunk.fullText.replace(/\s+/g, " ").trim();
               const offsetLabel =
                 Math.abs(chunk.offsetSeconds) < 0.001
@@ -1478,7 +1777,12 @@ export function NextFineTuningPanel({
                   }
                   onPointerMove={updateDisplayCueDrag}
                   onPointerUp={endDisplayCueDrag}
-                  onMouseDown={(event) => event.stopPropagation()}
+                  onContextMenu={(event) =>
+                    openDisplayCueContextMenu(event, index)
+                  }
+                  onMouseDown={(event) =>
+                    handleDisplayCueMouseDown(event, index)
+                  }
                   style={{
                     left: `${markerPercent}%`,
                     top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
@@ -1498,6 +1802,26 @@ export function NextFineTuningPanel({
                 </button>
               );
             })}
+        {timelineContextMenu ? (
+          <div
+            className="next-fine-context-menu"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            role="menu"
+            style={{
+              left: `${timelineContextMenu.x}px`,
+              top: `${timelineContextMenu.y}px`,
+            }}
+          >
+            <button
+              onClick={moveContextMenuItemToCurrentTime}
+              role="menuitem"
+              type="button"
+            >
+              Move to {formatTimelineSeconds(visibleTime)}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
