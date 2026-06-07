@@ -97,7 +97,7 @@ type ScriptTextStreamSync = {
   durationSeconds: number;
 };
 
-type ScriptDisplayChunkState = {
+export type ScriptDisplayChunkState = {
   active: boolean;
   complete: boolean;
   fullText: string;
@@ -159,7 +159,7 @@ function scriptDisplayChunkTextIndexAt(
   );
 }
 
-function scriptDisplayChunkStatesAt(
+export function scriptDisplayChunkStatesAt(
   chunks: ScriptDisplayChunkSpec[],
   audioTimeSeconds: number,
   isDone: boolean,

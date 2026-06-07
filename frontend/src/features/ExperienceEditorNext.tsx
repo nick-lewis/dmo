@@ -4465,6 +4465,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             onMarkedTextChange={updateActiveScriptMarkedText}
             previews={scriptSlidePreviews}
             text={activeScriptText}
+            textRevealSpeed={scriptTextRevealSpeed}
           />
         ) : (
           <>

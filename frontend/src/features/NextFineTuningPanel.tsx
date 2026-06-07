@@ -3,6 +3,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,6 +21,10 @@ import {
 } from "../scriptMarkers";
 import { scriptAudioPlaybackRateOptions } from "../scriptAudio";
 import type { ScriptAudioItem } from "../types";
+import {
+  scriptDisplayChunkStatesAt,
+  type ScriptDisplayChunkState,
+} from "./useScriptAudioPlayback";
 import {
   clamp,
   isSlideMarker,
@@ -108,6 +113,7 @@ type FineTuningPanelProps = {
   onMarkedTextChange: (value: string) => void;
   previews: Record<string, ScriptSlidePreview>;
   text: string;
+  textRevealSpeed: number;
 };
 
 const defaultWaveformBucketCount = 520;
@@ -289,6 +295,32 @@ function playbackRateFromStorage() {
   }
 }
 
+function FineTuningChatBubble({
+  chunk,
+  registerRef,
+}: {
+  chunk: ScriptDisplayChunkState;
+  registerRef: (element: HTMLDivElement | null) => void;
+}) {
+  const body =
+    chunk.text || (chunk.streaming || chunk.active ? "..." : chunk.fullText);
+
+  return (
+    <div
+      className={[
+        "next-fine-chat-bubble",
+        chunk.active ? "is-active" : "",
+        chunk.streaming ? "is-streaming" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      ref={registerRef}
+    >
+      {body}
+    </div>
+  );
+}
+
 export function NextFineTuningPanel({
   audioItem,
   deckUrl,
@@ -299,8 +331,11 @@ export function NextFineTuningPanel({
   onMarkedTextChange,
   previews,
   text,
+  textRevealSpeed,
 }: FineTuningPanelProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const chatPreviewChunkRefs = useRef(new Map<string, HTMLDivElement>());
+  const chatPreviewRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
   const ignoreMarkerClickRef = useRef(false);
@@ -346,7 +381,8 @@ export function NextFineTuningPanel({
       0,
   );
   const durationForLayout = durationSeconds || 1;
-  const visibleTime = draggingMarker?.timeSeconds ?? currentTime;
+  const visibleTime =
+    draggingMarker?.timeSeconds ?? draggingDisplayCue?.timeSeconds ?? currentTime;
   const progressPercent = clamp((visibleTime / durationForLayout) * 100, 0, 100);
   const currentWord =
     timingWords.find((word) => visibleTime >= word.start && visibleTime <= word.end)
@@ -365,6 +401,18 @@ export function NextFineTuningPanel({
   const displayCueChunks = displayChunks.filter(
     (chunk) => chunk.boundaryIndex >= 0,
   );
+  const chatPreviewState = displayChunks.length
+    ? scriptDisplayChunkStatesAt(
+        displayChunks,
+        visibleTime,
+        durationSeconds > 0 && visibleTime + 0.015 >= durationSeconds,
+        textRevealSpeed,
+      )
+    : null;
+  const visibleChatChunks = chatPreviewState?.states.filter(
+    (chunk) => chunk.visible,
+  ) ?? [];
+  const activeChatChunkId = chatPreviewState?.activeChunkId ?? "";
 
   function timeFromClientX(clientX: number) {
     const rect = waveformRef.current?.getBoundingClientRect();
@@ -957,6 +1005,26 @@ export function NextFineTuningPanel({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!activeChatChunkId) return;
+
+    const container = chatPreviewRef.current;
+    const target = chatPreviewChunkRefs.current.get(activeChatChunkId);
+    if (!container || !target) return;
+
+    container.scrollTo({
+      top: Math.max(0, target.offsetTop - 8),
+    });
+  }, [activeChatChunkId]);
+
+  const chatPreviewPlaceholder = useMemo(() => {
+    if (!audioUrl) return "Generate audio first";
+    if (!displayBreaks.length) return "Add double line breaks in Display Text";
+    if (!displaySlots.length) return "Display text needed";
+    if (!timingWords.length) return "Word timing needed";
+    return "No staged chat cues";
+  }, [audioUrl, displayBreaks.length, displaySlots.length, timingWords.length]);
+
   const slideMarker = activeSlideMarker();
   const slideRef = slideMarker?.argList[0]?.trim() || "";
   const slidePreview =
@@ -1068,20 +1136,46 @@ export function NextFineTuningPanel({
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
       <audio preload="auto" ref={audioRef} src={audioPlaybackUrl} />
-      <section className="next-fine-preview" aria-label="Main panel preview">
-        {slidePreview?.status === "ready" && slidePreview.imageUrl ? (
-          <img alt={slideRef ? `Slide ${slideRef}` : ""} src={slidePreview.imageUrl} />
-        ) : (
-          <span>
-            {!slideRef
-              ? "No slide"
-              : !deckUrl.trim()
-                ? "Deck URL needed"
-                : slidePreview?.status === "loading"
-                  ? "Loading"
-                  : slidePreview?.detail || `Slide ${slideRef}`}
-          </span>
-        )}
+      <section className="next-fine-preview" aria-label="Playback preview">
+        <div className="next-fine-slide-preview" aria-label="Main panel preview">
+          {slidePreview?.status === "ready" && slidePreview.imageUrl ? (
+            <img
+              alt={slideRef ? `Slide ${slideRef}` : ""}
+              src={slidePreview.imageUrl}
+            />
+          ) : (
+            <span>
+              {!slideRef
+                ? "No slide"
+                : !deckUrl.trim()
+                  ? "Deck URL needed"
+                  : slidePreview?.status === "loading"
+                    ? "Loading"
+                    : slidePreview?.detail || `Slide ${slideRef}`}
+            </span>
+          )}
+        </div>
+        <div className="next-fine-chat-preview" aria-label="Chat simulator">
+          <div className="next-fine-chat-scroll" ref={chatPreviewRef}>
+            {visibleChatChunks.length ? (
+              visibleChatChunks.map((chunk) => (
+                <FineTuningChatBubble
+                  chunk={chunk}
+                  key={chunk.id}
+                  registerRef={(element) => {
+                    if (element) {
+                      chatPreviewChunkRefs.current.set(chunk.id, element);
+                    } else {
+                      chatPreviewChunkRefs.current.delete(chunk.id);
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              <div className="next-fine-chat-empty">{chatPreviewPlaceholder}</div>
+            )}
+          </div>
+        </div>
       </section>
 
       <div className="next-fine-transport">
