@@ -372,12 +372,15 @@ def resolve_slide_image(
     refresh_if_stale=True,
 ):
     deck = extract_presentation_reference(deck_url)
+    normalized_slide_ref = normalize_slide_ref(slide_ref)
     last_error = None
     should_refresh = force_refresh
+    if force_refresh and normalized_slide_ref.isdigit():
+        refresh_deck_index(deck)
     if refresh_if_stale and not should_refresh:
         should_refresh = deck_index_changed(deck)
 
-    for page_id in candidate_page_ids(deck, slide_ref):
+    for page_id in candidate_page_ids(deck, normalized_slide_ref):
         filename = slide_filename(deck.presentation_id, page_id)
         path = slide_cache_dir() / filename
 

@@ -26,6 +26,7 @@ from .slides import (
     resolve_slide_image,
     slide_cache_dir,
     slide_filename,
+    write_cached_deck_index,
 )
 from .models import (
     EventActionStep,
@@ -168,6 +169,36 @@ class GoogleSlidesResolutionTests(TestCase):
                 self.assertFalse(resolved.cache_hit)
                 self.assertEqual(path.read_bytes(), b"new")
                 fetch.assert_called_once()
+
+    def test_force_refresh_updates_numeric_slide_index_before_export(self):
+        deck_url = "abcdefghijklmnopqrstuvwxyz123456"
+        deck = DeckReference(deck_url, False)
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                write_cached_deck_index(deck, ["old-page"], "1")
+                old_path = slide_cache_dir() / slide_filename(deck_url, "old-page")
+                old_path.write_bytes(b"old")
+
+                def refresh_index(next_deck):
+                    write_cached_deck_index(next_deck, ["new-page"], "2")
+                    return {
+                        "fetchedAt": 999,
+                        "pageIds": ["new-page"],
+                        "revision": "2",
+                    }
+
+                with (
+                    patch("core.slides.refresh_deck_index", side_effect=refresh_index),
+                    patch("core.slides.fetch_slide_image", return_value=b"new") as fetch,
+                ):
+                    resolved = resolve_slide_image(deck_url, "1", force_refresh=True)
+
+                self.assertEqual(resolved.page_id, "new-page")
+                self.assertFalse(resolved.cache_hit)
+                self.assertEqual(resolved.path.read_bytes(), b"new")
+                self.assertEqual(old_path.read_bytes(), b"old")
+                fetch.assert_called_once_with(deck, "new-page")
 
     def test_resolve_slide_image_uses_recent_cache_without_revision_check(self):
         deck_url = "abcdefghijklmnopqrstuvwxyz123456"
