@@ -749,8 +749,12 @@ function conversationChoicesFromDslSource(
   return choices;
 }
 
+function markerEditKeyFrom(start: number, end: number, marker: string) {
+  return `${start}:${end}:${marker}`;
+}
+
 function markerEditKey(marker: ScriptMarkerInstance) {
-  return `${marker.start}:${marker.end}:${marker.marker}`;
+  return markerEditKeyFrom(marker.start, marker.end, marker.marker);
 }
 
 function sourceMarkerForView(marker: ScriptMarkerInstance | ScriptActionViewMarker) {
@@ -1905,6 +1909,10 @@ function ScriptActionReadOnlyView({
   });
 
   let wordIndex = 0;
+
+  useEffect(() => {
+    setInsertionPreview(null);
+  }, [text]);
 
   function elementFromEventTarget(target: EventTarget | null) {
     if (target instanceof HTMLElement) return target;
@@ -4099,13 +4107,30 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     marker: ScriptMarkerInstance,
     args: string[],
   ) {
-    updateActiveScriptMarkedText(
-      replaceScriptMarker(
-        activeScriptText,
-        marker,
-        buildScriptMarker(marker.type, args),
-      ),
+    const nextMarker = buildScriptMarker(marker.type, args);
+    const currentMarkerKey = markerEditKey(marker);
+    const nextMarkerKey = markerEditKeyFrom(
+      marker.start,
+      marker.start + nextMarker.length,
+      nextMarker,
     );
+
+    updateActiveScriptMarkedText(
+      replaceScriptMarker(activeScriptText, marker, nextMarker),
+    );
+    setScriptActionMenu((current) => {
+      if (
+        current?.mode !== "edit" ||
+        current.markerKey !== currentMarkerKey
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        markerKey: nextMarkerKey,
+      };
+    });
   }
 
   function removeScriptActionMarker(marker: ScriptMarkerInstance) {
