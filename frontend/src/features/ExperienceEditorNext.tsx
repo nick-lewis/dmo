@@ -1934,6 +1934,9 @@ function ScriptActionReadOnlyView({
 
     const insertRegion = target.closest<HTMLElement>("[data-default-insert]");
     const defaultInsertionIndex = Number(insertRegion?.dataset.defaultInsert);
+    const defaultStartInsertionIndex = Number(
+      insertRegion?.dataset.defaultInsertStart,
+    );
     const insertTarget = target.closest<HTMLElement>("[data-insert-before]");
 
     if (!insertTarget) {
@@ -1944,11 +1947,34 @@ function ScriptActionReadOnlyView({
         Number.parseFloat(styles.lineHeight) ||
         Number.parseFloat(styles.fontSize) * 1.75 ||
         22;
+      const firstInsertTarget =
+        region.querySelector<HTMLElement>("[data-insert-before]");
+      const firstInsertRect = firstInsertTarget
+        ? closestClientRectToPointer(
+            firstInsertTarget,
+            event.clientX,
+            event.clientY,
+          )
+        : null;
+      const firstTargetInsertionIndex = Number(
+        firstInsertTarget?.dataset.insertBefore,
+      );
+      const isAtOrAboveFirstLine =
+        firstInsertRect !== null &&
+        event.clientY <= firstInsertRect.bottom + lineHeight * 0.35;
+      const insertionIndex =
+        isAtOrAboveFirstLine &&
+        Number.isFinite(defaultStartInsertionIndex)
+          ? defaultStartInsertionIndex
+          : isAtOrAboveFirstLine && Number.isFinite(firstTargetInsertionIndex)
+            ? firstTargetInsertionIndex
+            : Number.isFinite(defaultInsertionIndex)
+              ? defaultInsertionIndex
+              : text.length;
+
       return {
         height: Math.max(16, lineHeight - 3),
-        insertionIndex: Number.isFinite(defaultInsertionIndex)
-          ? defaultInsertionIndex
-          : text.length,
+        insertionIndex,
         x: Math.round(clamp(event.clientX, rect.left + 12, rect.right - 12)),
         y: Math.round(
           clamp(
@@ -2212,7 +2238,7 @@ function ScriptActionReadOnlyView({
         role="table"
       >
         {actionRows.length ? (
-          actionRows.map((row) => {
+          actionRows.map((row, rowIndex) => {
             const rowNodes = renderSegmentNodes(
               row.textStart,
               row.textEnd,
@@ -2235,6 +2261,9 @@ function ScriptActionReadOnlyView({
                 <div
                   className="next-script-slide-script"
                   data-default-insert={sourceIndexForTextIndex(row.textEnd)}
+                  data-default-insert-start={sourceIndexForTextIndex(
+                    rowIndex === 0 ? 0 : row.textStart,
+                  )}
                   onContextMenu={handleScriptContextMenu}
                   onMouseLeave={() => setInsertionPreview(null)}
                   onMouseMove={handleScriptMouseMove}
@@ -2285,6 +2314,7 @@ function ScriptActionReadOnlyView({
             <div
               className="next-script-slide-script"
               data-default-insert={sourceIndexForTextIndex(0)}
+              data-default-insert-start={sourceIndexForTextIndex(0)}
               onContextMenu={handleScriptContextMenu}
               onMouseLeave={() => setInsertionPreview(null)}
               onMouseMove={handleScriptMouseMove}
