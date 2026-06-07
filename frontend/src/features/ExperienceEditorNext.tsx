@@ -5,6 +5,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -164,6 +165,13 @@ type AudioPreparationState = {
 type AudioScriptDraft = {
   stepId: string;
   text: string;
+};
+
+type AudioScriptSelection = {
+  direction: "backward" | "forward" | "none";
+  end: number;
+  start: number;
+  stepId: string;
 };
 
 type PersistedNextEditorUiState = {
@@ -2284,6 +2292,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
   const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingAudioScriptSelectionRef = useRef<AudioScriptSelection | null>(
+    null,
+  );
   const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const tutorAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2368,10 +2379,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     playingScriptAudioId === activeScriptAudioItem?.id;
   const missingScriptAudioCount =
     scriptAudioMissingItems(scriptAudioItems).length;
-  const activeDisplayBreaks = displayBreakDraftForItem(
-    activeScriptAudioItem,
-    displayBreakDrafts,
-  );
+  const activePendingDisplayDraft = activeScriptStep
+    ? pendingScriptDisplayDraftsRef.current[activeScriptStep.id]
+    : null;
+  const activePendingDisplayDraftMatches =
+    activePendingDisplayDraft &&
+    normalizeScriptAudioText(activePendingDisplayDraft.text) ===
+      activeAudioScriptText;
+  const activeDisplayBreaks = activePendingDisplayDraftMatches
+    ? normalizeDisplayBreaks(
+        activePendingDisplayDraft.displayBreaks,
+        displayTranscriptSlotsFromText(activeAudioScriptText).length,
+      )
+    : displayBreakDraftForItem(activeScriptAudioItem, displayBreakDrafts);
   const activeDisplaySlots = activeScriptAudioItem
     ? (displaySlotDrafts[activeScriptAudioItem.id] ??
       scriptAudioPersistedDisplaySlots(activeScriptAudioItem))
@@ -2451,8 +2471,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       const isFocusedDraft =
         current.stepId === activeAudioScriptDraftStepId &&
         audioScriptTextareaFocusedRef.current &&
-        document.activeElement === audioScriptTextareaRef.current &&
-        normalizeScriptAudioText(current.text) === activeAudioScriptText;
+        document.activeElement === audioScriptTextareaRef.current;
 
       if (isFocusedDraft) return current;
 
@@ -2473,6 +2492,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeAudioScriptText,
     activeAudioScriptVisualText,
   ]);
+
+  useLayoutEffect(() => {
+    const pendingSelection = pendingAudioScriptSelectionRef.current;
+    const textarea = audioScriptTextareaRef.current;
+    if (!pendingSelection || !textarea) return;
+    if (pendingSelection.stepId !== activeAudioScriptDraftStepId) return;
+    if (document.activeElement !== textarea) return;
+
+    pendingAudioScriptSelectionRef.current = null;
+    const textLength = textarea.value.length;
+    textarea.setSelectionRange(
+      Math.min(pendingSelection.start, textLength),
+      Math.min(pendingSelection.end, textLength),
+      pendingSelection.direction,
+    );
+  }, [activeAudioScriptDraftStepId, activeAudioScriptTextareaValue]);
 
   useEffect(() => {
     const stepId = activeScriptStep?.id ?? "";
@@ -3544,8 +3579,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     audioScriptTextareaFocusedRef.current = false;
   }
 
-  function changeActiveScriptText(value: string) {
+  function changeActiveScriptText(
+    value: string,
+    selectionStart: number | null,
+    selectionEnd: number | null,
+    selectionDirection: "backward" | "forward" | "none" | null,
+  ) {
     if (activeAudioScriptDraftStepId) {
+      if (selectionStart !== null && selectionEnd !== null) {
+        pendingAudioScriptSelectionRef.current = {
+          direction: selectionDirection ?? "none",
+          end: selectionEnd,
+          start: selectionStart,
+          stepId: activeAudioScriptDraftStepId,
+        };
+      }
+
       setAudioScriptDraft({
         stepId: activeAudioScriptDraftStepId,
         text: value,
@@ -4376,7 +4425,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             className="next-script-textarea"
             disabled={!activeScriptStep}
             onBlur={blurActiveScriptText}
-            onChange={(event) => changeActiveScriptText(event.target.value)}
+            onChange={(event) =>
+              changeActiveScriptText(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+                event.currentTarget.selectionEnd,
+                event.currentTarget.selectionDirection,
+              )
+            }
             onContextMenu={(event) => event.stopPropagation()}
             onFocus={(event) => focusActiveScriptText(event.currentTarget.value)}
             placeholder="No script text yet."
