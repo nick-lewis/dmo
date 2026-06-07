@@ -1623,28 +1623,69 @@ export function NextFineTuningPanel({
         </button>
         <div className="next-fine-mode-toggle" role="group" aria-label="Timeline layers">
           <button
+            aria-label={
+              timelineVisibility.slides ? "Slides visible" : "Slides hidden"
+            }
             aria-pressed={timelineVisibility.slides}
-            className={timelineVisibility.slides ? "is-active" : ""}
+            className={[
+              "is-slides",
+              timelineVisibility.slides ? "is-active" : "is-inactive",
+            ].join(" ")}
             onClick={() => toggleTimelineLayer("slides")}
+            title={timelineVisibility.slides ? "Slides visible" : "Slides hidden"}
             type="button"
           >
-            Slides
+            <span aria-hidden="true" className="next-fine-layer-dot" />
+            <span>Slides</span>
+            <span className="next-fine-layer-state">
+              {timelineVisibility.slides ? "On" : "Off"}
+            </span>
           </button>
           <button
+            aria-label={
+              timelineVisibility.actions ? "Actions visible" : "Actions hidden"
+            }
             aria-pressed={timelineVisibility.actions}
-            className={timelineVisibility.actions ? "is-active" : ""}
+            className={[
+              "is-actions",
+              timelineVisibility.actions ? "is-active" : "is-inactive",
+            ].join(" ")}
             onClick={() => toggleTimelineLayer("actions")}
+            title={
+              timelineVisibility.actions ? "Actions visible" : "Actions hidden"
+            }
             type="button"
           >
-            Actions
+            <span aria-hidden="true" className="next-fine-layer-dot" />
+            <span>Actions</span>
+            <span className="next-fine-layer-state">
+              {timelineVisibility.actions ? "On" : "Off"}
+            </span>
           </button>
           <button
+            aria-label={
+              timelineVisibility.chatCues
+                ? "Chat cues visible"
+                : "Chat cues hidden"
+            }
             aria-pressed={timelineVisibility.chatCues}
-            className={timelineVisibility.chatCues ? "is-active" : ""}
+            className={[
+              "is-chat-cues",
+              timelineVisibility.chatCues ? "is-active" : "is-inactive",
+            ].join(" ")}
             onClick={() => toggleTimelineLayer("chatCues")}
+            title={
+              timelineVisibility.chatCues
+                ? "Chat cues visible"
+                : "Chat cues hidden"
+            }
             type="button"
           >
-            Chat cues
+            <span aria-hidden="true" className="next-fine-layer-dot" />
+            <span>Chat cues</span>
+            <span className="next-fine-layer-state">
+              {timelineVisibility.chatCues ? "On" : "Off"}
+            </span>
           </button>
         </div>
         <span className="next-fine-time">
