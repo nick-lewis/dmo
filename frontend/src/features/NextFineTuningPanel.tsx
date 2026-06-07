@@ -95,12 +95,14 @@ type TimelineContextMenuState =
   | {
       index: number;
       kind: "marker";
+      targetTimeSeconds: number;
       x: number;
       y: number;
     }
   | {
       index: number;
       kind: "display-cue";
+      targetTimeSeconds: number;
       x: number;
       y: number;
     };
@@ -892,6 +894,7 @@ export function NextFineTuningPanel({
       setTimelineContextMenu({
         index: markerIndex,
         kind: "marker",
+        targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
         ...timelineContextMenuPosition(event.clientX, event.clientY),
       });
       return;
@@ -971,6 +974,7 @@ export function NextFineTuningPanel({
       setTimelineContextMenu({
         index: cueIndex,
         kind: "display-cue",
+        targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
         ...timelineContextMenuPosition(event.clientX, event.clientY),
       });
       return;
@@ -1091,6 +1095,7 @@ export function NextFineTuningPanel({
     setTimelineContextMenu({
       index: markerIndex,
       kind: "marker",
+      targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
       ...timelineContextMenuPosition(event.clientX, event.clientY),
     });
   }
@@ -1106,6 +1111,7 @@ export function NextFineTuningPanel({
     setTimelineContextMenu({
       index: cueIndex,
       kind: "display-cue",
+      targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
       ...timelineContextMenuPosition(event.clientX, event.clientY),
     });
   }
@@ -1128,7 +1134,11 @@ export function NextFineTuningPanel({
 
   function moveContextMenuItemToCurrentTime() {
     if (!timelineContextMenu) return;
-    const nextTime = clamp(visibleTime, 0, durationSeconds || 0);
+    const nextTime = clamp(
+      timelineContextMenu.targetTimeSeconds,
+      0,
+      durationSeconds || 0,
+    );
 
     if (timelineContextMenu.kind === "marker") {
       updateMarkerTime(timelineContextMenu.index, nextTime);
@@ -1142,6 +1152,14 @@ export function NextFineTuningPanel({
 
     seek(nextTime, { pause: true });
     setTimelineContextMenu(null);
+  }
+
+  function handleContextMenuMoveClick(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    moveContextMenuItemToCurrentTime();
   }
 
   useEffect(() => {
@@ -1249,7 +1267,14 @@ export function NextFineTuningPanel({
   useEffect(() => {
     if (!timelineContextMenu) return undefined;
 
-    function closeTimelineContextMenu() {
+    function closeTimelineContextMenu(event: Event) {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".next-fine-context-menu")
+      ) {
+        return;
+      }
       setTimelineContextMenu(null);
     }
 
@@ -1839,8 +1864,26 @@ export function NextFineTuningPanel({
         {timelineContextMenu ? (
           <div
             className="next-fine-context-menu"
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+            onMouseUp={(event) => {
+              event.stopPropagation();
+            }}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onPointerUp={(event) => {
+              event.stopPropagation();
+            }}
             role="menu"
             style={{
               left: `${timelineContextMenu.x}px`,
@@ -1848,11 +1891,11 @@ export function NextFineTuningPanel({
             }}
           >
             <button
-              onClick={moveContextMenuItemToCurrentTime}
+              onClick={handleContextMenuMoveClick}
               role="menuitem"
               type="button"
             >
-              Move to {formatTimelineSeconds(visibleTime)}
+              Move to {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
             </button>
           </div>
         ) : null}
