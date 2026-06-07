@@ -51,7 +51,7 @@ import {
   isVisualPanelMarker,
   markerTimelineTimeSeconds,
   menuCoordinate,
-  nextAvailableSlideRef,
+  nextSlideRefAfterInsertion,
   scriptSlideTextareaMaxHeightPx,
   scriptSlideTextareaMinHeightPx,
   scriptTextareaMaxHeightPx,
@@ -1591,7 +1591,10 @@ export function ScriptActionEditor({
 
   function markerTextForOption(option: (typeof scriptMarkerOptions)[number]) {
     if (option.marker === "[gslide: 1]") {
-      return `[gslide: ${nextAvailableSlideRef(markers)}]`;
+      return `[gslide: ${nextSlideRefAfterInsertion(
+        markers,
+        scriptActionMenu?.insertionIndex ?? scriptInsertionIndex ?? text.length,
+      )}]`;
     }
     return option.marker;
   }

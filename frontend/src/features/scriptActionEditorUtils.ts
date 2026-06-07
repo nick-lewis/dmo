@@ -44,6 +44,26 @@ export function nextAvailableSlideRef(markers: ScriptMarkerInstance[]) {
   return String(nextRef);
 }
 
+export function nextSlideRefAfterInsertion(
+  markers: ScriptMarkerInstance[],
+  insertionIndex: number,
+) {
+  const insertionPoint = Math.max(0, Math.round(insertionIndex));
+  const previousSlide = markers
+    .filter(isSlideMarker)
+    .filter((marker) => marker.start < insertionPoint)
+    .sort((left, right) => left.start - right.start)
+    .at(-1);
+  const previousRef = previousSlide?.argList[0]?.trim() ?? "";
+  if (/^\d+$/.test(previousRef)) {
+    const numericRef = Number.parseInt(previousRef, 10);
+    if (Number.isFinite(numericRef) && numericRef > 0) {
+      return String(numericRef + 1);
+    }
+  }
+  return nextAvailableSlideRef(markers);
+}
+
 export function scriptMarkerTypeForOption(option: ScriptMarkerOption) {
   const match = option.marker.match(/^\[([a-z_]+)(?::|\])/i);
   return match?.[1] ?? "marker";

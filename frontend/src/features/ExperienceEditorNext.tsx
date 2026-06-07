@@ -102,7 +102,7 @@ import {
   clamp,
   dropIndexForTextTarget,
   isSlideMarker,
-  nextAvailableSlideRef,
+  nextSlideRefAfterInsertion,
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
 import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
@@ -4072,7 +4072,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     ]);
     if (type === "slide") {
       marker = buildScriptMarker("gslide", [
-        nextAvailableSlideRef(activeScriptMarkers),
+        nextSlideRefAfterInsertion(
+          activeScriptMarkers,
+          scriptActionMenu.insertionIndex,
+        ),
       ]);
     } else if (type === "side-image") {
       marker = buildScriptMarker("side_image", [
