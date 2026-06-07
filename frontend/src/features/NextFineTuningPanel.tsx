@@ -63,11 +63,15 @@ type ActiveDisplayCueDrag = {
 } | null;
 
 type ScrubState = {
+  fineDrag: boolean;
+  lastClientX: number;
   pointerId: number;
   timeSeconds: number;
 };
 
 type MouseScrubState = {
+  fineDrag: boolean;
+  lastClientX: number;
   timeSeconds: number;
 };
 
@@ -397,6 +401,24 @@ export function NextFineTuningPanel({
     return clamp(offsetX / rect.width, 0, 1) * durationSeconds;
   }
 
+  function dragAdjustedTime(
+    clientX: number,
+    lastClientX: number,
+    currentSeconds: number,
+    isFineDrag: boolean,
+  ) {
+    if (!isFineDrag) return timeFromClientX(clientX);
+
+    const previousPointerSeconds = timeFromClientX(lastClientX);
+    const nextPointerSeconds = timeFromClientX(clientX);
+    return clamp(
+      currentSeconds +
+        (nextPointerSeconds - previousPointerSeconds) * markerFineDragRatio,
+      0,
+      durationSeconds || 0,
+    );
+  }
+
   function markerTime(marker: ScriptMarkerInstance, index: number) {
     if (draggingMarker?.markerIndex === index) return draggingMarker.timeSeconds;
     return markerTimelineTimeSeconds(
@@ -523,8 +545,15 @@ export function NextFineTuningPanel({
   function beginScrub(event: ReactPointerEvent<HTMLDivElement>) {
     if (!audioUrl || event.button > 0) return;
     event.preventDefault();
-    const nextTime = timeFromWaveformEvent(event);
-    scrubRef.current = { pointerId: event.pointerId, timeSeconds: nextTime };
+    const nextTime = event.shiftKey
+      ? currentTime
+      : timeFromWaveformEvent(event);
+    scrubRef.current = {
+      fineDrag: event.shiftKey,
+      lastClientX: event.clientX,
+      pointerId: event.pointerId,
+      timeSeconds: nextTime,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
     seek(nextTime, { pause: true });
   }
@@ -533,7 +562,15 @@ export function NextFineTuningPanel({
     const scrubState = scrubRef.current;
     if (!scrubState || scrubState.pointerId !== event.pointerId) return;
     event.preventDefault();
-    const nextTime = timeFromWaveformEvent(event, scrubState.timeSeconds);
+    const nextTime = scrubState.fineDrag || event.shiftKey
+      ? dragAdjustedTime(
+          event.clientX,
+          scrubState.lastClientX,
+          scrubState.timeSeconds,
+          true,
+        )
+      : timeFromWaveformEvent(event, scrubState.timeSeconds);
+    scrubState.lastClientX = event.clientX;
     scrubState.timeSeconds = nextTime;
     seek(nextTime, { pause: true });
   }
@@ -556,8 +593,14 @@ export function NextFineTuningPanel({
   function beginMouseScrub(event: ReactMouseEvent<HTMLDivElement>) {
     if (!audioUrl || event.button > 0 || scrubRef.current) return;
     event.preventDefault();
-    const nextTime = timeFromWaveformEvent(event);
-    mouseScrubRef.current = { timeSeconds: nextTime };
+    const nextTime = event.shiftKey
+      ? currentTime
+      : timeFromWaveformEvent(event);
+    mouseScrubRef.current = {
+      fineDrag: event.shiftKey,
+      lastClientX: event.clientX,
+      timeSeconds: nextTime,
+    };
     seek(nextTime, { pause: true });
   }
 
@@ -565,7 +608,15 @@ export function NextFineTuningPanel({
     const scrubState = mouseScrubRef.current;
     if (!scrubState) return;
     event.preventDefault();
-    const nextTime = timeFromWaveformEvent(event, scrubState.timeSeconds);
+    const nextTime = scrubState.fineDrag || event.shiftKey
+      ? dragAdjustedTime(
+          event.clientX,
+          scrubState.lastClientX,
+          scrubState.timeSeconds,
+          true,
+        )
+      : timeFromWaveformEvent(event, scrubState.timeSeconds);
+    scrubState.lastClientX = event.clientX;
     scrubState.timeSeconds = nextTime;
     seek(nextTime, { pause: true });
   }
@@ -1153,6 +1204,10 @@ export function NextFineTuningPanel({
             markerPreview?.status === "loading"
               ? "Loading"
               : markerPreview?.detail || markerLabel(marker);
+          const guideHeight = Math.max(
+            18,
+            waveformMarkerTop + lane * waveformMarkerGap - 12,
+          );
 
           return (
             <button
@@ -1198,6 +1253,11 @@ export function NextFineTuningPanel({
               }}
               type="button"
             >
+              <span
+                aria-hidden="true"
+                className="next-fine-marker-guide"
+                style={{ height: `${guideHeight}px` }}
+              />
               {markerHasIcon(marker) ? (
                 <span className="next-fine-marker-icon">
                   {scriptMarkerIcon(marker.type)}
@@ -1232,6 +1292,10 @@ export function NextFineTuningPanel({
                   : `${chunk.offsetSeconds > 0 ? "+" : ""}${chunk.offsetSeconds.toFixed(
                       2,
                     )}s`;
+              const guideHeight = Math.max(
+                18,
+                waveformMarkerTop + lane * waveformMarkerGap - 12,
+              );
 
               return (
                 <button
@@ -1273,6 +1337,11 @@ export function NextFineTuningPanel({
                   title={`${previewText || displayCueLabel(chunk)} (${offsetLabel})`}
                   type="button"
                 >
+                  <span
+                    aria-hidden="true"
+                    className="next-fine-marker-guide"
+                    style={{ height: `${guideHeight}px` }}
+                  />
                   <strong>{displayCueLabel(chunk)}</strong>
                   <span className="next-fine-marker-time">
                     {timeSeconds.toFixed(2)}

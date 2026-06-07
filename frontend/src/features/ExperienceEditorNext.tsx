@@ -3816,19 +3816,17 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (!item.canGenerate || scriptAudioStatus === "generating") return;
 
     const payload = await generateScriptAudio(item.id);
-    const nextItem = payload?.scripts.find(
-      (candidate) => candidate.id === item.id,
-    );
-    if (nextItem?.audioUrl) {
-      playScriptAudioPreview(nextItem);
+    if (payload?.errors?.length) {
+      setError(payload.errors.join(" "));
       return;
     }
 
-    setError(
-      payload?.errors?.join(" ") ||
-        item.generationReason ||
-        "Could not generate this script's audio.",
+    const nextItem = payload?.scripts.find(
+      (candidate) => candidate.id === item.id,
     );
+    if (!nextItem?.audioUrl) {
+      setError(item.generationReason || "Could not generate this script's audio.");
+    }
   }
 
   async function regenerateActiveScriptAudio(
@@ -4295,7 +4293,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     : activeScriptAudioItem?.audioUrl
       ? "Play audio script preview"
       : activeScriptAudioNeedsGeneration
-        ? "Generate and play audio script"
+        ? "Generate audio script"
         : "Audio script preview unavailable";
   const activeScriptAudioPreviewStateClass =
     scriptAudioStatus === "generating"

@@ -2022,6 +2022,17 @@ button {
   box-shadow: inset 3px 0 0 currentColor;
 }
 
+.next-fine-marker-guide {
+  position: absolute;
+  bottom: calc(100% - 1px);
+  left: 50%;
+  width: 1px;
+  background: currentColor;
+  opacity: 0.38;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
 .next-fine-marker-icon {
   font-size: 0.66rem;
   font-weight: 880;
