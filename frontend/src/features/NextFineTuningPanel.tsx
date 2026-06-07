@@ -160,6 +160,12 @@ function markerLabel(marker: ScriptMarkerInstance) {
   if (isSlideMarker(marker)) {
     return `Slide ${marker.argList[0]?.trim() || "1"}`;
   }
+  if (marker.type === "show_image" || marker.type === "agent_image_on") {
+    return "left show";
+  }
+  if (marker.type === "agent_image_off") {
+    return "left hide";
+  }
   if (marker.type === "side_image") {
     const side = marker.argList[0]?.trim() || "left";
     const mode = (marker.argList[1] || "show").trim().toLowerCase();
