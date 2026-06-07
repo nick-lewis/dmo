@@ -134,6 +134,7 @@ export function ChatPanelContent({
 }: ChatPanelContentProps) {
   const [draft, setDraft] = useState("");
   const autoScrollRef = useRef(true);
+  const composerInputRef = useRef<HTMLInputElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const programmaticScrollIgnoreUntilRef = useRef(0);
@@ -236,6 +237,16 @@ export function ChatPanelContent({
         `${button.stepId || button.label}:${button.triggersEvent}:${button.label}`,
     )
     .join("|");
+  const isInputDisabled =
+    !session || status === "loading" || isTurnLocked || !isChatEnabled;
+  const isSendDisabled = isInputDisabled || !draft.trim();
+
+  useEffect(() => {
+    if (!isInputDisabled) return;
+    if (document.activeElement === composerInputRef.current) {
+      composerInputRef.current?.blur();
+    }
+  }, [isInputDisabled]);
 
   useLayoutEffect(() => {
     const messageList = messageListRef.current;
@@ -386,9 +397,6 @@ export function ChatPanelContent({
     }
   }
 
-  const isInputDisabled =
-    !session || status === "loading" || isTurnLocked || !isChatEnabled;
-  const isSendDisabled = isInputDisabled || !draft.trim();
   const inputPlaceholder = !isChatEnabled
     ? "Chat is paused"
     : isTurnLocked
@@ -472,12 +480,18 @@ export function ChatPanelContent({
           </div>
         ) : null}
 
-        <form className="composer-row" onSubmit={sendMessage}>
+        <form
+          aria-disabled={isInputDisabled}
+          className={`composer-row${isInputDisabled ? " is-disabled" : ""}`}
+          onSubmit={sendMessage}
+        >
           <input
             aria-label={`Message ${assistantDisplayName}`}
             disabled={isInputDisabled}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={inputPlaceholder}
+            ref={composerInputRef}
+            tabIndex={isInputDisabled ? -1 : 0}
             type="text"
             value={draft}
           />

@@ -10847,8 +10847,15 @@ button {
 }
 
 .composer-row input:disabled {
+  caret-color: transparent;
   cursor: default;
   opacity: 0.62;
+  pointer-events: none;
+  user-select: none;
+}
+
+.composer-row.is-disabled {
+  cursor: default;
 }
 
 .panel-study input::placeholder,
