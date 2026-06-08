@@ -21,8 +21,6 @@ import {
 import { publicAsset } from "../assets";
 import {
   HelpIcon,
-  MicIcon,
-  StopIcon,
   TrashIcon,
 } from "../components/Icons";
 import {
@@ -111,6 +109,7 @@ import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import { useFloatingMenuLifecycle } from "./useFloatingMenuLifecycle";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
+import { NextScriptWorkspace } from "./NextScriptWorkspace";
 import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
 import {
   clamp,
@@ -2998,161 +2997,84 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     />
   );
 
+  const audioScriptPanel = (
+    <ScriptAudioEditorPanel
+      audioText={activeAudioScriptTextareaValue}
+      audioTextareaRef={audioScriptTextareaRef}
+      hasCustomVoiceInstructions={activeAudioHasCustomVoiceInstructions}
+      isAudioTextDisabled={!activeScriptStep}
+      isVoiceSettingsDisabled={!activeScriptAudioItem}
+      isVoiceSettingsOpen={isAudioVoiceSettingsOpen}
+      onAudioTextBlur={blurActiveScriptText}
+      onAudioTextChange={changeActiveScriptText}
+      onAudioTextFocus={focusActiveScriptText}
+      onSaveVoiceInstructions={saveActiveAudioVoiceInstructionsOverride}
+      onToggleVoiceSettings={() =>
+        setIsAudioVoiceSettingsOpen((current) => !current)
+      }
+      onVoiceInstructionsChange={setAudioVoiceInstructionsDraft}
+      voiceInstructionsDraft={audioVoiceInstructionsDraft}
+      voiceInstructionsRef={audioVoiceInstructionsRef}
+    />
+  );
+  const scriptActionsPanel = (
+    <ScriptActionReadOnlyView
+      actionRows={activeScriptActionView.rows}
+      canRefreshSlides={canRefreshActiveScriptSlides}
+      deckUrl={activeScriptDeckUrl}
+      displayBreaks={[]}
+      isRefreshingSlides={isRefreshingScriptSlides}
+      markers={activeScriptActionView.markers}
+      onDeckUrlChange={updateActiveScriptDeckUrl}
+      onOpenInsert={openScriptInsertMenu}
+      onOpenMarker={openScriptMarkerMenu}
+      onMoveMarker={moveScriptActionMarker}
+      onRefreshSlides={refreshActiveScriptSlidePreviews}
+      onRemoveMarker={removeScriptActionMarker}
+      previews={scriptSlidePreviews}
+      sourceIndexByTextIndex={activeScriptActionView.sourceIndexByTextIndex}
+      text={activeScriptActionView.text}
+    />
+  );
+  const fineTuningPanel = (
+    <NextFineTuningPanel
+      audioItem={activeScriptAudioItem}
+      deckUrl={activeScriptDeckUrl}
+      displayBreaks={activeDisplayEditorBreaks}
+      displayCueOffsets={activeDisplayCueOffsets}
+      displaySlots={activeDisplaySlots}
+      canRefreshSlides={canRefreshActiveScriptSlides}
+      isRefreshingSlides={isRefreshingScriptSlides}
+      onBeforePlaybackStart={stopScriptAudioPreview}
+      onDisplayCueOffsetsChange={(offsets) =>
+        void updateActiveDisplayCueOffsets(offsets)
+      }
+      onMarkedTextChange={updateActiveScriptMarkedText}
+      onRefreshSlides={refreshActiveScriptSlidePreviews}
+      previews={scriptSlidePreviews}
+      text={activeScriptText}
+      textRevealSpeed={scriptTextRevealSpeed}
+    />
+  );
+
   const actionDetailPanel =
     activeScriptAction && selectedEvent?.id === activeScriptAction.eventId ? (
-      <div aria-label="Spoken voice script" className="next-event-action-detail">
-        <div className="next-script-tabbar">
-          <button
-            aria-label={activeScriptAudioPreviewLabel}
-            className={[
-              "next-script-audio-preview-button",
-              activeScriptAudioPreviewStateClass,
-              isActiveScriptAudioPlaying ? "is-playing" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            disabled={activeScriptAudioPreviewDisabled}
-            onClick={() => void playOrGenerateActiveScriptAudio()}
-            onContextMenu={openScriptAudioMenu}
-            title={`${activeScriptAudioPreviewLabel}. Right-click for audio options.`}
-            type="button"
-          >
-            {isActiveScriptAudioPlaying ? <StopIcon /> : <MicIcon />}
-          </button>
-          <div
-            aria-label="Script detail views"
-            className="next-script-tabs"
-            role="tablist"
-          >
-            <button
-              aria-selected={activeScriptDetailTab === "audio" ? "true" : "false"}
-              className={activeScriptDetailTab === "audio" ? "is-active" : ""}
-              onClick={() => setActiveScriptDetailTab("audio")}
-              onContextMenu={openScriptAudioMenu}
-              role="tab"
-              title="Right-click for audio options."
-              type="button"
-            >
-              Audio
-            </button>
-            <button
-              aria-disabled={activeScriptAudioReady ? "false" : "true"}
-              aria-selected={activeScriptDetailTab === "display" ? "true" : "false"}
-              className={activeScriptDetailTab === "display" ? "is-active" : ""}
-              onClick={() => {
-                if (!activeScriptAudioReady) return;
-                setActiveScriptDetailTab("display");
-              }}
-              role="tab"
-              title={
-                activeScriptAudioReady
-                  ? "Edit display text"
-                  : "Generate this audio before editing display text."
-              }
-              type="button"
-            >
-              Display Text
-            </button>
-            <button
-              aria-selected={activeScriptDetailTab === "script" ? "true" : "false"}
-              className={activeScriptDetailTab === "script" ? "is-active" : ""}
-              onClick={() => setActiveScriptDetailTab("script")}
-              role="tab"
-              title="Place slides and actions"
-              type="button"
-            >
-              Slides &amp; Actions
-            </button>
-            <button
-              aria-disabled={activeScriptAudioReady ? "false" : "true"}
-              aria-selected={
-                activeScriptDetailTab === "fine-tuning" ? "true" : "false"
-              }
-              className={
-                activeScriptDetailTab === "fine-tuning" ? "is-active" : ""
-              }
-              onClick={() => {
-                if (!activeScriptAudioReady) return;
-                setActiveScriptDetailTab("fine-tuning");
-              }}
-              role="tab"
-              title={
-                activeScriptAudioReady
-                  ? "Fine tune generated audio"
-                  : "Generate this audio before fine tuning."
-              }
-              type="button"
-            >
-              Fine Tuning
-            </button>
-          </div>
-        </div>
-        {activeScriptDetailTab === "audio" ? (
-          <ScriptAudioEditorPanel
-            audioText={activeAudioScriptTextareaValue}
-            audioTextareaRef={audioScriptTextareaRef}
-            hasCustomVoiceInstructions={activeAudioHasCustomVoiceInstructions}
-            isAudioTextDisabled={!activeScriptStep}
-            isVoiceSettingsDisabled={!activeScriptAudioItem}
-            isVoiceSettingsOpen={isAudioVoiceSettingsOpen}
-            onAudioTextBlur={blurActiveScriptText}
-            onAudioTextChange={changeActiveScriptText}
-            onAudioTextFocus={focusActiveScriptText}
-            onSaveVoiceInstructions={saveActiveAudioVoiceInstructionsOverride}
-            onToggleVoiceSettings={() =>
-              setIsAudioVoiceSettingsOpen((current) => !current)
-            }
-            onVoiceInstructionsChange={setAudioVoiceInstructionsDraft}
-            voiceInstructionsDraft={audioVoiceInstructionsDraft}
-            voiceInstructionsRef={audioVoiceInstructionsRef}
-          />
-        ) : activeScriptDetailTab === "script" ? (
-          <ScriptActionReadOnlyView
-            actionRows={activeScriptActionView.rows}
-            canRefreshSlides={canRefreshActiveScriptSlides}
-            deckUrl={activeScriptDeckUrl}
-            displayBreaks={[]}
-            isRefreshingSlides={isRefreshingScriptSlides}
-            markers={activeScriptActionView.markers}
-            onDeckUrlChange={updateActiveScriptDeckUrl}
-            onOpenInsert={openScriptInsertMenu}
-            onOpenMarker={openScriptMarkerMenu}
-            onMoveMarker={moveScriptActionMarker}
-            onRefreshSlides={refreshActiveScriptSlidePreviews}
-            onRemoveMarker={removeScriptActionMarker}
-            previews={scriptSlidePreviews}
-            sourceIndexByTextIndex={activeScriptActionView.sourceIndexByTextIndex}
-            text={activeScriptActionView.text}
-          />
-        ) : activeScriptDetailTab === "fine-tuning" ? (
-          <NextFineTuningPanel
-            audioItem={activeScriptAudioItem}
-            deckUrl={activeScriptDeckUrl}
-            displayBreaks={activeDisplayEditorBreaks}
-            displayCueOffsets={activeDisplayCueOffsets}
-            displaySlots={activeDisplaySlots}
-            canRefreshSlides={canRefreshActiveScriptSlides}
-            isRefreshingSlides={isRefreshingScriptSlides}
-            onBeforePlaybackStart={stopScriptAudioPreview}
-            onDisplayCueOffsetsChange={(offsets) =>
-              void updateActiveDisplayCueOffsets(offsets)
-            }
-            onMarkedTextChange={updateActiveScriptMarkedText}
-            onRefreshSlides={refreshActiveScriptSlidePreviews}
-            previews={scriptSlidePreviews}
-            text={activeScriptText}
-            textRevealSpeed={scriptTextRevealSpeed}
-          />
-        ) : (
-          <>
-            {displayTextPanel}
-            {scriptAudioError ? (
-              <p className="control-error next-display-text-error">
-                {scriptAudioError}
-              </p>
-            ) : null}
-          </>
-        )}
+      <NextScriptWorkspace
+        activeTab={activeScriptDetailTab}
+        audioPanel={audioScriptPanel}
+        canUseGeneratedAudioTabs={activeScriptAudioReady}
+        displayPanel={displayTextPanel}
+        fineTuningPanel={fineTuningPanel}
+        isAudioPreviewDisabled={activeScriptAudioPreviewDisabled}
+        isAudioPreviewPlaying={isActiveScriptAudioPlaying}
+        onAudioPreview={() => void playOrGenerateActiveScriptAudio()}
+        onAudioPreviewMenu={openScriptAudioMenu}
+        onTabChange={setActiveScriptDetailTab}
+        previewButtonClassName={activeScriptAudioPreviewStateClass}
+        previewLabel={activeScriptAudioPreviewLabel}
+        scriptAudioError={scriptAudioError}
+        scriptPanel={scriptActionsPanel}
+      >
         {scriptActionMenu && typeof document !== "undefined" ? (
           createPortal(
           <div
@@ -3494,7 +3416,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             document.body,
           )
         ) : null}
-      </div>
+      </NextScriptWorkspace>
     ) : null;
 
   return (
