@@ -26,6 +26,42 @@ http://localhost:5173/experiences/<experience-id>/next#event=<event-id>&script=0
 5. Switch to Display Text, hard refresh, and confirm the URL restores `tab=display`.
 6. Switch back to Fine Tuning and confirm the Fine Tuning panel loads without console errors.
 
+## Executable Validation
+
+The browser automation step should capture the smoke result as JSON, then run:
+
+```powershell
+cd frontend
+node .\scripts\validate-next-editor-browser-smoke.mjs --file C:\tmp\next-editor-smoke.json
+```
+
+The capture should have this shape:
+
+```json
+{
+  "initial": {
+    "url": "http://localhost:5173/experiences/<experience-id>/next#event=<event-id>&script=0&tab=fine-tuning",
+    "activeTab": "Fine Tuning",
+    "hasEvents": true,
+    "tabs": ["Audio", "Display Text", "Slides & Actions", "Fine Tuning"]
+  },
+  "afterDisplayClick": "http://localhost:5173/experiences/<experience-id>/next#event=<event-id>&script=0&tab=display",
+  "afterDisplayRefresh": {
+    "url": "http://localhost:5173/experiences/<experience-id>/next#event=<event-id>&script=0&tab=display",
+    "activeTab": "Display Text"
+  },
+  "afterFineTuningClick": {
+    "url": "http://localhost:5173/experiences/<experience-id>/next#event=<event-id>&script=0&tab=fine-tuning",
+    "activeTab": "Fine Tuning",
+    "hasFineTuning": true
+  },
+  "errorLogCount": 0,
+  "errors": []
+}
+```
+
+This keeps the smoke test lightweight while still making the browser result executable and reviewable.
+
 ## Notes
 
 - This smoke is intentionally narrow. It catches the common regressions from editor refactors: hash state loss, selected script loss, broken tab rendering, and runtime crashes.

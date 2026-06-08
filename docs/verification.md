@@ -29,7 +29,13 @@ Useful shorter runs:
 For frontend refactors that touch the new editor, also run the focused
 [New Editor Browser Smoke](./next-editor-browser-smoke.md). It covers hard
 refresh state restore for `event`, `script`, and `tab`, plus the Fine Tuning
-panel render path that TypeScript and pure tests cannot exercise alone.
+panel render path that TypeScript and pure tests cannot exercise alone. After
+capturing the browser smoke JSON, validate it with:
+
+```powershell
+cd frontend
+node .\scripts\validate-next-editor-browser-smoke.mjs --file C:\tmp\next-editor-smoke.json
+```
 
 ## Postgres Notes
 
