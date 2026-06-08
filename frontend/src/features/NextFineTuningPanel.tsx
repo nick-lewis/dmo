@@ -35,6 +35,16 @@ import {
   useSeekableAudioUrl,
 } from "./useFineTuningAudio";
 import {
+  buildFineTuningTimelineLayout,
+  normalizedWaveformWindow,
+  shiftedWaveformWindow,
+  visibleWaveformPeaksForWindow,
+  waveformPercentForTime as waveformPercentForTimeInWindow,
+  type FineTuningTimelineLayer,
+  type FineTuningTimelineVisibility,
+  type WaveformWindow,
+} from "./fineTuningTimelineLayout";
+import {
   clamp,
   isSlideMarker,
   markerTimelineTimeSeconds,
@@ -92,11 +102,6 @@ type WaveformPanState = {
   pointerId: number;
 };
 
-type WaveformWindow = {
-  end: number;
-  start: number;
-};
-
 type ManualSeekState = {
   expiresAt: number;
   timeSeconds: number;
@@ -124,26 +129,6 @@ type TimelineContextMenuState =
       x: number;
       y: number;
     };
-
-type TimelineMarkerLayout = {
-  hasTimeMatch: boolean;
-  index: number;
-  lane: number;
-  marker: ScriptMarkerInstance;
-  timeSeconds: number;
-};
-
-type DisplayCueLayout = {
-  chunk: ScriptDisplayChunkSpec;
-  hasTimeMatch: boolean;
-  index: number;
-  lane: number;
-  timeSeconds: number;
-};
-
-type FineTuningTimelineLayer = "actions" | "chatCues" | "slides";
-
-type FineTuningTimelineVisibility = Record<FineTuningTimelineLayer, boolean>;
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
@@ -387,30 +372,6 @@ function playbackRateFromStorage() {
   }
 }
 
-function normalizedWaveformWindow(
-  windowValue: WaveformWindow,
-  minSpan = 0.04,
-): WaveformWindow {
-  const span = clamp(windowValue.end - windowValue.start, minSpan, 1);
-  const start = clamp(windowValue.start, 0, 1 - span);
-  return {
-    end: start + span,
-    start,
-  };
-}
-
-function shiftedWaveformWindow(
-  windowValue: WaveformWindow,
-  shift: number,
-): WaveformWindow {
-  const span = windowValue.end - windowValue.start;
-  const start = clamp(windowValue.start + shift, 0, 1 - span);
-  return {
-    end: start + span,
-    start,
-  };
-}
-
 function timelineContextMenuPosition(
   clientX: number,
   clientY: number,
@@ -649,19 +610,11 @@ export function NextFineTuningPanel({
   }
 
   function waveformPercentForTime(seconds: number) {
-    const normalizedTime = clamp(seconds / durationForLayout, 0, 1);
-    return (
-      ((normalizedTime - visibleWaveformWindow.start) /
-        visibleWaveformWindowSpan) *
-      100
-    );
-  }
-
-  function isTimeVisibleInWaveform(seconds: number) {
-    const normalizedTime = clamp(seconds / durationForLayout, 0, 1);
-    return (
-      normalizedTime >= visibleWaveformWindow.start - 0.01 &&
-      normalizedTime <= visibleWaveformWindow.end + 0.01
+    return waveformPercentForTimeInWindow(
+      seconds,
+      durationForLayout,
+      visibleWaveformWindow,
+      visibleWaveformWindowSpan,
     );
   }
 
@@ -2122,124 +2075,39 @@ export function NextFineTuningPanel({
     slideRef && deckUrl
       ? previews[slidePreviewKeyForDeck(deckUrl, slideRef)]
       : null;
-  const visibleWaveformPeaks = (() => {
-    if (!waveform.peaks.length) return [];
-    const firstPeakIndex = Math.max(
-      0,
-      Math.floor(visibleWaveformWindow.start * waveform.peaks.length),
-    );
-    const lastPeakIndex = Math.min(
-      waveform.peaks.length,
-      Math.ceil(visibleWaveformWindow.end * waveform.peaks.length),
-    );
-    return waveform.peaks.slice(
-      firstPeakIndex,
-      Math.max(firstPeakIndex + 1, lastPeakIndex),
-    );
-  })();
-  const rawTimelineMarkers = markers
-    .map((marker, index) => {
-      const timeSeconds = markerTime(marker, index);
-      return {
-        category: isSlideMarker(marker) ? ("slide" as const) : ("action" as const),
-        index,
-        marker,
-        timeMs: Math.round(timeSeconds * 1000),
-        timeSeconds,
-        widthPx: estimateMarkerWidthPx(marker),
-      };
-    })
-    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds))
-    .filter((item) =>
-      item.category === "slide"
-        ? timelineVisibility.slides
-        : timelineVisibility.actions,
-    );
-  const rawDisplayCueMarkers = displayCueChunks
-    .map((chunk, index) => {
+  const visibleWaveformPeaks = visibleWaveformPeaksForWindow(
+    waveform.peaks,
+    visibleWaveformWindow,
+  );
+  const {
+    displayCueLayouts,
+    laneCount,
+    timelineMarkers,
+  } = buildFineTuningTimelineLayout({
+    displayCues: displayCueChunks.map((chunk, index) => {
       const timeSeconds = displayCueTime(index);
       return {
         chunk,
         index,
-        timeMs: Math.round(timeSeconds * 1000),
         timeSeconds,
         widthPx: estimateDisplayCueWidthPx(chunk),
       };
-    })
-    .filter((item) => timelineVisibility.chatCues)
-    .filter((item) => isTimeVisibleInWaveform(item.timeSeconds));
-  const visibleTimelineLayoutItems = [
-    ...rawTimelineMarkers.map((item) => ({
-      ...item,
-      kind: "marker" as const,
-      sortGroup: item.category === "slide" ? 0 : 1,
-    })),
-    ...rawDisplayCueMarkers.map((item) => ({
-      ...item,
-      kind: "display-cue" as const,
-      sortGroup: 2,
-    })),
-  ];
-  const visibleTimeMatchCounts = new Map<number, number>();
-  visibleTimelineLayoutItems.forEach((item) => {
-    visibleTimeMatchCounts.set(
-      item.timeMs,
-      (visibleTimeMatchCounts.get(item.timeMs) ?? 0) + 1,
-    );
+    }),
+    durationForLayout,
+    markers: markers.map((marker, index) => {
+      const timeSeconds = markerTime(marker, index);
+      return {
+        index,
+        marker,
+        timeSeconds,
+        widthPx: estimateMarkerWidthPx(marker),
+      };
+    }),
+    timelineVisibility,
+    visibleWaveformWindow,
+    visibleWaveformWindowSpan,
+    waveformWidth,
   });
-  const laneRightEdges: number[] = [];
-  const waveformWidthForLayout = Math.max(waveformWidth || 0, 1);
-  const layoutByIndex = new Map<number, TimelineMarkerLayout>();
-  const displayCueLayoutByIndex = new Map<number, DisplayCueLayout>();
-  [...visibleTimelineLayoutItems]
-    .sort(
-      (left, right) =>
-        left.timeSeconds - right.timeSeconds ||
-        left.sortGroup - right.sortGroup ||
-        left.index - right.index,
-    )
-    .forEach((item) => {
-      const markerCenterPx =
-        (waveformPercentForTime(item.timeSeconds) / 100) *
-        waveformWidthForLayout;
-      const markerLeftPx = markerCenterPx - item.widthPx / 2;
-      const markerRightPx = markerCenterPx + item.widthPx / 2;
-      const laneIndex = laneRightEdges.findIndex(
-        (rightEdge) => markerLeftPx > rightEdge + 6,
-      );
-      const lane = laneIndex >= 0 ? laneIndex : laneRightEdges.length;
-      laneRightEdges[lane] = markerRightPx;
-
-      if (item.kind === "marker") {
-        layoutByIndex.set(item.index, {
-          hasTimeMatch: (visibleTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
-          index: item.index,
-          lane,
-          marker: item.marker,
-          timeSeconds: item.timeSeconds,
-        });
-        return;
-      }
-
-      displayCueLayoutByIndex.set(item.index, {
-        chunk: item.chunk,
-        hasTimeMatch: (visibleTimeMatchCounts.get(item.timeMs) ?? 0) > 1,
-        index: item.index,
-        lane,
-        timeSeconds: item.timeSeconds,
-      });
-    });
-  const timelineMarkers = rawTimelineMarkers
-    .map((item) => layoutByIndex.get(item.index))
-    .filter((item): item is TimelineMarkerLayout => Boolean(item));
-  const displayCueLayouts = rawDisplayCueMarkers
-    .map((item) => displayCueLayoutByIndex.get(item.index))
-    .filter((item): item is DisplayCueLayout => Boolean(item));
-  const laneCount = Math.max(
-    1,
-    ...timelineMarkers.map((item) => item.lane + 1),
-    ...displayCueLayouts.map((item) => item.lane + 1),
-  );
   const waveformMarkerTop = 68;
   const waveformMarkerGap = 28;
   const waveformHeight = Math.max(124, 96 + laneCount * waveformMarkerGap);
