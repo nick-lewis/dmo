@@ -15,6 +15,7 @@ export type ScriptMarkerInstance = {
   end: number;
   id: string;
   label: string;
+  linkId?: string;
   marker: string;
   start: number;
   timeMs?: number;
@@ -237,16 +238,49 @@ export function scriptTimelineTimeFromArg(arg: string) {
   return Math.round(Math.max(0, unit === "s" ? amount * 1000 : amount));
 }
 
-export function splitScriptMarkerTimelineArgs(args: string[]) {
-  if (!args.length) return { args, timeMs: undefined as number | undefined };
-  const timeMs = scriptTimelineTimeFromArg(args[args.length - 1] ?? "");
-  if (timeMs === null) return { args, timeMs: undefined as number | undefined };
-  return { args: args.slice(0, -1), timeMs };
+export function scriptTimelineLinkFromArg(arg: string) {
+  const match = arg.trim().match(/^@\s*link\s*:\s*([a-z0-9_-]+)\s*$/i);
+  return match?.[1] ?? null;
 }
 
-export function appendScriptMarkerTimelineArg(args: string[], timeMs?: number) {
-  if (!Number.isFinite(timeMs)) return args;
-  return [...args, `@${Math.max(0, Math.round(timeMs ?? 0))}ms`];
+export function splitScriptMarkerTimelineArgs(args: string[]) {
+  let linkId: string | undefined;
+  let timeMs: number | undefined;
+  const visibleArgs: string[] = [];
+
+  args.forEach((arg) => {
+    const markerTimeMs = scriptTimelineTimeFromArg(arg);
+    if (markerTimeMs !== null) {
+      timeMs = markerTimeMs;
+      return;
+    }
+
+    const markerLinkId = scriptTimelineLinkFromArg(arg);
+    if (markerLinkId) {
+      linkId = markerLinkId;
+      return;
+    }
+
+    visibleArgs.push(arg);
+  });
+
+  return { args: visibleArgs, linkId, timeMs };
+}
+
+export function appendScriptMarkerTimelineArg(
+  args: string[],
+  timeMs?: number,
+  linkId?: string,
+) {
+  const nextArgs = [...args];
+  if (Number.isFinite(timeMs)) {
+    nextArgs.push(`@${Math.max(0, Math.round(timeMs ?? 0))}ms`);
+  }
+  const safeLinkId = linkId?.trim();
+  if (safeLinkId) {
+    nextArgs.push(`@link:${safeLinkId}`);
+  }
+  return nextArgs;
 }
 
 export function scriptMarkerDetail(type: string, args: string, argList: string[]) {
@@ -314,7 +348,8 @@ export function parseScriptMarkerInstances(text: string) {
     const type = (match[1] ?? "").toLowerCase();
     const args = (match[2] ?? "").trim();
     const parsedArgs = parseScriptMarkerArgs(args);
-    const { args: argList, timeMs } = splitScriptMarkerTimelineArgs(parsedArgs);
+    const { args: argList, linkId, timeMs } =
+      splitScriptMarkerTimelineArgs(parsedArgs);
     const visibleArgs = argList.join(", ");
     const spokenBefore = text.slice(0, start).replace(scriptMarkerPattern, " ");
     markers.push({
@@ -324,6 +359,7 @@ export function parseScriptMarkerInstances(text: string) {
       end: start + marker.length,
       id: `${start}-${marker}`,
       label: scriptMarkerLabel(type),
+      linkId,
       marker,
       start,
       timeMs,

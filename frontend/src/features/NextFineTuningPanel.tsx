@@ -101,6 +101,7 @@ type TimelineContextMenuState =
   | {
       index: number;
       kind: "marker";
+      linkTargetIndex: number | null;
       targetTimeSeconds: number;
       x: number;
       y: number;
@@ -160,7 +161,6 @@ const defaultWaveformBucketCount = 520;
 const markerFineDragRatio = 0.08;
 const markerKeyboardStepSeconds = 0.005;
 const markerKeyboardFineStepSeconds = 0.001;
-const markerSnapThresholdSeconds = 0.03;
 const fineTuningSpeedStorageKey = "dlu.next-fine-tuning-speed.v1";
 const waveformPanWheelRatio = 0.0018;
 const waveformZoomWheelRatio = 0.0015;
@@ -194,6 +194,33 @@ function insertScriptMarkerAt(text: string, insertionIndex: number, marker: stri
   const prefix = before && !/\s$/.test(before) ? " " : "";
   const suffix = after && !/^\s/.test(after) ? " " : "";
   return `${before}${prefix}${marker}${suffix}${after}`;
+}
+
+function replaceScriptMarkersInText(
+  text: string,
+  replacements: Array<{
+    marker: ScriptMarkerInstance;
+    nextMarker: string | null;
+  }>,
+) {
+  const seen = new Set<string>();
+  let nextText = text;
+  [...replacements]
+    .filter(({ marker }) => {
+      const key = `${marker.start}:${marker.end}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => right.marker.start - left.marker.start)
+    .forEach(({ marker, nextMarker }) => {
+      nextText =
+        nextText.slice(0, marker.start) +
+        (nextMarker ?? "") +
+        nextText.slice(marker.end);
+    });
+
+  return nextText;
 }
 
 function markerLabel(marker: ScriptMarkerInstance) {
@@ -319,13 +346,13 @@ function markerSupportsFineTuningSettings(marker: ScriptMarkerInstance) {
 }
 
 function markerContextMenuEstimatedHeight(marker: ScriptMarkerInstance) {
-  if (!markerSupportsFineTuningSettings(marker)) return 54;
-  if (marker.type === "side_image" || marker.type === "show_image") return 336;
+  if (!markerSupportsFineTuningSettings(marker)) return 150;
+  if (marker.type === "side_image" || marker.type === "show_image") return 420;
   if (marker.type === "agent_image_on" || marker.type === "agent_image_off") {
-    return 336;
+    return 420;
   }
-  if (marker.type === "play_sound") return 214;
-  return 138;
+  if (marker.type === "play_sound") return 300;
+  return 224;
 }
 
 function estimateMarkerWidthPx(marker: ScriptMarkerInstance) {
@@ -775,7 +802,16 @@ export function NextFineTuningPanel({
   }
 
   function markerTime(marker: ScriptMarkerInstance, index: number) {
-    if (draggingMarker?.markerIndex === index) return draggingMarker.timeSeconds;
+    if (draggingMarker) {
+      const draggingSource = markers[draggingMarker.markerIndex];
+      const isDraggedMarker = draggingMarker.markerIndex === index;
+      const isDraggedLinkGroup =
+        Boolean(marker.linkId) &&
+        marker.linkId === draggingSource?.linkId;
+      if (isDraggedMarker || isDraggedLinkGroup) {
+        return draggingMarker.timeSeconds;
+      }
+    }
     return markerTimelineTimeSeconds(
       marker,
       displayTimingWords,
@@ -804,11 +840,31 @@ export function NextFineTuningPanel({
     const marker = markers[markerIndex];
     if (!marker) return;
 
-    const nextMarker = buildScriptMarker(
-      marker.type,
-      appendScriptMarkerTimelineArg(marker.argList, seconds * 1000),
-    );
-    onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
+    const linkedIndexes = marker.linkId
+      ? markers
+          .map((linkedMarker, index) =>
+            linkedMarker.linkId === marker.linkId ? index : -1,
+          )
+          .filter((index) => index >= 0)
+      : [markerIndex];
+    const replacements = linkedIndexes
+      .map((index) => markers[index])
+      .filter((linkedMarker): linkedMarker is ScriptMarkerInstance =>
+        Boolean(linkedMarker),
+      )
+      .map((linkedMarker) => ({
+        marker: linkedMarker,
+        nextMarker: buildScriptMarker(
+          linkedMarker.type,
+          appendScriptMarkerTimelineArg(
+            linkedMarker.argList,
+            seconds * 1000,
+            linkedMarker.linkId,
+          ),
+        ),
+      }));
+
+    onMarkedTextChange(replaceScriptMarkersInText(text, replacements));
   }
 
   function updateMarkerArgs(
@@ -822,7 +878,7 @@ export function NextFineTuningPanel({
     const timeMs = Math.round(markerTime(marker, markerIndex) * 1000);
     const nextMarker = buildScriptMarker(
       nextType ?? marker.type,
-      appendScriptMarkerTimelineArg(nextArgs, timeMs),
+      appendScriptMarkerTimelineArg(nextArgs, timeMs, marker.linkId),
     );
     onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
   }
@@ -973,20 +1029,6 @@ export function NextFineTuningPanel({
     );
     setDraftDisplayCueOffsets(nextOffsets);
     onDisplayCueOffsetsChange(nextOffsets);
-  }
-
-  function snapMarkerTime(seconds: number, markerIndex: number) {
-    const match = markers
-      .map((marker, index) => ({
-        index,
-        timeSeconds: markerTime(marker, index),
-      }))
-      .filter(({ index }) => index !== markerIndex)
-      .find(
-        ({ timeSeconds }) =>
-          Math.abs(timeSeconds - seconds) <= markerSnapThresholdSeconds,
-      );
-    return match ? match.timeSeconds : seconds;
   }
 
   function activeSlideMarker(): ScriptMarkerInstance | null {
@@ -1178,22 +1220,7 @@ export function NextFineTuningPanel({
     seconds: number,
   ) {
     if (event.button === 2) {
-      event.preventDefault();
       event.stopPropagation();
-      const marker = markers[markerIndex];
-      setSelectedMarkerIndex(markerIndex);
-      setSelectedDisplayCueIndex(null);
-      setTimelineContextMenu({
-        index: markerIndex,
-        kind: "marker",
-        targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
-        ...timelineContextMenuPosition(
-          event.clientX,
-          event.clientY,
-          marker ? markerContextMenuEstimatedHeight(marker) : 54,
-          marker && markerSupportsFineTuningSettings(marker) ? 312 : 220,
-        ),
-      });
       return;
     }
     if (event.button > 0) {
@@ -1227,17 +1254,14 @@ export function NextFineTuningPanel({
       0,
       durationSeconds || 0,
     );
-    const snappedSeconds = event.shiftKey
-      ? nextSeconds
-      : snapMarkerTime(nextSeconds, dragState.markerIndex);
     dragState.lastClientX = event.clientX;
-    dragState.timeSeconds = snappedSeconds;
+    dragState.timeSeconds = nextSeconds;
     dragState.moved = true;
     setDraggingMarker({
       markerIndex: dragState.markerIndex,
-      timeSeconds: snappedSeconds,
+      timeSeconds: nextSeconds,
     });
-    setCurrentTime(snappedSeconds);
+    setCurrentTime(nextSeconds);
   }
 
   function endMarkerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -1264,16 +1288,7 @@ export function NextFineTuningPanel({
     seconds: number,
   ) {
     if (event.button === 2) {
-      event.preventDefault();
       event.stopPropagation();
-      setSelectedDisplayCueIndex(cueIndex);
-      setSelectedMarkerIndex(null);
-      setTimelineContextMenu({
-        index: cueIndex,
-        kind: "display-cue",
-        targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
-        ...timelineContextMenuPosition(event.clientX, event.clientY),
-      });
       return;
     }
     if (event.button > 0) {
@@ -1388,11 +1403,16 @@ export function NextFineTuningPanel({
     event.preventDefault();
     event.stopPropagation();
     const marker = markers[markerIndex];
+    const linkTargetIndex =
+      selectedMarkerIndex !== null && selectedMarkerIndex !== markerIndex
+        ? selectedMarkerIndex
+        : null;
     setSelectedMarkerIndex(markerIndex);
     setSelectedDisplayCueIndex(null);
     setTimelineContextMenu({
       index: markerIndex,
       kind: "marker",
+      linkTargetIndex,
       targetTimeSeconds: clamp(visibleTime, 0, durationSeconds || 0),
       ...timelineContextMenuPosition(
         event.clientX,
@@ -1435,20 +1455,14 @@ export function NextFineTuningPanel({
     seek(targetTimeSeconds, { pause: true });
   }
 
-  function handleMarkerMouseDown(
-    event: ReactMouseEvent<HTMLButtonElement>,
-    markerIndex: number,
-  ) {
+  function handleMarkerMouseDown(event: ReactMouseEvent<HTMLButtonElement>) {
     event.stopPropagation();
-    if (event.button === 2) openMarkerContextMenu(event, markerIndex);
   }
 
   function handleDisplayCueMouseDown(
     event: ReactMouseEvent<HTMLButtonElement>,
-    cueIndex: number,
   ) {
     event.stopPropagation();
-    if (event.button === 2) openDisplayCueContextMenu(event, cueIndex);
   }
 
   function moveContextMenuItemToCurrentTime() {
@@ -1481,6 +1495,199 @@ export function NextFineTuningPanel({
     event.preventDefault();
     event.stopPropagation();
     moveContextMenuItemToCurrentTime();
+  }
+
+  function markerWithTimeline(
+    marker: ScriptMarkerInstance,
+    markerIndex: number,
+    options: {
+      args?: string[];
+      linkId?: string | null;
+      seconds?: number;
+      type?: string;
+    } = {},
+  ) {
+    const seconds = options.seconds ?? markerTime(marker, markerIndex);
+    const linkId =
+      options.linkId === undefined ? marker.linkId : options.linkId ?? undefined;
+    return buildScriptMarker(
+      options.type ?? marker.type,
+      appendScriptMarkerTimelineArg(
+        options.args ?? marker.argList,
+        Math.round(seconds * 1000),
+        linkId,
+      ),
+    );
+  }
+
+  function markerLinkedIndexes(markerIndex: number) {
+    const marker = markers[markerIndex];
+    if (!marker?.linkId) return [markerIndex];
+    return markers
+      .map((candidate, index) =>
+        candidate.linkId === marker.linkId ? index : -1,
+      )
+      .filter((index) => index >= 0);
+  }
+
+  function markerHasLinkedGroup(markerIndex: number) {
+    return markerLinkedIndexes(markerIndex).length > 1;
+  }
+
+  function newMarkerLinkId(sourceIndex: number, targetIndex: number) {
+    const left = Math.min(sourceIndex, targetIndex);
+    const right = Math.max(sourceIndex, targetIndex);
+    return `m${left}-${right}-${Date.now().toString(36)}`;
+  }
+
+  function deleteTimelineMarker(markerIndex: number) {
+    const marker = markers[markerIndex];
+    if (!marker) return;
+
+    const linkedIndexes = markerLinkedIndexes(markerIndex).filter(
+      (index) => index !== markerIndex,
+    );
+    const replacements: Array<{
+      marker: ScriptMarkerInstance;
+      nextMarker: string | null;
+    }> = [{ marker, nextMarker: null }];
+
+    if (marker.linkId && linkedIndexes.length === 1) {
+      const remainingIndex = linkedIndexes[0];
+      const remainingMarker = markers[remainingIndex];
+      if (remainingMarker) {
+        replacements.push({
+          marker: remainingMarker,
+          nextMarker: markerWithTimeline(remainingMarker, remainingIndex, {
+            linkId: null,
+          }),
+        });
+      }
+    }
+
+    onMarkedTextChange(replaceScriptMarkersInText(text, replacements));
+    setSelectedMarkerIndex(null);
+    setTimelineContextMenu(null);
+  }
+
+  function unlinkTimelineMarker(markerIndex: number) {
+    const marker = markers[markerIndex];
+    if (!marker?.linkId) return;
+
+    const linkedIndexes = markerLinkedIndexes(markerIndex).filter(
+      (index) => index !== markerIndex,
+    );
+    const replacements: Array<{
+      marker: ScriptMarkerInstance;
+      nextMarker: string | null;
+    }> = [
+      {
+        marker,
+        nextMarker: markerWithTimeline(marker, markerIndex, { linkId: null }),
+      },
+    ];
+
+    if (linkedIndexes.length === 1) {
+      const remainingIndex = linkedIndexes[0];
+      const remainingMarker = markers[remainingIndex];
+      if (remainingMarker) {
+        replacements.push({
+          marker: remainingMarker,
+          nextMarker: markerWithTimeline(remainingMarker, remainingIndex, {
+            linkId: null,
+          }),
+        });
+      }
+    }
+
+    onMarkedTextChange(replaceScriptMarkersInText(text, replacements));
+    setTimelineContextMenu(null);
+  }
+
+  function linkContextMarkerToSelected() {
+    if (!timelineContextMenu || timelineContextMenu.kind !== "marker") return;
+    const sourceIndex = timelineContextMenu.index;
+    const targetIndex = timelineContextMenu.linkTargetIndex;
+    if (targetIndex === null || targetIndex === sourceIndex) return;
+
+    const sourceMarker = markers[sourceIndex];
+    const targetMarker = markers[targetIndex];
+    if (!sourceMarker || !targetMarker) return;
+
+    const linkId =
+      targetMarker.linkId ||
+      newMarkerLinkId(sourceIndex, targetIndex);
+    const targetTime = markerTime(targetMarker, targetIndex);
+    const oldLinkedIndexes =
+      sourceMarker.linkId && sourceMarker.linkId !== linkId
+        ? markerLinkedIndexes(sourceIndex).filter((index) => index !== sourceIndex)
+        : [];
+    const replacements: Array<{
+      marker: ScriptMarkerInstance;
+      nextMarker: string | null;
+    }> = [
+      {
+        marker: sourceMarker,
+        nextMarker: markerWithTimeline(sourceMarker, sourceIndex, {
+          linkId,
+          seconds: targetTime,
+        }),
+      },
+    ];
+
+    if (targetMarker.linkId !== linkId) {
+      replacements.push({
+        marker: targetMarker,
+        nextMarker: markerWithTimeline(targetMarker, targetIndex, { linkId }),
+      });
+    }
+
+    if (oldLinkedIndexes.length === 1) {
+      const remainingIndex = oldLinkedIndexes[0];
+      const remainingMarker = markers[remainingIndex];
+      if (remainingMarker) {
+        replacements.push({
+          marker: remainingMarker,
+          nextMarker: markerWithTimeline(remainingMarker, remainingIndex, {
+            linkId: null,
+          }),
+        });
+      }
+    }
+
+    onMarkedTextChange(replaceScriptMarkersInText(text, replacements));
+    setSelectedMarkerIndex(sourceIndex);
+    setSelectedDisplayCueIndex(null);
+    seek(targetTime, { pause: true });
+    setTimelineContextMenu(null);
+  }
+
+  function handleContextMenuDeleteClick(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (timelineContextMenu?.kind === "marker") {
+      deleteTimelineMarker(timelineContextMenu.index);
+    }
+  }
+
+  function handleContextMenuLinkClick(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    linkContextMarkerToSelected();
+  }
+
+  function handleContextMenuUnlinkClick(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (timelineContextMenu?.kind === "marker") {
+      unlinkTimelineMarker(timelineContextMenu.index);
+    }
   }
 
   function renderMarkerSettingsEditor(markerIndex: number) {
@@ -2057,6 +2264,22 @@ export function NextFineTuningPanel({
     timelineContextMenu?.kind === "marker"
       ? markers[timelineContextMenu.index] ?? null
       : null;
+  const timelineContextLinkTarget =
+    timelineContextMenu?.kind === "marker" &&
+    timelineContextMenu.linkTargetIndex !== null
+      ? markers[timelineContextMenu.linkTargetIndex] ?? null
+      : null;
+  const timelineContextCanLink = Boolean(
+    timelineContextMarker &&
+      timelineContextLinkTarget &&
+      (!timelineContextMarker.linkId ||
+        !timelineContextLinkTarget.linkId ||
+        timelineContextMarker.linkId !== timelineContextLinkTarget.linkId),
+  );
+  const timelineContextMarkerIsLinked =
+    timelineContextMenu?.kind === "marker"
+      ? markerHasLinkedGroup(timelineContextMenu.index)
+      : false;
   const timelineContextMenuHasEditor = Boolean(
     timelineContextMarker &&
       markerSupportsFineTuningSettings(timelineContextMarker),
@@ -2326,6 +2549,7 @@ export function NextFineTuningPanel({
                 markerHasIcon(marker) ? "has-icon" : "",
                 selectedMarkerIndex === index ? "is-selected" : "",
                 hasTimeMatch ? "is-time-match" : "",
+                markerHasLinkedGroup(index) ? "is-linked" : "",
                 markerPercent < 28
                   ? "is-preview-left"
                   : markerPercent > 72
@@ -2351,7 +2575,7 @@ export function NextFineTuningPanel({
               onPointerMove={updateMarkerDrag}
               onPointerUp={endMarkerDrag}
               onContextMenu={(event) => openMarkerContextMenu(event, index)}
-              onMouseDown={(event) => handleMarkerMouseDown(event, index)}
+              onMouseDown={handleMarkerMouseDown}
               style={{
                 left: `${markerPercent}%`,
                 top: `${waveformMarkerTop + lane * waveformMarkerGap}px`,
@@ -2434,7 +2658,7 @@ export function NextFineTuningPanel({
                     openDisplayCueContextMenu(event, index)
                   }
                   onMouseDown={(event) =>
-                    handleDisplayCueMouseDown(event, index)
+                    handleDisplayCueMouseDown(event)
                   }
                   style={{
                     left: `${markerPercent}%`,
@@ -2530,6 +2754,40 @@ export function NextFineTuningPanel({
                   Move to{" "}
                   {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
                 </button>
+                {timelineContextMenu.kind === "marker" &&
+                timelineContextCanLink ? (
+                  <button
+                    className="next-fine-context-action"
+                    onClick={handleContextMenuLinkClick}
+                    role="menuitem"
+                    type="button"
+                  >
+                    Link to selected chip
+                  </button>
+                ) : null}
+                {timelineContextMenu.kind === "marker" &&
+                timelineContextMarker?.linkId ? (
+                  <button
+                    className="next-fine-context-action"
+                    onClick={handleContextMenuUnlinkClick}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {timelineContextMarkerIsLinked
+                      ? "Unlink action"
+                      : "Clear link"}
+                  </button>
+                ) : null}
+                {timelineContextMenu.kind === "marker" ? (
+                  <button
+                    className="next-fine-context-action is-danger"
+                    onClick={handleContextMenuDeleteClick}
+                    role="menuitem"
+                    type="button"
+                  >
+                    Delete action
+                  </button>
+                ) : null}
                 {timelineContextMenu.kind === "marker"
                   ? renderMarkerSettingsEditor(timelineContextMenu.index)
                   : null}

@@ -2347,6 +2347,11 @@ button {
   box-shadow: inset 3px 0 0 currentColor;
 }
 
+.next-fine-marker.is-linked {
+  border-style: double;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
 .next-fine-marker-guide {
   position: absolute;
   bottom: calc(100% - 1px);
@@ -2501,6 +2506,15 @@ button {
 .next-fine-context-action:focus-visible {
   background: color-mix(in srgb, var(--accent-2-soft) 46%, transparent);
   outline: 0;
+}
+
+.next-fine-context-action.is-danger {
+  color: color-mix(in srgb, var(--accent) 84%, var(--page-ink));
+}
+
+.next-fine-context-action.is-danger:hover,
+.next-fine-context-action.is-danger:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 58%, transparent);
 }
 
 .next-fine-context-editor {
