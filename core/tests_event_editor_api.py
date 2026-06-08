@@ -444,6 +444,22 @@ class EventEditorApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_script_images_delete_rejects_nested_or_traversal_paths(self):
+        rejected_paths = [
+            "media/script-images/nested/demo.png",
+            "media/script-images/../demo.png",
+        ]
+
+        for image_path in rejected_paths:
+            with self.subTest(image_path=image_path):
+                response = self.client.delete(
+                    f"/api/experiences/{self.experience.id}/script-images/",
+                    data=json.dumps({"imagePath": image_path}),
+                    content_type="application/json",
+                )
+
+                self.assertEqual(response.status_code, 400)
+
     def test_start_event_persists_conversation_choices_without_immediate_action(self):
         TutorSettings.objects.create(
             experience=self.experience,
