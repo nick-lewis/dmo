@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 
 import {
   appendScriptMarkerTimelineArg,
@@ -41,7 +40,7 @@ import {
   type FineTuningTimelineLayer,
   type FineTuningTimelineVisibility,
 } from "./fineTuningTimelineLayout";
-import { FineTuningMarkerSettingsEditor } from "./FineTuningMarkerSettingsEditor";
+import { NextFineTuningContextMenu } from "./NextFineTuningContextMenu";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import {
   clamp,
@@ -1911,129 +1910,20 @@ export function NextFineTuningPanel({
                 </button>
               );
             })}
-        {timelineContextMenu && typeof document !== "undefined" ? (
-          createPortal(
-          <div
-            className={[
-              "next-fine-context-menu",
-              timelineContextMenuHasEditor ? "is-editor" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onMouseDown={(event) => {
-              event.stopPropagation();
-            }}
-            onMouseUp={(event) => {
-              event.stopPropagation();
-            }}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onPointerUp={(event) => {
-              event.stopPropagation();
-            }}
-            ref={timelineContextMenuRef}
-            role="menu"
-            style={{
-              left: `${timelineContextMenu.x}px`,
-              top: `${timelineContextMenu.y}px`,
-            }}
-          >
-            {timelineContextMenu.kind === "insert" ? (
-              <>
-                <button
-                  className="next-fine-context-action"
-                  onClick={() => insertTimelineMarker("slide")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Add slide at{" "}
-                  {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
-                </button>
-                <button
-                  className="next-fine-context-action"
-                  onClick={() => insertTimelineMarker("side-image")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Add interface image
-                </button>
-                <button
-                  className="next-fine-context-action"
-                  onClick={() => insertTimelineMarker("sound")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Add sound
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  className="next-fine-context-action"
-                  onClick={handleContextMenuMoveClick}
-                  role="menuitem"
-                  type="button"
-                >
-                  Move to{" "}
-                  {formatTimelineSeconds(timelineContextMenu.targetTimeSeconds)}
-                </button>
-                {timelineContextMenu.kind === "marker" &&
-                timelineContextCanLink ? (
-                  <button
-                    className="next-fine-context-action"
-                    onClick={handleContextMenuLinkClick}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Link to selected chip
-                  </button>
-                ) : null}
-                {timelineContextMenu.kind === "marker" &&
-                timelineContextMarker?.linkId ? (
-                  <button
-                    className="next-fine-context-action"
-                    onClick={handleContextMenuUnlinkClick}
-                    role="menuitem"
-                    type="button"
-                  >
-                    {timelineContextMarkerIsLinked
-                      ? "Unlink action"
-                      : "Clear link"}
-                  </button>
-                ) : null}
-                {timelineContextMenu.kind === "marker" ? (
-                  <button
-                    className="next-fine-context-action is-danger"
-                    onClick={handleContextMenuDeleteClick}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Delete action
-                  </button>
-                ) : null}
-                {timelineContextMenu.kind === "marker" &&
-                timelineContextMarker ? (
-                  <FineTuningMarkerSettingsEditor
-                    marker={timelineContextMarker}
-                    markerIndex={timelineContextMenu.index}
-                    onUpdateMarkerArgs={updateMarkerArgs}
-                  />
-                ) : null}
-              </>
-            )}
-          </div>,
-            document.body,
-          )
-        ) : null}
+        <NextFineTuningContextMenu
+          canLink={timelineContextCanLink}
+          hasEditor={timelineContextMenuHasEditor}
+          isLinked={timelineContextMarkerIsLinked}
+          marker={timelineContextMarker}
+          menu={timelineContextMenu}
+          menuRef={timelineContextMenuRef}
+          onAddMarker={insertTimelineMarker}
+          onDelete={handleContextMenuDeleteClick}
+          onLink={handleContextMenuLinkClick}
+          onMoveToCurrentTime={handleContextMenuMoveClick}
+          onUnlink={handleContextMenuUnlinkClick}
+          onUpdateMarkerArgs={updateMarkerArgs}
+        />
       </div>
     </div>
   );
