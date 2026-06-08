@@ -122,6 +122,15 @@ import {
   nextSlideRefAfterInsertion,
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
+import {
+  defaultScriptSideImagePath,
+  normalizeScriptSideImageScale,
+  scriptSideImageArgsFromState,
+  scriptSideImageStateFromArgs,
+  scriptSideImageScaleMax,
+  scriptSideImageScaleMin,
+  type ScriptSideImageState,
+} from "./scriptMarkerActionMetadata";
 import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
 import { useVoiceSample } from "./useVoiceSample";
 import {
@@ -226,14 +235,6 @@ type ScriptInsertionPreview = {
   y: number;
 };
 
-type SideImageActionState = {
-  imagePath: string;
-  scale: number;
-  scaleText: string;
-  side: "left" | "right";
-  visible: boolean;
-};
-
 type ScriptActionMenuDragState = {
   menuX: number;
   menuY: number;
@@ -246,9 +247,6 @@ const scriptActionHistoryLimit = 80;
 const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
 const onEntryDslStepSource = "next-on-entry-dsl";
 const conversationDslStepSource = "next-conversation-dsl";
-const defaultSideImagePath = "test-images/dLU-right.png";
-const sideImageScaleMin = 0.2;
-const sideImageScaleMax = 3;
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -355,7 +353,7 @@ function writeLocationNextEditorUiState(state: PersistedNextEditorUiState) {
 function defaultTutorSettings(): TutorSettings {
   return {
     assistantName: "dee-lou",
-    avatarPath: defaultSideImagePath,
+    avatarPath: defaultScriptSideImagePath,
     choiceIconBackground: defaultChoiceIconBackground,
     classificationModel: "gpt-5.4-mini",
     realtimeModel: "gpt-realtime-mini",
@@ -363,73 +361,6 @@ function defaultTutorSettings(): TutorSettings {
     voice: "ash",
     voiceInstructions: "",
   };
-}
-
-function normalizeSideImageScale(value: unknown) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return 1;
-  return clamp(numeric, sideImageScaleMin, sideImageScaleMax);
-}
-
-function sideImageActionStateFromArgs(args: string[]): SideImageActionState {
-  const firstArg = args[0]?.trim().toLowerCase() || "";
-  const hasSideArg = [
-    "agent",
-    "avatar",
-    "left",
-    "main",
-    "right",
-    "side",
-    "tutor",
-  ].includes(firstArg);
-  const side = ["right", "side"].includes(firstArg) ? "right" : "left";
-  const remainingArgs = hasSideArg ? args.slice(1) : args;
-  const rawMode = remainingArgs[0]?.trim() || "show";
-  const mode = rawMode.toLowerCase();
-  const hideModes = ["hide", "hidden", "off", "false", "0"];
-  const showModes = ["show", "on", "visible", "true", "1"];
-  const usesExplicitMode = showModes.includes(mode) || hideModes.includes(mode);
-  const imageArgIndex = usesExplicitMode ? 1 : 0;
-  const imagePath =
-    remainingArgs.length > imageArgIndex
-      ? remainingArgs[imageArgIndex]
-      : usesExplicitMode
-        ? ""
-        : remainingArgs[0] || "";
-  const scaleText = remainingArgs[imageArgIndex + 1]?.trim() || "1";
-  const scale = normalizeSideImageScale(scaleText);
-
-  return {
-    imagePath,
-    scale,
-    scaleText,
-    side,
-    visible: !hideModes.includes(mode),
-  };
-}
-
-function sideImageActionArgs(state: SideImageActionState) {
-  const imagePath = state.imagePath.trim();
-  const rawScaleText = state.scaleText.trim();
-  const scale = normalizeSideImageScale(rawScaleText || state.scale);
-  const scaleArg =
-    imagePath &&
-    rawScaleText &&
-    (Math.abs(scale - 1) > 0.001 || rawScaleText.endsWith("."))
-      ? rawScaleText
-      : "";
-  if (state.visible) {
-    const args = imagePath
-      ? [state.side, "show", imagePath]
-      : [state.side, "show"];
-    if (scaleArg) args.push(scaleArg);
-    return args;
-  }
-  const args = imagePath
-    ? [state.side, "hide", imagePath]
-    : [state.side, "hide"];
-  if (scaleArg) args.push(scaleArg);
-  return args;
 }
 
 function sortedExperienceEvents(events: ExperienceEvent[]) {
@@ -3241,7 +3172,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       marker = buildScriptMarker("side_image", [
         "left",
         "show",
-        tutorForm.avatarPath || defaultSideImagePath,
+        tutorForm.avatarPath || defaultScriptSideImagePath,
       ]);
     }
     updateActiveScriptMarkedText(
@@ -3742,7 +3673,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     replaceScriptActionMarker(
       editingScriptMarker,
-      sideImageActionArgs({
+      scriptSideImageArgsFromState({
         ...editingSideImageState,
         imagePath,
       }),
@@ -3786,7 +3717,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       if (editingScriptMarker && editingSideImageState) {
         replaceScriptActionMarker(
           editingScriptMarker,
-          sideImageActionArgs({
+          scriptSideImageArgsFromState({
             ...editingSideImageState,
             imagePath: payload.imagePath,
           }),
@@ -3873,14 +3804,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       if (editingScriptMarker && editingSideImageState?.imagePath === imagePath) {
         replaceScriptActionMarker(
           editingScriptMarker,
-          sideImageActionArgs({
+          scriptSideImageArgsFromState({
             ...editingSideImageState,
             imagePath: "",
           }),
         );
       }
       if (tutorForm.avatarPath === imagePath) {
-        updateTutorDraft("avatarPath", defaultSideImagePath);
+        updateTutorDraft("avatarPath", defaultScriptSideImagePath);
       }
     } catch (deleteError) {
       setError(
@@ -4097,7 +4028,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       : null;
   const editingSideImageState =
     editingScriptMarker?.type === "side_image"
-      ? sideImageActionStateFromArgs(editingScriptMarker.argList)
+      ? scriptSideImageStateFromArgs(editingScriptMarker.argList)
       : null;
   const scriptImagePickerOptions = (() => {
     const currentPath = editingSideImageState?.imagePath.trim() ?? "";
@@ -4456,7 +4387,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,
-                            sideImageActionArgs({
+                            scriptSideImageArgsFromState({
                               ...editingSideImageState,
                               side:
                                 event.target.value === "right"
@@ -4478,7 +4409,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,
-                            sideImageActionArgs({
+                            scriptSideImageArgsFromState({
                               ...editingSideImageState,
                               visible: event.target.value !== "hide",
                             }),
@@ -4518,13 +4449,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                           onChange={(event) =>
                             replaceScriptActionMarker(
                               editingScriptMarker,
-                              sideImageActionArgs({
+                              scriptSideImageArgsFromState({
                                 ...editingSideImageState,
                                 imagePath: event.target.value,
                               }),
                             )
                           }
-                          placeholder={defaultSideImagePath}
+                          placeholder={defaultScriptSideImagePath}
                           value={editingSideImageState.imagePath}
                         />
                         <button
@@ -4570,14 +4501,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                       <span>Scale</span>
                       <input
                         aria-label="Interface image scale"
-                        max={sideImageScaleMax}
-                        min={sideImageScaleMin}
+                        max={scriptSideImageScaleMax}
+                        min={scriptSideImageScaleMin}
                         onChange={(event) =>
                           replaceScriptActionMarker(
                             editingScriptMarker,
-                            sideImageActionArgs({
+                            scriptSideImageArgsFromState({
                               ...editingSideImageState,
-                              scale: normalizeSideImageScale(
+                              scale: normalizeScriptSideImageScale(
                                 event.target.value,
                               ),
                               scaleText: event.target.value,

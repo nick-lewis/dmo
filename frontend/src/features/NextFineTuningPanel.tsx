@@ -52,6 +52,20 @@ import {
   nextSlideRefAfterInsertion,
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
+import {
+  defaultScriptSideImagePath,
+  estimateFineTuningMarkerWidthPx,
+  fineTuningMarkerHasIcon,
+  fineTuningMarkerLabel,
+  markerContextMenuEstimatedHeight,
+  markerSupportsFineTuningSettings,
+  normalizeScriptSideImageScale,
+  scriptSideImageArgsFromState,
+  scriptSideImageScaleMax,
+  scriptSideImageScaleMin,
+  scriptSideImageStateFromMarker,
+  type ScriptSideImageState,
+} from "./scriptMarkerActionMetadata";
 import { formatTimelineSeconds } from "./ScriptAudioPanel";
 import {
   alignScriptWordsToDisplaySlots,
@@ -87,17 +101,6 @@ const waveformZoomWheelRatio = 0.0015;
 const chatPreviewAutoScrollResumeThresholdPx = 28;
 const chatPreviewProgrammaticScrollIgnoreMs = 220;
 const chatPreviewUserScrollIntentMs = 900;
-const defaultFineTuningSideImagePath = "test-images/dLU-right.png";
-const fineTuningSideImageScaleMin = 0.2;
-const fineTuningSideImageScaleMax = 3;
-
-type FineTuningSideImageState = {
-  imagePath: string;
-  scale: number;
-  scaleText: string;
-  side: "left" | "right";
-  visible: boolean;
-};
 
 function replaceScriptMarker(
   text: string,
@@ -141,144 +144,6 @@ function replaceScriptMarkersInText(
     });
 
   return nextText;
-}
-
-function markerLabel(marker: ScriptMarkerInstance) {
-  if (isSlideMarker(marker)) {
-    return `Slide ${marker.argList[0]?.trim() || "1"}`;
-  }
-  if (marker.type === "show_image" || marker.type === "agent_image_on") {
-    return "left show";
-  }
-  if (marker.type === "agent_image_off") {
-    return "left hide";
-  }
-  if (marker.type === "side_image") {
-    const side = marker.argList[0]?.trim() || "left";
-    const mode = (marker.argList[1] || "show").trim().toLowerCase();
-    const state = ["hide", "hidden", "off", "false", "0"].includes(mode)
-      ? "hide"
-      : "show";
-    return `${side} ${state}`;
-  }
-  return marker.detail || marker.label;
-}
-
-function markerHasIcon(marker: ScriptMarkerInstance) {
-  return !isSlideMarker(marker) && marker.type !== "side_image";
-}
-
-function normalizeFineTuningSideImageScale(value: unknown) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return 1;
-  return clamp(
-    numeric,
-    fineTuningSideImageScaleMin,
-    fineTuningSideImageScaleMax,
-  );
-}
-
-function sideImageStateFromMarker(
-  marker: ScriptMarkerInstance,
-): FineTuningSideImageState {
-  if (marker.type === "show_image" || marker.type === "agent_image_on") {
-    return {
-      imagePath: marker.argList[0] || defaultFineTuningSideImagePath,
-      scale: 1,
-      scaleText: "1",
-      side: "left",
-      visible: true,
-    };
-  }
-
-  if (marker.type === "agent_image_off") {
-    return {
-      imagePath: marker.argList[0] || "",
-      scale: 1,
-      scaleText: "1",
-      side: "left",
-      visible: false,
-    };
-  }
-
-  const firstArg = marker.argList[0]?.trim().toLowerCase() || "";
-  const hasSideArg = [
-    "agent",
-    "avatar",
-    "left",
-    "main",
-    "right",
-    "side",
-    "tutor",
-  ].includes(firstArg);
-  const side = ["right", "side"].includes(firstArg) ? "right" : "left";
-  const remainingArgs = hasSideArg ? marker.argList.slice(1) : marker.argList;
-  const rawMode = remainingArgs[0]?.trim() || "show";
-  const mode = rawMode.toLowerCase();
-  const hideModes = ["hide", "hidden", "off", "false", "0"];
-  const showModes = ["show", "on", "visible", "true", "1"];
-  const usesExplicitMode = showModes.includes(mode) || hideModes.includes(mode);
-  const imageArgIndex = usesExplicitMode ? 1 : 0;
-  const imagePath =
-    remainingArgs.length > imageArgIndex
-      ? remainingArgs[imageArgIndex]
-      : usesExplicitMode
-        ? ""
-        : remainingArgs[0] || "";
-  const scaleText = remainingArgs[imageArgIndex + 1]?.trim() || "1";
-  const scale = normalizeFineTuningSideImageScale(scaleText);
-
-  return {
-    imagePath,
-    scale,
-    scaleText,
-    side,
-    visible: !hideModes.includes(mode),
-  };
-}
-
-function sideImageArgsFromState(state: FineTuningSideImageState) {
-  const imagePath = state.imagePath.trim();
-  const rawScaleText = state.scaleText.trim();
-  const scale = normalizeFineTuningSideImageScale(rawScaleText || state.scale);
-  const scaleArg =
-    imagePath &&
-    rawScaleText &&
-    (Math.abs(scale - 1) > 0.001 || rawScaleText.endsWith("."))
-      ? rawScaleText
-      : "";
-  const args = imagePath
-    ? [state.side, state.visible ? "show" : "hide", imagePath]
-    : [state.side, state.visible ? "show" : "hide"];
-  if (scaleArg) args.push(scaleArg);
-  return args;
-}
-
-function markerSupportsFineTuningSettings(marker: ScriptMarkerInstance) {
-  return (
-    isSlideMarker(marker) ||
-    marker.type === "play_sound" ||
-    marker.type === "side_image" ||
-    marker.type === "show_image" ||
-    marker.type === "agent_image_on" ||
-    marker.type === "agent_image_off"
-  );
-}
-
-function markerContextMenuEstimatedHeight(marker: ScriptMarkerInstance) {
-  if (!markerSupportsFineTuningSettings(marker)) return 150;
-  if (marker.type === "side_image" || marker.type === "show_image") return 420;
-  if (marker.type === "agent_image_on" || marker.type === "agent_image_off") {
-    return 420;
-  }
-  if (marker.type === "play_sound") return 300;
-  return 224;
-}
-
-function estimateMarkerWidthPx(marker: ScriptMarkerInstance) {
-  const labelLength = markerLabel(marker).length;
-  const iconWidth = markerHasIcon(marker) ? 20 : 0;
-  return Math.min(178, Math.max(74, 48 + iconWidth + labelLength * 6.2));
 }
 
 function displayCueLabel(chunk: ScriptDisplayChunkSpec) {
@@ -756,7 +621,7 @@ export function NextFineTuningPanel({
       nextMarker = buildScriptMarker(
         "side_image",
         appendScriptMarkerTimelineArg(
-          ["left", "show", defaultFineTuningSideImagePath],
+          ["left", "show", defaultScriptSideImagePath],
           targetTimeMs,
         ),
       );
@@ -1585,11 +1450,11 @@ export function NextFineTuningPanel({
       marker.type === "agent_image_on" ||
       marker.type === "agent_image_off"
     ) {
-      const imageState = sideImageStateFromMarker(marker);
-      const updateImageState = (nextState: FineTuningSideImageState) =>
+      const imageState = scriptSideImageStateFromMarker(marker);
+      const updateImageState = (nextState: ScriptSideImageState) =>
         updateMarkerArgs(
           markerIndex,
-          sideImageArgsFromState(nextState),
+          scriptSideImageArgsFromState(nextState),
           "side_image",
         );
 
@@ -1646,7 +1511,7 @@ export function NextFineTuningPanel({
                     imagePath: event.target.value,
                   })
                 }
-                placeholder={defaultFineTuningSideImagePath}
+                placeholder={defaultScriptSideImagePath}
                 value={imageState.imagePath}
               />
             </div>
@@ -1655,12 +1520,12 @@ export function NextFineTuningPanel({
             <span>Scale</span>
             <input
               aria-label="Interface image scale"
-              max={fineTuningSideImageScaleMax}
-              min={fineTuningSideImageScaleMin}
+              max={scriptSideImageScaleMax}
+              min={scriptSideImageScaleMin}
               onChange={(event) =>
                 updateImageState({
                   ...imageState,
-                  scale: normalizeFineTuningSideImageScale(event.target.value),
+                  scale: normalizeScriptSideImageScale(event.target.value),
                   scaleText: event.target.value,
                 })
               }
@@ -1951,7 +1816,7 @@ export function NextFineTuningPanel({
         index,
         marker,
         timeSeconds,
-        widthPx: estimateMarkerWidthPx(marker),
+        widthPx: estimateFineTuningMarkerWidthPx(marker),
       };
     }),
     timelineVisibility,
@@ -2233,7 +2098,7 @@ export function NextFineTuningPanel({
           const previewLabel =
             markerPreview?.status === "loading"
               ? "Loading"
-              : markerPreview?.detail || markerLabel(marker);
+              : markerPreview?.detail || fineTuningMarkerLabel(marker);
           const guideHeight = Math.max(
             18,
             waveformMarkerTop + lane * waveformMarkerGap - 12,
@@ -2241,7 +2106,7 @@ export function NextFineTuningPanel({
 
           return (
             <button
-              aria-label={`${markerLabel(marker)} at ${formatTimelineSeconds(
+              aria-label={`${fineTuningMarkerLabel(marker)} at ${formatTimelineSeconds(
                 timeSeconds,
               )}`}
               aria-pressed={selectedMarkerIndex === index}
@@ -2249,7 +2114,7 @@ export function NextFineTuningPanel({
                 "next-fine-marker",
                 slideMarkerForPreview ? "is-slide" : "is-action",
                 slideMarkerForPreview ? "has-preview" : "",
-                markerHasIcon(marker) ? "has-icon" : "",
+                fineTuningMarkerHasIcon(marker) ? "has-icon" : "",
                 selectedMarkerIndex === index ? "is-selected" : "",
                 hasTimeMatch ? "is-time-match" : "",
                 markerHasLinkedGroup(index) ? "is-linked" : "",
@@ -2290,12 +2155,12 @@ export function NextFineTuningPanel({
                 className="next-fine-marker-guide"
                 style={{ height: `${guideHeight}px` }}
               />
-              {markerHasIcon(marker) ? (
+              {fineTuningMarkerHasIcon(marker) ? (
                 <span className="next-fine-marker-icon">
                   {scriptMarkerIcon(marker.type)}
                 </span>
               ) : null}
-              <strong>{markerLabel(marker)}</strong>
+              <strong>{fineTuningMarkerLabel(marker)}</strong>
               <span className="next-fine-marker-time">
                 {timeSeconds.toFixed(2)}
               </span>
