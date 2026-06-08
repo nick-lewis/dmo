@@ -11,14 +11,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 
 import {
   apiFetch,
   experienceNextEditPath,
   experienceRunPath,
 } from "../api";
-import { publicAsset } from "../assets";
 import {
   HelpIcon,
   TrashIcon,
@@ -36,7 +34,6 @@ import { stringConfigValue } from "../runtimeUtils";
 import {
   appendScriptMarkerTimelineArg,
   buildScriptMarker,
-  customSoundOptionValue,
   displayTranscriptSlotsFromText,
   normalizeScriptAudioText,
   parseScriptMarkerInstances,
@@ -101,14 +98,17 @@ import {
   viewMarkerEditKey,
   type ScriptActionViewMarker,
 } from "./scriptActionProjection";
-import {
-  ImageLibraryPicker,
-  type ImageLibraryOption,
-} from "./ImageLibraryPicker";
+import type { ImageLibraryOption } from "./ImageLibraryPicker";
 import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import { useFloatingMenuLifecycle } from "./useFloatingMenuLifecycle";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
+import {
+  NextScriptActionMenuPortal,
+  NextScriptAudioMenuPortal,
+  type ScriptActionMenuState,
+  type ScriptAudioMenuState,
+} from "./NextScriptMenus";
 import { NextScriptWorkspace } from "./NextScriptWorkspace";
 import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
 import {
@@ -146,12 +146,8 @@ import {
 } from "./nextEditorUiState";
 import {
   defaultScriptSideImagePath,
-  normalizeScriptSideImageScale,
   scriptSideImageArgsFromState,
   scriptSideImageStateFromArgs,
-  scriptSideImageScaleMax,
-  scriptSideImageScaleMin,
-  type ScriptSideImageState,
 } from "./scriptMarkerActionMetadata";
 import { useExperienceSnapshotContextMenu } from "./useExperienceSnapshotContextMenu";
 import { useVoiceSample } from "./useVoiceSample";
@@ -212,25 +208,6 @@ type AudioScriptSelection = {
   end: number;
   start: number;
   stepId: string;
-};
-
-type ScriptActionMenuState =
-  | {
-      insertionIndex: number;
-      mode: "insert";
-      x: number;
-      y: number;
-    }
-  | {
-      markerKey: string;
-      mode: "edit";
-      x: number;
-      y: number;
-    };
-
-type ScriptAudioMenuState = {
-  x: number;
-  y: number;
 };
 
 type ScriptActionMenuDragState = {
@@ -3075,347 +3052,36 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         scriptAudioError={scriptAudioError}
         scriptPanel={scriptActionsPanel}
       >
-        {scriptActionMenu && typeof document !== "undefined" ? (
-          createPortal(
-          <div
-            className="next-script-action-popover"
-            ref={scriptActionMenuRef}
-            role="menu"
-            style={{ left: scriptActionMenu.x, top: scriptActionMenu.y }}
-          >
-            <button
-              aria-label="Move action menu"
-              className="next-script-action-popover-grip"
-              onPointerCancel={endScriptActionMenuDrag}
-              onPointerDown={beginScriptActionMenuDrag}
-              onPointerMove={moveScriptActionMenuDrag}
-              onPointerUp={endScriptActionMenuDrag}
-              title="Drag to move"
-              type="button"
-            >
-              <span aria-hidden="true" />
-            </button>
-            {scriptActionMenu.mode === "insert" ? (
-              <>
-                <button
-                  className="next-script-action-menu-item is-slide"
-                  onClick={() => insertScriptAction("slide")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Slide
-                </button>
-                <button
-                  className="next-script-action-menu-item is-action"
-                  onClick={() => insertScriptAction("side-image")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Interface image
-                </button>
-                <button
-                  className="next-script-action-menu-item is-action"
-                  onClick={() => insertScriptAction("sound")}
-                  role="menuitem"
-                  type="button"
-                >
-                  Sound
-                </button>
-              </>
-            ) : editingScriptMarker ? (
-              <div className="next-script-action-editor">
-                <div className="next-script-action-editor-head">
-                  <strong>{editingScriptMarker.label}</strong>
-                  <button
-                    onClick={() => removeScriptActionMarker(editingScriptMarker)}
-                    type="button"
-                  >
-                    Delete
-                  </button>
-                </div>
-                {isSlideMarker(editingScriptMarker) ? (
-                  <label>
-                    <span>Slide</span>
-                    <input
-                      aria-label="Slide reference"
-                      onChange={(event) =>
-                        replaceScriptActionMarker(editingScriptMarker, [
-                          event.target.value,
-                        ])
-                      }
-                      value={editingScriptMarker.argList[0] ?? ""}
-                    />
-                  </label>
-                ) : editingScriptMarker.type === "side_image" &&
-                  editingSideImageState ? (
-                  <>
-                    <label>
-                      <span>Side</span>
-                      <select
-                        aria-label="Interface image side"
-                        onChange={(event) =>
-                          replaceScriptActionMarker(
-                            editingScriptMarker,
-                            scriptSideImageArgsFromState({
-                              ...editingSideImageState,
-                              side:
-                                event.target.value === "right"
-                                  ? "right"
-                                  : "left",
-                            }),
-                          )
-                        }
-                        value={editingSideImageState.side}
-                      >
-                        <option value="left">Left</option>
-                        <option value="right">Right</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>State</span>
-                      <select
-                        aria-label="Interface image state"
-                        onChange={(event) =>
-                          replaceScriptActionMarker(
-                            editingScriptMarker,
-                            scriptSideImageArgsFromState({
-                              ...editingSideImageState,
-                              visible: event.target.value !== "hide",
-                            }),
-                          )
-                        }
-                        value={editingSideImageState.visible ? "show" : "hide"}
-                      >
-                        <option value="show">Show</option>
-                        <option value="hide">Hide</option>
-                      </select>
-                    </label>
-                    <div className="next-script-image-field">
-                      <span>Image</span>
-                      <div className="next-script-image-control">
-                        <button
-                          aria-expanded={isScriptImagePickerOpen}
-                          aria-label="Choose interface image"
-                          className="next-script-image-preview-button"
-                          onClick={() =>
-                            setIsScriptImagePickerOpen((isOpen) => !isOpen)
-                          }
-                          title="Choose interface image"
-                          type="button"
-                        >
-                          {editingSideImageState.imagePath ? (
-                            <img
-                              alt=""
-                              src={publicAsset(editingSideImageState.imagePath)}
-                            />
-                          ) : (
-                            <span>No image</span>
-                          )}
-                        </button>
-                        <input
-                          aria-label="Interface image path"
-                          className="next-script-image-path-input"
-                          onChange={(event) =>
-                            replaceScriptActionMarker(
-                              editingScriptMarker,
-                              scriptSideImageArgsFromState({
-                                ...editingSideImageState,
-                                imagePath: event.target.value,
-                              }),
-                            )
-                          }
-                          placeholder={defaultScriptSideImagePath}
-                          value={editingSideImageState.imagePath}
-                        />
-                        <button
-                          className="next-script-image-upload-button"
-                          disabled={isUploadingScriptImage}
-                          onClick={() => scriptImageFileInputRef.current?.click()}
-                          type="button"
-                        >
-                          {isUploadingScriptImage ? "Uploading" : "Upload"}
-                        </button>
-                        <input
-                          accept="image/png,image/jpeg,image/webp,image/gif"
-                          className="next-script-image-file-input"
-                          onChange={(event) => void uploadScriptImage(event)}
-                          ref={scriptImageFileInputRef}
-                          type="file"
-                        />
-                        {isScriptImagePickerOpen ? (
-                          <ImageLibraryPicker
-                            ariaLabel="Interface image options"
-                            classNames={{
-                              deleteButton:
-                                "next-script-image-delete-button",
-                              empty: "next-script-image-picker-empty",
-                              option: "next-script-image-option",
-                              optionMain: "next-script-image-option-main",
-                              picker: "next-script-image-picker",
-                            }}
-                            deletingPath={deletingScriptImagePath}
-                            emptyLabel="No images yet"
-                            isLoading={isLoadingScriptImages}
-                            onDelete={(path, label) =>
-                              void deleteUploadedScriptImage(path, label)
-                            }
-                            onSelect={selectScriptImage}
-                            options={scriptImagePickerOptions}
-                            selectedPath={editingSideImageState.imagePath}
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                    <label>
-                      <span>Scale</span>
-                      <input
-                        aria-label="Interface image scale"
-                        max={scriptSideImageScaleMax}
-                        min={scriptSideImageScaleMin}
-                        onChange={(event) =>
-                          replaceScriptActionMarker(
-                            editingScriptMarker,
-                            scriptSideImageArgsFromState({
-                              ...editingSideImageState,
-                              scale: normalizeScriptSideImageScale(
-                                event.target.value,
-                              ),
-                              scaleText: event.target.value,
-                            }),
-                          )
-                        }
-                        inputMode="decimal"
-                        step="0.05"
-                        type="text"
-                        value={editingSideImageState.scaleText}
-                      />
-                    </label>
-                  </>
-                ) : editingScriptMarker.type === "play_sound" ? (
-                  <>
-                    <label>
-                      <span>Sound</span>
-                      <select
-                        aria-label="Sound effect"
-                        onChange={(event) => {
-                          const currentVolume =
-                            editingScriptMarker.argList[1]?.trim() || "0.5";
-                          replaceScriptActionMarker(editingScriptMarker, [
-                            event.target.value === customSoundOptionValue
-                              ? editingScriptMarker.argList[0] || ""
-                              : event.target.value,
-                            currentVolume,
-                          ]);
-                        }}
-                        value={
-                          scriptSoundOptions.some(
-                            (option) =>
-                              option.path === editingScriptMarker.argList[0],
-                          )
-                            ? editingScriptMarker.argList[0]
-                            : customSoundOptionValue
-                        }
-                      >
-                        {scriptSoundOptions.map((option) => (
-                          <option key={option.path} value={option.path}>
-                            {option.label}
-                          </option>
-                        ))}
-                        <option value={customSoundOptionValue}>Custom</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>Volume</span>
-                      <input
-                        aria-label="Sound volume"
-                        max="1"
-                        min="0"
-                        onChange={(event) =>
-                          replaceScriptActionMarker(editingScriptMarker, [
-                            editingScriptMarker.argList[0] ||
-                              scriptSoundOptions[0].path,
-                            event.target.value,
-                          ])
-                        }
-                        step="0.05"
-                        type="number"
-                        value={editingScriptMarker.argList[1] ?? "0.5"}
-                      />
-                    </label>
-                    {!scriptSoundOptions.some(
-                      (option) =>
-                        option.path === editingScriptMarker.argList[0],
-                    ) ? (
-                      <label>
-                        <span>Path</span>
-                        <input
-                          aria-label="Custom sound path"
-                          onChange={(event) =>
-                            replaceScriptActionMarker(editingScriptMarker, [
-                              event.target.value,
-                              editingScriptMarker.argList[1] || "0.5",
-                            ])
-                          }
-                          value={editingScriptMarker.argList[0] ?? ""}
-                        />
-                      </label>
-                    ) : null}
-                  </>
-                ) : (
-                  <label>
-                    <span>Args</span>
-                    <input
-                      aria-label="Action arguments"
-                      onChange={(event) =>
-                        replaceScriptActionMarker(
-                          editingScriptMarker,
-                          event.target.value
-                            .split(",")
-                            .map((value) => value.trim())
-                            .filter(Boolean),
-                        )
-                      }
-                      value={editingScriptMarker.args}
-                    />
-                  </label>
-                )}
-              </div>
-            ) : null}
-          </div>,
-            document.body,
-          )
-        ) : null}
-        {scriptAudioMenu && typeof document !== "undefined" ? (
-          createPortal(
-            <div
-              aria-label="Audio options"
-              className="next-script-audio-menu"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              ref={scriptAudioMenuRef}
-              role="menu"
-              style={{ left: scriptAudioMenu.x, top: scriptAudioMenu.y }}
-            >
-              <button
-                disabled={activeScriptAudioRegenerateDisabled}
-                onClick={handleRegenerateScriptAudioMenuClick}
-                role="menuitem"
-                type="button"
-              >
-                {activeScriptAudioRegenerateDisabled
-                  ? "Regenerate unavailable"
-                  : "Regenerate audio"}
-              </button>
-            </div>,
-            document.body,
-          )
-        ) : null}
+        <NextScriptActionMenuPortal
+          deletingScriptImagePath={deletingScriptImagePath}
+          editingScriptMarker={editingScriptMarker}
+          editingSideImageState={editingSideImageState}
+          isLoadingScriptImages={isLoadingScriptImages}
+          isScriptImagePickerOpen={isScriptImagePickerOpen}
+          isUploadingScriptImage={isUploadingScriptImage}
+          menu={scriptActionMenu}
+          menuRef={scriptActionMenuRef}
+          onBeginDrag={beginScriptActionMenuDrag}
+          onDeleteImage={(path, label) =>
+            void deleteUploadedScriptImage(path, label)
+          }
+          onEndDrag={endScriptActionMenuDrag}
+          onInsertAction={insertScriptAction}
+          onMoveDrag={moveScriptActionMenuDrag}
+          onRemoveMarker={removeScriptActionMarker}
+          onReplaceMarker={replaceScriptActionMarker}
+          onSelectImage={selectScriptImage}
+          onUploadImage={(event) => void uploadScriptImage(event)}
+          scriptImageFileInputRef={scriptImageFileInputRef}
+          scriptImagePickerOptions={scriptImagePickerOptions}
+          setIsScriptImagePickerOpen={setIsScriptImagePickerOpen}
+        />
+        <NextScriptAudioMenuPortal
+          disabled={activeScriptAudioRegenerateDisabled}
+          menu={scriptAudioMenu}
+          menuRef={scriptAudioMenuRef}
+          onRegenerate={handleRegenerateScriptAudioMenuClick}
+        />
       </NextScriptWorkspace>
     ) : null;
 
