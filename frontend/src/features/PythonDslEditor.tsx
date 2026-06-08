@@ -16,6 +16,15 @@ import { basicSetup } from "codemirror";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
+import {
+  canSwapDslActionLine,
+  formatPythonDsl,
+  lineStartOffset,
+  parseButtonActionArgumentRanges,
+  parseDestinationArgumentRange,
+  type PythonDslButtonBooleanArgument,
+  type PythonDslButtonStringArgument,
+} from "./pythonDslEditorUtils";
 
 type PythonDslEditorProps = {
   activeScriptAction?: Pick<
@@ -46,22 +55,6 @@ type PythonDslChatAction = {
   lineNumber: number;
   source: string;
   to: number;
-};
-
-type PythonDslButtonStringArgument = {
-  from: number;
-  to: number;
-  value: string;
-  valueFrom: number;
-  valueTo: number;
-};
-
-type PythonDslButtonBooleanArgument = {
-  from: number;
-  to: number;
-  value: boolean;
-  valueFrom: number;
-  valueTo: number;
 };
 
 type PythonDslButtonAction = {
@@ -585,48 +578,6 @@ function eventTargetValue(event: PythonDslEventTarget) {
   return event.slug || event.id;
 }
 
-function isBlockStarter(line: string) {
-  return /:\s*(#.*)?$/.test(line) && !line.trimStart().startsWith("#");
-}
-
-function isDedentStarter(line: string) {
-  return /^(elif|else|except|finally)\b/.test(line);
-}
-
-function formatPythonDsl(source: string) {
-  const normalized = source.replace(/\t/g, indent).replace(/\r\n?/g, "\n");
-  const lines = normalized.split("\n");
-  const formatted: string[] = [];
-  let depth = 0;
-  let blankCount = 0;
-
-  for (const rawLine of lines) {
-    const trimmedRight = rawLine.replace(/[ \t]+$/g, "");
-    const trimmed = trimmedRight.trimStart();
-
-    if (!trimmed) {
-      blankCount += 1;
-      if (blankCount <= 1 && formatted.length) {
-        formatted.push("");
-      }
-      continue;
-    }
-
-    blankCount = 0;
-    if (isDedentStarter(trimmed)) {
-      depth = Math.max(0, depth - 1);
-    }
-
-    formatted.push(`${indent.repeat(depth)}${trimmed}`);
-
-    if (isBlockStarter(trimmed)) {
-      depth += 1;
-    }
-  }
-
-  return formatted.join("\n").trimEnd();
-}
-
 function formatView(view: EditorView) {
   const source = view.state.doc.toString();
   const formatted = formatPythonDsl(source);
@@ -1010,75 +961,6 @@ function scriptActionAtPosition(
   return null;
 }
 
-function parseDestinationArgumentRange(
-  source: string,
-  actionFrom: number,
-  allowPositional = true,
-) {
-  const destinationMatch =
-    /\b(?:destination|target|triggersEvent)\s*=\s*(["'])(.*?)\1/.exec(source);
-  if (destinationMatch) {
-    const quoteIndex = destinationMatch[0].indexOf(destinationMatch[1]);
-    const value = destinationMatch[2];
-    const valueFrom =
-      actionFrom + destinationMatch.index + quoteIndex + 1;
-    return {
-      from: actionFrom + destinationMatch.index,
-      to: actionFrom + destinationMatch.index + destinationMatch[0].length,
-      value,
-      valueFrom,
-      valueTo: valueFrom + value.length,
-    };
-  }
-
-  if (!allowPositional) return undefined;
-
-  const positionalDestinationMatch = /\(\s*(["'])(.*?)\1/.exec(source);
-  if (!positionalDestinationMatch) return undefined;
-
-  const quoteIndex = positionalDestinationMatch[0].indexOf(
-    positionalDestinationMatch[1],
-  );
-  const value = positionalDestinationMatch[2];
-  const valueFrom =
-    actionFrom + positionalDestinationMatch.index + quoteIndex + 1;
-  return {
-    from: actionFrom + positionalDestinationMatch.index,
-    to:
-      actionFrom +
-      positionalDestinationMatch.index +
-      positionalDestinationMatch[0].length,
-    value,
-    valueFrom,
-    valueTo: valueFrom + value.length,
-  };
-}
-
-function parseButtonActionArgumentRanges(
-  source: string,
-  actionFrom: number,
-) {
-  const destination = parseDestinationArgumentRange(source, actionFrom, false);
-
-  const iconMatch = /\bicon\s*=\s*(True|False|true|false)\b/.exec(source);
-  const icon = iconMatch
-    ? (() => {
-        const rawValue = iconMatch[1];
-        const valueOffset = iconMatch[0].lastIndexOf(rawValue);
-        const valueFrom = actionFrom + iconMatch.index + valueOffset;
-        return {
-          from: actionFrom + iconMatch.index,
-          to: actionFrom + iconMatch.index + iconMatch[0].length,
-          value: rawValue.toLowerCase() === "true",
-          valueFrom,
-          valueTo: valueFrom + rawValue.length,
-        };
-      })()
-    : undefined;
-
-  return { destination, icon };
-}
-
 function routeActionAtPosition(
   view: EditorView,
   position: number,
@@ -1224,48 +1106,6 @@ function toggleButtonIcon(view: EditorView, action: PythonDslButtonAction) {
     selection: { anchor: action.icon.valueFrom + statement.length },
   });
   view.focus();
-}
-
-function lineStartOffset(lines: string[], lineIndex: number) {
-  let offset = 0;
-  for (let index = 0; index < lineIndex; index += 1) {
-    offset += lines[index].length + 1;
-  }
-  return offset;
-}
-
-function leadingWhitespaceLength(line: string) {
-  return line.match(/^\s*/)?.[0].length ?? 0;
-}
-
-function lineStartsIndentedBlock(lines: string[], lineIndex: number) {
-  const line = lines[lineIndex] ?? "";
-  const trimmed = line.trim();
-  if (!trimmed.endsWith(":")) return false;
-
-  const indentation = leadingWhitespaceLength(line);
-  for (let index = lineIndex + 1; index < lines.length; index += 1) {
-    const nextLine = lines[index] ?? "";
-    if (!nextLine.trim()) continue;
-    return leadingWhitespaceLength(nextLine) > indentation;
-  }
-
-  return false;
-}
-
-function canSwapDslActionLine(
-  lines: string[],
-  currentIndex: number,
-  nextIndex: number,
-  direction: -1 | 1,
-) {
-  const currentLine = lines[currentIndex] ?? "";
-  const nextLine = lines[nextIndex] ?? "";
-  if (!nextLine.trim()) return true;
-  if (leadingWhitespaceLength(nextLine) !== leadingWhitespaceLength(currentLine)) {
-    return false;
-  }
-  return direction === -1 || !lineStartsIndentedBlock(lines, nextIndex);
 }
 
 function moveActiveDslActionLine(
