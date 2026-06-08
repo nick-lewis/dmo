@@ -2714,6 +2714,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   });
   const {
     generateScriptAudio,
+    isScriptAudioInventoryLoaded,
     loadScriptAudioItems,
     playScriptAudioPreview,
     playingScriptAudioId,
@@ -3370,6 +3371,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   ]);
 
   useEffect(() => {
+    if (!isScriptAudioInventoryLoaded) return;
+    if (!activeScriptAudioItem) return;
+
     if (
       (activeScriptDetailTab === "display" ||
         activeScriptDetailTab === "fine-tuning") &&
@@ -3377,7 +3381,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     ) {
       setActiveScriptDetailTab("audio");
     }
-  }, [activeScriptAudioReady, activeScriptDetailTab]);
+  }, [
+    activeScriptAudioItem,
+    activeScriptAudioReady,
+    activeScriptDetailTab,
+    isScriptAudioInventoryLoaded,
+  ]);
 
   useEffect(() => {
     saveDisplayTranscriptRef.current = saveScriptAudioDisplayTranscript;

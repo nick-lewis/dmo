@@ -19,6 +19,8 @@ export function useEditorScriptAudio({
   const [scriptAudioStatus, setScriptAudioStatus] = useState<
     "idle" | "loading" | "generating"
   >("idle");
+  const [scriptAudioLoadedExperienceId, setScriptAudioLoadedExperienceId] =
+    useState("");
   const [scriptAudioError, setScriptAudioError] = useState("");
   const [playingScriptAudioId, setPlayingScriptAudioId] = useState("");
   const [scriptAudioPlaybackRate, setScriptAudioPlaybackRate] = useState(1);
@@ -30,6 +32,9 @@ export function useEditorScriptAudio({
   ) {
     if (!targetExperienceId) return null;
 
+    setScriptAudioLoadedExperienceId((current) =>
+      current === targetExperienceId ? current : "",
+    );
     if (showLoading) {
       setScriptAudioStatus("loading");
     }
@@ -39,6 +44,7 @@ export function useEditorScriptAudio({
         `/api/experiences/${targetExperienceId}/script-audio/`,
       );
       setScriptAudioItems(payload.scripts);
+      setScriptAudioLoadedExperienceId(targetExperienceId);
       return payload;
     } catch (loadError) {
       setScriptAudioError(
@@ -74,6 +80,7 @@ export function useEditorScriptAudio({
         },
       );
       setScriptAudioItems(payload.scripts);
+      setScriptAudioLoadedExperienceId(experience.id);
       if (payload.errors?.length) {
         setScriptAudioError(payload.errors.join(" "));
       }
@@ -274,6 +281,8 @@ export function useEditorScriptAudio({
 
   return {
     generateScriptAudio,
+    isScriptAudioInventoryLoaded:
+      Boolean(experience?.id) && scriptAudioLoadedExperienceId === experience?.id,
     loadScriptAudioItems,
     playScriptAudioPreview,
     playingScriptAudioId,
