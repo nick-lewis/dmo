@@ -34,6 +34,7 @@ import {
   useAudioWaveform,
   useSeekableAudioUrl,
 } from "./useFineTuningAudio";
+import { useFineTuningTimelineState } from "./useFineTuningTimelineState";
 import {
   buildFineTuningTimelineLayout,
   normalizedWaveformWindow,
@@ -42,7 +43,6 @@ import {
   waveformPercentForTime as waveformPercentForTimeInWindow,
   type FineTuningTimelineLayer,
   type FineTuningTimelineVisibility,
-  type WaveformWindow,
 } from "./fineTuningTimelineLayout";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import {
@@ -59,77 +59,6 @@ import {
   scriptDisplayChunkSpecsFromValues,
   type ScriptDisplayChunkSpec,
 } from "./scriptDisplayTiming";
-
-type MarkerDragState = {
-  lastClientX: number;
-  markerIndex: number;
-  moved: boolean;
-  timeSeconds: number;
-};
-
-type DisplayCueDragState = {
-  cueIndex: number;
-  lastClientX: number;
-  moved: boolean;
-  timeSeconds: number;
-};
-
-type ActiveMarkerDrag = {
-  markerIndex: number;
-  timeSeconds: number;
-} | null;
-
-type ActiveDisplayCueDrag = {
-  cueIndex: number;
-  timeSeconds: number;
-} | null;
-
-type ScrubState = {
-  fineDrag: boolean;
-  lastClientX: number;
-  pointerId: number;
-  timeSeconds: number;
-};
-
-type MouseScrubState = {
-  fineDrag: boolean;
-  lastClientX: number;
-  timeSeconds: number;
-};
-
-type WaveformPanState = {
-  lastClientX: number;
-  moved: boolean;
-  pointerId: number;
-};
-
-type ManualSeekState = {
-  expiresAt: number;
-  timeSeconds: number;
-};
-
-type TimelineContextMenuState =
-  | {
-      index: number;
-      kind: "marker";
-      linkTargetIndex: number | null;
-      targetTimeSeconds: number;
-      x: number;
-      y: number;
-    }
-  | {
-      index: number;
-      kind: "display-cue";
-      targetTimeSeconds: number;
-      x: number;
-      y: number;
-    }
-  | {
-      kind: "insert";
-      targetTimeSeconds: number;
-      x: number;
-      y: number;
-    };
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
@@ -439,29 +368,9 @@ export function NextFineTuningPanel({
   const chatPreviewUserScrollIntentUntilRef = useRef(0);
   const timelineContextMenuRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
-  const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
-  const ignoreMarkerClickRef = useRef(false);
-  const ignoreWaveformContextMenuRef = useRef(false);
-  const ignoreWaveformClickRef = useRef(false);
-  const manualSeekRef = useRef<ManualSeekState | null>(null);
-  const markerDragRef = useRef<MarkerDragState | null>(null);
-  const mouseScrubRef = useRef<MouseScrubState | null>(null);
-  const scrubRef = useRef<ScrubState | null>(null);
-  const waveformPanRef = useRef<WaveformPanState | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [draggingDisplayCue, setDraggingDisplayCue] =
-    useState<ActiveDisplayCueDrag>(null);
-  const [draggingMarker, setDraggingMarker] = useState<ActiveMarkerDrag>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isPanningWaveform, setIsPanningWaveform] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(playbackRateFromStorage);
-  const [selectedDisplayCueIndex, setSelectedDisplayCueIndex] = useState<
-    number | null
-  >(null);
-  const [selectedMarkerIndex, setSelectedMarkerIndex] = useState<number | null>(
-    null,
-  );
   const [timelineVisibility, setTimelineVisibility] =
     useState<FineTuningTimelineVisibility>({
       actions: true,
@@ -470,12 +379,6 @@ export function NextFineTuningPanel({
     });
   const [draftDisplayCueOffsets, setDraftDisplayCueOffsets] =
     useState<number[]>(displayCueOffsets);
-  const [timelineContextMenu, setTimelineContextMenu] =
-    useState<TimelineContextMenuState | null>(null);
-  const [waveformWindow, setWaveformWindow] = useState<WaveformWindow>({
-    end: 1,
-    start: 0,
-  });
   const displayCueOffsetKey = displayCueOffsets.join("|");
   const [waveformBucketCount, setWaveformBucketCount] = useState(
     defaultWaveformBucketCount,
@@ -504,6 +407,52 @@ export function NextFineTuningPanel({
   const minimumWaveformWindowSpan = durationSeconds
     ? clamp(1 / durationSeconds, 0.04, 0.18)
     : 0.04;
+  const effectiveDisplayCueOffsets = draftDisplayCueOffsets.length
+    ? draftDisplayCueOffsets
+    : displayCueOffsets;
+  const displayChunks = scriptDisplayChunkSpecsFromValues({
+    displayBreaks,
+    displayCueOffsets: effectiveDisplayCueOffsets,
+    displaySlots,
+    durationSeconds,
+    messageId: audioItem?.id ?? "",
+    scriptWords: displayTimingWords,
+  });
+  const displayCueChunks = displayChunks.filter(
+    (chunk) => chunk.boundaryIndex >= 0,
+  );
+  const {
+    currentTime,
+    displayCueDragRef,
+    draggingDisplayCue,
+    draggingMarker,
+    ignoreMarkerClickRef,
+    ignoreWaveformClickRef,
+    ignoreWaveformContextMenuRef,
+    isPanningWaveform,
+    manualSeekRef,
+    markerDragRef,
+    mouseScrubRef,
+    scrubRef,
+    selectedDisplayCueIndex,
+    selectedMarkerIndex,
+    setCurrentTime,
+    setDraggingDisplayCue,
+    setDraggingMarker,
+    setIsPanningWaveform,
+    setSelectedDisplayCueIndex,
+    setSelectedMarkerIndex,
+    setTimelineContextMenu,
+    setWaveformWindow,
+    timelineContextMenu,
+    waveformPanRef,
+    waveformWindow,
+  } = useFineTuningTimelineState({
+    audioItemId: audioItem?.id,
+    displayCueCount: displayCueChunks.length,
+    markerCount: markers.length,
+    minimumWaveformWindowSpan,
+  });
   const visibleWaveformWindow = normalizedWaveformWindow(
     waveformWindow,
     minimumWaveformWindowSpan,
@@ -532,20 +481,6 @@ export function NextFineTuningPanel({
       (word) => visibleTime >= word.start && visibleTime <= word.end,
     )
       ?.word ?? "";
-  const effectiveDisplayCueOffsets = draftDisplayCueOffsets.length
-    ? draftDisplayCueOffsets
-    : displayCueOffsets;
-  const displayChunks = scriptDisplayChunkSpecsFromValues({
-    displayBreaks,
-    displayCueOffsets: effectiveDisplayCueOffsets,
-    displaySlots,
-    durationSeconds,
-    messageId: audioItem?.id ?? "",
-    scriptWords: displayTimingWords,
-  });
-  const displayCueChunks = displayChunks.filter(
-    (chunk) => chunk.boundaryIndex >= 0,
-  );
   const chatPreviewState = displayChunks.length
     ? scriptDisplayChunkStatesAt(
         displayChunks,
@@ -1964,40 +1899,6 @@ export function NextFineTuningPanel({
   useEffect(() => {
     setDraftDisplayCueOffsets(displayCueOffsets);
   }, [audioItem?.id, displayCueOffsetKey]);
-
-  useEffect(() => {
-    setCurrentTime(0);
-    setDraggingDisplayCue(null);
-    setDraggingMarker(null);
-    setSelectedDisplayCueIndex(null);
-    setSelectedMarkerIndex(null);
-    manualSeekRef.current = null;
-    displayCueDragRef.current = null;
-    markerDragRef.current = null;
-    mouseScrubRef.current = null;
-    scrubRef.current = null;
-    waveformPanRef.current = null;
-    setIsPanningWaveform(false);
-    setTimelineContextMenu(null);
-  }, [audioItem?.id]);
-
-  useEffect(() => {
-    setWaveformWindow((current) =>
-      normalizedWaveformWindow(current, minimumWaveformWindowSpan),
-    );
-  }, [minimumWaveformWindowSpan]);
-
-  useEffect(() => {
-    setSelectedMarkerIndex((current) =>
-      current !== null && current >= markers.length ? null : current,
-    );
-  }, [markers.length]);
-
-  useEffect(() => {
-    setSelectedDisplayCueIndex((current) =>
-      current !== null && current >= displayCueChunks.length ? null : current,
-    );
-  }, [displayCueChunks.length]);
 
   useEffect(() => {
     const element = waveformRef.current;
