@@ -4,7 +4,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,6 +33,7 @@ import {
   useAudioWaveform,
   useSeekableAudioUrl,
 } from "./useFineTuningAudio";
+import { useFloatingMenuLifecycle } from "./useFloatingMenuLifecycle";
 import { useFineTuningTimelineState } from "./useFineTuningTimelineState";
 import {
   buildFineTuningTimelineLayout,
@@ -1839,62 +1839,14 @@ export function NextFineTuningPanel({
     }
   }, [playbackRate]);
 
-  useEffect(() => {
-    if (!timelineContextMenu) return undefined;
-
-    function closeTimelineContextMenu(event: Event) {
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(".next-fine-context-menu")
-      ) {
-        return;
-      }
-      setTimelineContextMenu(null);
-    }
-
-    function closeTimelineContextMenuOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setTimelineContextMenu(null);
-    }
-
-    window.addEventListener("pointerdown", closeTimelineContextMenu);
-    window.addEventListener("keydown", closeTimelineContextMenuOnEscape);
-    window.addEventListener("resize", closeTimelineContextMenu);
-    return () => {
-      window.removeEventListener("pointerdown", closeTimelineContextMenu);
-      window.removeEventListener("keydown", closeTimelineContextMenuOnEscape);
-      window.removeEventListener("resize", closeTimelineContextMenu);
-    };
-  }, [timelineContextMenu]);
-
-  useLayoutEffect(() => {
-    if (!timelineContextMenu) return;
-
-    const menuElement = timelineContextMenuRef.current;
-    if (!menuElement) return;
-
-    const rect = menuElement.getBoundingClientRect();
-    const nextX = Math.max(
-      12,
-      Math.min(timelineContextMenu.x, window.innerWidth - rect.width - 12),
-    );
-    const nextY = Math.max(
-      12,
-      Math.min(timelineContextMenu.y, window.innerHeight - rect.height - 12),
-    );
-    if (nextX === timelineContextMenu.x && nextY === timelineContextMenu.y) {
-      return;
-    }
-    setTimelineContextMenu((current) =>
-      current
-        ? {
-            ...current,
-            x: Math.round(nextX),
-            y: Math.round(nextY),
-          }
-        : current,
-    );
-  }, [text, timelineContextMenu]);
+  useFloatingMenuLifecycle({
+    isOpen: Boolean(timelineContextMenu),
+    menuRef: timelineContextMenuRef,
+    onClose: () => setTimelineContextMenu(null),
+    position: timelineContextMenu,
+    setPosition: setTimelineContextMenu,
+    updateDependencies: [text],
+  });
 
   useEffect(() => {
     setDraftDisplayCueOffsets(displayCueOffsets);

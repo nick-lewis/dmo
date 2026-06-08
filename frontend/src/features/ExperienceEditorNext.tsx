@@ -112,6 +112,7 @@ import {
 } from "./ImageLibraryPicker";
 import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
+import { useFloatingMenuLifecycle } from "./useFloatingMenuLifecycle";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
 import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
 import {
@@ -2037,62 +2038,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     scriptActionMenu?.mode === "edit" ? scriptActionMenu.markerKey : "",
   ]);
 
-  useLayoutEffect(() => {
-    if (!scriptActionMenu) return;
-
-    const menuElement = scriptActionMenuRef.current;
-    if (!menuElement) return;
-
-    const rect = menuElement.getBoundingClientRect();
-    const nextPosition = clampFloatingMenuPosition(
-      scriptActionMenu.x,
-      scriptActionMenu.y,
-      rect.width,
-      rect.height,
-    );
-
-    if (
-      nextPosition.x === scriptActionMenu.x &&
-      nextPosition.y === scriptActionMenu.y
-    ) {
-      return;
-    }
-
-    setScriptActionMenu((current) =>
-      current
-        ? {
-            ...current,
-            ...nextPosition,
-          }
-        : current,
-    );
-  }, [
-    isLoadingScriptImages,
-    isScriptImagePickerOpen,
-    scriptActionMenu,
-    scriptImageOptions.length,
-  ]);
-
-  useEffect(() => {
-    if (!scriptActionMenu) return;
-
-    function closeIfOutside(event: PointerEvent) {
-      const target = event.target as Node | null;
-      if (target && scriptActionMenuRef.current?.contains(target)) return;
-      setScriptActionMenu(null);
-    }
-
-    function closeOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setScriptActionMenu(null);
-    }
-
-    document.addEventListener("pointerdown", closeIfOutside, true);
-    document.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      document.removeEventListener("pointerdown", closeIfOutside, true);
-      document.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [scriptActionMenu]);
+  useFloatingMenuLifecycle({
+    isOpen: Boolean(scriptActionMenu),
+    menuRef: scriptActionMenuRef,
+    onClose: () => setScriptActionMenu(null),
+    position: scriptActionMenu,
+    setPosition: setScriptActionMenu,
+    updateDependencies: [
+      isLoadingScriptImages,
+      isScriptImagePickerOpen,
+      scriptImageOptions.length,
+    ],
+  });
 
   useEffect(() => {
     if (!scriptActionMenu) return;
@@ -2123,48 +2080,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     };
   }, [scriptActionMenu]);
 
-  useLayoutEffect(() => {
-    if (!scriptAudioMenu) return;
-
-    const menuElement = scriptAudioMenuRef.current;
-    if (!menuElement) return;
-
-    const rect = menuElement.getBoundingClientRect();
-    const nextPosition = clampFloatingMenuPosition(
-      scriptAudioMenu.x,
-      scriptAudioMenu.y,
-      rect.width,
-      rect.height,
-    );
-    if (
-      nextPosition.x === scriptAudioMenu.x &&
-      nextPosition.y === scriptAudioMenu.y
-    ) {
-      return;
-    }
-    setScriptAudioMenu(nextPosition);
-  }, [scriptAudioMenu]);
-
-  useEffect(() => {
-    if (!scriptAudioMenu) return;
-
-    function closeIfOutside(event: PointerEvent) {
-      const target = event.target as Node | null;
-      if (target && scriptAudioMenuRef.current?.contains(target)) return;
-      setScriptAudioMenu(null);
-    }
-
-    function closeOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setScriptAudioMenu(null);
-    }
-
-    document.addEventListener("pointerdown", closeIfOutside, true);
-    document.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      document.removeEventListener("pointerdown", closeIfOutside, true);
-      document.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [scriptAudioMenu]);
+  useFloatingMenuLifecycle({
+    isOpen: Boolean(scriptAudioMenu),
+    menuRef: scriptAudioMenuRef,
+    onClose: () => setScriptAudioMenu(null),
+    position: scriptAudioMenu,
+    setPosition: setScriptAudioMenu,
+  });
 
   function resolveScriptSlidePreview(
     deckUrl: string,
