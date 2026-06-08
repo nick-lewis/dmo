@@ -26,6 +26,11 @@ Useful shorter runs:
 .\scripts\dmo-check.ps1 -SkipBackendTests
 ```
 
+For frontend refactors that touch the new editor, also run the focused
+[New Editor Browser Smoke](./next-editor-browser-smoke.md). It covers hard
+refresh state restore for `event`, `script`, and `tab`, plus the Fine Tuning
+panel render path that TypeScript and pure tests cannot exercise alone.
+
 ## Postgres Notes
 
 Docker Postgres is the source of truth for local verification. Check it with:
