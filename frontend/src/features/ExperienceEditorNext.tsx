@@ -156,36 +156,13 @@ import {
   readScriptTextAudioRevealSpeed,
   writeScriptTextAudioRevealSpeed,
 } from "./useScriptAudioPlayback";
+import { useNextEditorAutosaveTimers } from "./useNextEditorAutosaveTimers";
 
 const PythonDslEditor = lazy(() =>
   import("./PythonDslEditor").then((module) => ({
     default: module.PythonDslEditor,
   })),
 );
-
-type PendingEventAutosave = {
-  chatInstructions: string;
-  description: string;
-  eventId: string;
-  title: string;
-};
-
-type PendingOnEntryAutosave = {
-  eventId: string;
-  source: string;
-};
-
-type PendingConversationAutosave = {
-  eventId: string;
-  source: string;
-};
-
-type PendingScriptTextAutosave = {
-  deckUrl?: string;
-  eventId: string;
-  stepId: string;
-  text?: string;
-};
 
 type PendingScriptDisplayDraft = {
   displayBreaks: number[];
@@ -372,16 +349,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     useState(false);
   const [audioVoiceInstructionsDraft, setAudioVoiceInstructionsDraft] =
     useState("");
-  const eventAutosaveTimerRef = useRef<number | null>(null);
-  const onEntryAutosaveTimerRef = useRef<number | null>(null);
-  const conversationAutosaveTimerRef = useRef<number | null>(null);
-  const scriptTextAutosaveTimerRef = useRef<number | null>(null);
-  const pendingEventAutosaveRef = useRef<PendingEventAutosave | null>(null);
-  const pendingOnEntryAutosaveRef = useRef<PendingOnEntryAutosave | null>(null);
-  const pendingConversationAutosaveRef =
-    useRef<PendingConversationAutosave | null>(null);
-  const pendingScriptTextAutosaveRef =
-    useRef<PendingScriptTextAutosave | null>(null);
   const pendingScriptDisplayDraftsRef = useRef<
     Record<string, PendingScriptDisplayDraft>
   >({});
@@ -404,6 +371,27 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   );
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const scriptImageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const {
+    clearConversationAutosaveTimer,
+    clearEventAutosaveTimer,
+    clearNextEditorAutosaveTimers,
+    clearOnEntryAutosaveTimer,
+    clearScriptTextAutosaveTimer,
+    pendingConversationAutosaveRef,
+    pendingEventAutosaveRef,
+    pendingOnEntryAutosaveRef,
+    pendingScriptTextAutosaveRef,
+    scheduleConversationAutosave,
+    scheduleEventAutosave,
+    scheduleOnEntryAutosave,
+    scheduleScriptTextAutosave,
+  } = useNextEditorAutosaveTimers({
+    delayMs: experienceAutosaveDelayMs,
+    flushConversationAutosave,
+    flushEventAutosave,
+    flushOnEntryAutosave,
+    flushScriptTextAutosave,
+  });
 
   const {
     clearOverviewAutosaveTimer,
@@ -781,10 +769,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     return () => {
       isCancelled = true;
-      clearEventAutosaveTimer();
-      clearOnEntryAutosaveTimer();
-      clearConversationAutosaveTimer();
-      clearScriptTextAutosaveTimer();
+      clearNextEditorAutosaveTimers();
       clearOverviewAutosaveTimer();
       clearTutorAutosaveTimer();
     };
@@ -1156,34 +1141,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       Number.isFinite(parsedSpeed) ? parsedSpeed : scriptTextRevealSpeed,
     );
     setScriptTextRevealSpeedDraft(String(nextSpeed));
-  }
-
-  function clearEventAutosaveTimer() {
-    if (!eventAutosaveTimerRef.current) return;
-
-    window.clearTimeout(eventAutosaveTimerRef.current);
-    eventAutosaveTimerRef.current = null;
-  }
-
-  function clearOnEntryAutosaveTimer() {
-    if (!onEntryAutosaveTimerRef.current) return;
-
-    window.clearTimeout(onEntryAutosaveTimerRef.current);
-    onEntryAutosaveTimerRef.current = null;
-  }
-
-  function clearConversationAutosaveTimer() {
-    if (!conversationAutosaveTimerRef.current) return;
-
-    window.clearTimeout(conversationAutosaveTimerRef.current);
-    conversationAutosaveTimerRef.current = null;
-  }
-
-  function clearScriptTextAutosaveTimer() {
-    if (!scriptTextAutosaveTimerRef.current) return;
-
-    window.clearTimeout(scriptTextAutosaveTimerRef.current);
-    scriptTextAutosaveTimerRef.current = null;
   }
 
   async function flushEventAutosave() {
@@ -1653,10 +1610,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       });
     });
 
-    clearEventAutosaveTimer();
-    eventAutosaveTimerRef.current = window.setTimeout(() => {
-      void flushEventAutosave();
-    }, experienceAutosaveDelayMs);
+    scheduleEventAutosave();
   }
 
   function updateSelectedEventOnEntryDraft(value: string) {
@@ -1669,10 +1623,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }));
     pendingOnEntryAutosaveRef.current = { eventId, source: value };
 
-    clearOnEntryAutosaveTimer();
-    onEntryAutosaveTimerRef.current = window.setTimeout(() => {
-      void flushOnEntryAutosave();
-    }, experienceAutosaveDelayMs);
+    scheduleOnEntryAutosave();
   }
 
   function updateSelectedEventConversationDraft(value: string) {
@@ -1703,10 +1654,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       });
     });
 
-    clearConversationAutosaveTimer();
-    conversationAutosaveTimerRef.current = window.setTimeout(() => {
-      void flushConversationAutosave();
-    }, experienceAutosaveDelayMs);
+    scheduleConversationAutosave();
   }
 
   function openSelectedEventScriptAction(action: PythonDslScriptAction) {
@@ -1788,10 +1736,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
     });
 
-    clearScriptTextAutosaveTimer();
-    scriptTextAutosaveTimerRef.current = window.setTimeout(() => {
-      void flushScriptTextAutosave();
-    }, experienceAutosaveDelayMs);
+    scheduleScriptTextAutosave();
   }
 
   function updateActiveScriptDeckUrl(value: string) {
@@ -1832,10 +1777,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
     });
 
-    clearScriptTextAutosaveTimer();
-    scriptTextAutosaveTimerRef.current = window.setTimeout(() => {
-      void flushScriptTextAutosave();
-    }, experienceAutosaveDelayMs);
+    scheduleScriptTextAutosave();
   }
 
   function focusActiveScriptText(value: string) {
