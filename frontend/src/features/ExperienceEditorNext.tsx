@@ -34,14 +34,6 @@ import {
   writeSelectedExperienceId,
 } from "../persistence";
 import {
-  type RealtimeModelId,
-  type RealtimeVoiceId,
-  classificationModelOptions,
-  isRealtimeVoiceSupported,
-  realtimeModelOptions,
-  realtimeVoiceOptionsForModel,
-} from "../realtime";
-import {
   defaultChoiceIconBackground,
   resizeTextareaToContent,
 } from "../uiHelpers";
@@ -66,7 +58,6 @@ import {
 import type {
   ApiUser,
   CheckpointRecordingMode,
-  ClassificationModelId,
   EventActionStep,
   EventConversationChoice,
   Experience,
@@ -119,6 +110,7 @@ import {
   ImageLibraryPicker,
   type ImageLibraryOption,
 } from "./ImageLibraryPicker";
+import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
 import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
@@ -137,8 +129,6 @@ import {
   writeScriptTextAudioRevealSpeed,
 } from "./useScriptAudioPlayback";
 
-const tutorVoiceTextareaMinHeightPx = 36;
-const tutorVoiceTextareaMaxHeightPx = 160;
 const PythonDslEditor = lazy(() =>
   import("./PythonDslEditor").then((module) => ({
     default: module.PythonDslEditor,
@@ -1591,12 +1581,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const selectedEventChatInstructionsRef = useRef<HTMLTextAreaElement | null>(
     null,
   );
-  const overviewDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const scriptImageFileInputRef = useRef<HTMLInputElement | null>(null);
-  const tutorAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
-  const tutorPresenceRef = useRef<HTMLDivElement | null>(null);
-  const tutorVoiceInstructionsRef = useRef<HTMLTextAreaElement | null>(null);
 
   const {
     clearOverviewAutosaveTimer,
@@ -1982,10 +1968,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       clearTutorAutosaveTimer();
     };
   }, [experienceId]);
-
-  useEffect(() => {
-    resizeTextareaToContent(overviewDescriptionRef.current);
-  }, [experienceForm.description]);
 
   useEffect(() => {
     resizeTextareaToContent(selectedEventDescriptionRef.current);
@@ -2409,85 +2391,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     displaySlotDrafts,
     savingDisplayTextId,
   ]);
-
-  useEffect(() => {
-    if (!isTutorSettingsOpen) return;
-
-    resizeTextareaToContent(tutorVoiceInstructionsRef.current, {
-      maxHeight: tutorVoiceTextareaMaxHeightPx,
-      minHeight: tutorVoiceTextareaMinHeightPx,
-    });
-  }, [isTutorSettingsOpen, tutorForm.voiceInstructions]);
-
-  useEffect(() => {
-    if (!isTutorSettingsOpen) return;
-
-    function closeIfOutsideTarget(target: EventTarget | null) {
-      const node = target as Node | null;
-      if (node && tutorPresenceRef.current?.contains(node)) return;
-
-      setIsTutorSettingsOpen(false);
-      void flushTutorAutosave();
-    }
-
-    function closeIfOutsidePointer(event: PointerEvent) {
-      closeIfOutsideTarget(event.target);
-    }
-
-    function closeIfOutsideContextMenu(event: MouseEvent) {
-      const target = event.target as Node | null;
-      if (target && tutorPresenceRef.current?.contains(target)) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      setIsTutorSettingsOpen(false);
-      void flushTutorAutosave();
-    }
-
-    document.addEventListener("pointerdown", closeIfOutsidePointer, true);
-    document.addEventListener("contextmenu", closeIfOutsideContextMenu, true);
-    return () => {
-      document.removeEventListener("pointerdown", closeIfOutsidePointer, true);
-      document.removeEventListener(
-        "contextmenu",
-        closeIfOutsideContextMenu,
-        true,
-      );
-    };
-  }, [flushTutorAutosave, isTutorSettingsOpen]);
-
-  useEffect(() => {
-    if (isTutorSettingsOpen) return;
-    setIsTutorAvatarPickerOpen(false);
-  }, [isTutorSettingsOpen]);
-
-  const voiceOptions = realtimeVoiceOptionsForModel(tutorForm.realtimeModel);
-  const activeVoice = isRealtimeVoiceSupported(
-    tutorForm.realtimeModel,
-    tutorForm.voice,
-  )
-    ? tutorForm.voice
-    : (voiceOptions[0]?.id ?? tutorForm.voice);
-  const classificationChoices = classificationModelOptions.some(
-    (option) => option.id === tutorForm.classificationModel,
-  )
-    ? classificationModelOptions
-    : [
-        {
-          id: tutorForm.classificationModel,
-          label: tutorForm.classificationModel,
-        },
-        ...classificationModelOptions,
-      ];
-  const sampleActionLabel =
-    voiceSampleStatus === "playing"
-      ? "Stop voice sample"
-      : voiceSampleStatus === "loading"
-        ? "Loading voice sample"
-        : "Play voice sample";
-  const tutorAvatarUploadLabel = isUploadingTutorAvatar
-    ? "Uploading tutor image"
-    : "Upload tutor image";
 
   function saveScriptTextRevealSpeed(value: number) {
     const nextSpeed = clampScriptTextAudioRevealSpeed(value);
@@ -4959,247 +4862,34 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         ) : null}
 
         {experience ? (
-          <section className="next-editor-overview-section">
-            <div className="next-overview-editor">
-              <div className="overview-editor">
-                <input
-                  aria-label="Experience title"
-                  className="overview-title-text"
-                  onChange={(event) =>
-                    updateOverviewDraft("title", event.target.value)
-                  }
-                  type="text"
-                  value={experienceForm.title}
-                />
-                <textarea
-                  aria-label="Experience description"
-                  className="overview-description-text"
-                  onChange={(event) =>
-                    updateOverviewDraft("description", event.target.value)
-                  }
-                  onInput={(event) => resizeTextareaToContent(event.currentTarget)}
-                  placeholder="---"
-                  ref={overviewDescriptionRef}
-                  rows={1}
-                  value={experienceForm.description}
-                />
-              </div>
-            </div>
-            <div
-              className="next-tutor-presence"
-              ref={tutorPresenceRef}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setIsTutorSettingsOpen(false);
-                  void flushTutorAutosave();
-                }
-              }}
-            >
-              <div
-                className="next-tutor-avatar-wrap"
-                data-settings-open={isTutorSettingsOpen ? "true" : "false"}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setIsTutorSettingsOpen(true);
-                }}
-              >
-                <img
-                  alt=""
-                  className="next-tutor-avatar"
-                  src={publicAsset(tutorForm.avatarPath)}
-                />
-                <button
-                  aria-label={sampleActionLabel}
-                  className="next-tutor-play-button"
-                  disabled={voiceSampleStatus === "loading"}
-                  onClick={() => void playVoiceSample()}
-                  title={sampleActionLabel}
-                  type="button"
-                >
-                  <MicIcon />
-                </button>
-                <button
-                  aria-label="Tutor settings"
-                  aria-expanded={isTutorSettingsOpen}
-                  className="next-tutor-settings-button"
-                  onClick={() => setIsTutorSettingsOpen((isOpen) => !isOpen)}
-                  title="Tutor settings"
-                  type="button"
-                >
-                  <SettingsIcon />
-                </button>
-              </div>
-              {isTutorSettingsOpen ? (
-                <div
-                  aria-label="Tutor settings"
-                  className="next-tutor-settings-menu"
-                >
-                  <div className="next-tutor-avatar-options">
-                    <span>Image</span>
-                    <div className="next-tutor-avatar-control">
-                      <button
-                        aria-expanded={isTutorAvatarPickerOpen}
-                        aria-label="Choose tutor image"
-                        className="next-tutor-avatar-preview-button"
-                        onClick={() => {
-                          setIsTutorAvatarPickerOpen((isOpen) => !isOpen);
-                          if (
-                            !isTutorAvatarPickerOpen &&
-                            !scriptImageOptions.length &&
-                            !isLoadingScriptImages &&
-                            experience
-                          ) {
-                            void loadScriptImages(experience.id);
-                          }
-                        }}
-                        title="Choose tutor image"
-                        type="button"
-                      >
-                        <img alt="" src={publicAsset(tutorForm.avatarPath)} />
-                      </button>
-                      <button
-                        className="next-tutor-avatar-upload-button"
-                        disabled={isUploadingTutorAvatar}
-                        onClick={() => tutorAvatarFileInputRef.current?.click()}
-                        title={tutorAvatarUploadLabel}
-                        type="button"
-                      >
-                        {isUploadingTutorAvatar ? "Uploading" : "Upload"}
-                      </button>
-                      {isTutorAvatarPickerOpen ? (
-                        <ImageLibraryPicker
-                          ariaLabel="Tutor image options"
-                          classNames={{
-                            deleteButton: "next-tutor-avatar-delete-button",
-                            empty: "next-tutor-avatar-picker-empty",
-                            option: "next-tutor-avatar-option",
-                            optionMain: "next-tutor-avatar-option-main",
-                            picker: "next-tutor-avatar-picker",
-                          }}
-                          deletingPath={deletingScriptImagePath}
-                          emptyLabel="No images yet"
-                          isLoading={isLoadingScriptImages}
-                          onDelete={(path, label) =>
-                            void deleteUploadedScriptImage(path, label)
-                          }
-                          onSelect={selectTutorAvatar}
-                          options={tutorAvatarPickerOptions}
-                          selectedPath={tutorForm.avatarPath}
-                        />
-                      ) : null}
-                    </div>
-                    <input
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      className="next-tutor-avatar-file-input"
-                      onChange={(event) => void uploadTutorAvatar(event)}
-                      ref={tutorAvatarFileInputRef}
-                      type="file"
-                    />
-                  </div>
-                  <label className="control-field">
-                    <span>Name</span>
-                    <input
-                      onChange={(event) =>
-                        updateTutorDraft("assistantName", event.target.value)
-                      }
-                      type="text"
-                      value={tutorForm.assistantName}
-                    />
-                  </label>
-                  <label className="control-field">
-                    <span>Voice</span>
-                    <select
-                      onChange={(event) =>
-                        updateTutorDraft(
-                          "voice",
-                          event.target.value as RealtimeVoiceId,
-                        )
-                      }
-                      value={activeVoice}
-                    >
-                      {voiceOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label
-                    className="control-field next-tutor-speed-field"
-                    title="Speed of pseudo generation of pre-generated scripts."
-                  >
-                    <span>Text reveal speed</span>
-                    <input
-                      aria-label="Text reveal speed"
-                      max="4"
-                      min="0.7"
-                      onChange={(event) =>
-                        changeScriptTextRevealSpeed(event.target.value)
-                      }
-                      onBlur={normalizeScriptTextRevealSpeedDraft}
-                      step="0.05"
-                      type="number"
-                      value={scriptTextRevealSpeedDraft}
-                    />
-                  </label>
-                  <label className="control-field">
-                    <span>Chat model</span>
-                    <select
-                      onChange={(event) =>
-                        updateTutorModelDraft(
-                          event.target.value as RealtimeModelId,
-                        )
-                      }
-                      value={tutorForm.realtimeModel}
-                    >
-                      {realtimeModelOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="control-field">
-                    <span>Classification model</span>
-                    <select
-                      onChange={(event) =>
-                        updateTutorDraft(
-                          "classificationModel",
-                          event.target.value as ClassificationModelId,
-                        )
-                      }
-                      value={tutorForm.classificationModel}
-                    >
-                      {classificationChoices.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="control-field">
-                    <span>Personality and tone</span>
-                    <textarea
-                      className="prompt-textarea compact"
-                      onChange={(event) => {
-                        resizeTextareaToContent(event.currentTarget, {
-                          maxHeight: tutorVoiceTextareaMaxHeightPx,
-                          minHeight: tutorVoiceTextareaMinHeightPx,
-                        });
-                        updateTutorDraft(
-                          "voiceInstructions",
-                          event.target.value,
-                        );
-                      }}
-                      ref={tutorVoiceInstructionsRef}
-                      rows={1}
-                      value={tutorForm.voiceInstructions}
-                    />
-                  </label>
-                </div>
-              ) : null}
-            </div>
-          </section>
+          <NextEditorOverviewHeader
+            deletingScriptImagePath={deletingScriptImagePath}
+            experienceForm={experienceForm}
+            isLoadingScriptImages={isLoadingScriptImages}
+            isTutorAvatarPickerOpen={isTutorAvatarPickerOpen}
+            isTutorSettingsOpen={isTutorSettingsOpen}
+            isUploadingTutorAvatar={isUploadingTutorAvatar}
+            onDeleteUploadedImage={(path, label) =>
+              void deleteUploadedScriptImage(path, label)
+            }
+            onFlushTutorAutosave={flushTutorAutosave}
+            onLoadScriptImages={() => void loadScriptImages(experience.id)}
+            onPlayVoiceSample={playVoiceSample}
+            onScriptTextRevealSpeedBlur={normalizeScriptTextRevealSpeedDraft}
+            onScriptTextRevealSpeedChange={changeScriptTextRevealSpeed}
+            onSelectTutorAvatar={selectTutorAvatar}
+            onTutorAvatarUpload={(event) => void uploadTutorAvatar(event)}
+            onTutorDraftChange={updateTutorDraft}
+            onTutorModelDraftChange={updateTutorModelDraft}
+            onUpdateOverviewDraft={updateOverviewDraft}
+            scriptImageOptions={scriptImageOptions}
+            scriptTextRevealSpeedDraft={scriptTextRevealSpeedDraft}
+            setIsTutorAvatarPickerOpen={setIsTutorAvatarPickerOpen}
+            setIsTutorSettingsOpen={setIsTutorSettingsOpen}
+            tutorAvatarPickerOptions={tutorAvatarPickerOptions}
+            tutorForm={tutorForm}
+            voiceSampleStatus={voiceSampleStatus}
+          />
         ) : null}
 
         {experience ? (
