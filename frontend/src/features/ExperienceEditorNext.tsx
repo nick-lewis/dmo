@@ -5536,6 +5536,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             displaySlots={activeDisplaySlots}
             canRefreshSlides={canRefreshActiveScriptSlides}
             isRefreshingSlides={isRefreshingScriptSlides}
+            onBeforePlaybackStart={stopScriptAudioPreview}
             onDisplayCueOffsetsChange={(offsets) =>
               void updateActiveDisplayCueOffsets(offsets)
             }

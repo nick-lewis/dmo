@@ -147,6 +147,7 @@ type FineTuningPanelProps = {
   displayCueOffsets: number[];
   displaySlots: string[];
   isRefreshingSlides: boolean;
+  onBeforePlaybackStart: () => void;
   onDisplayCueOffsetsChange: (offsets: number[]) => void;
   onMarkedTextChange: (value: string) => void;
   onRefreshSlides: () => void;
@@ -557,6 +558,7 @@ export function NextFineTuningPanel({
   displayCueOffsets,
   displaySlots,
   isRefreshingSlides,
+  onBeforePlaybackStart,
   onDisplayCueOffsetsChange,
   onMarkedTextChange,
   onRefreshSlides,
@@ -1010,6 +1012,7 @@ export function NextFineTuningPanel({
 
     audio.playbackRate = playbackRate;
     if (audio.paused) {
+      onBeforePlaybackStart();
       void audio.play().catch(() => setIsPlaying(false));
       return;
     }
