@@ -223,6 +223,11 @@ type ScriptActionMenuState =
       y: number;
     };
 
+type ScriptAudioMenuState = {
+  x: number;
+  y: number;
+};
+
 type ScriptActionViewMarker = ScriptMarkerInstance & {
   sourceMarker: ScriptMarkerInstance;
 };
@@ -2630,6 +2635,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [runningEventId, setRunningEventId] = useState("");
   const [scriptActionMenu, setScriptActionMenu] =
     useState<ScriptActionMenuState | null>(null);
+  const [scriptAudioMenu, setScriptAudioMenu] =
+    useState<ScriptAudioMenuState | null>(null);
   const [scriptImageOptions, setScriptImageOptions] = useState<
     ScriptImageOption[]
   >([]);
@@ -2675,6 +2682,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const scriptActionUndoStackRef = useRef<string[]>([]);
   const scriptActionMenuDragRef = useRef<ScriptActionMenuDragState | null>(null);
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const scriptAudioMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
   const audioScriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const audioVoiceInstructionsRef = useRef<HTMLInputElement | null>(null);
@@ -3232,6 +3240,49 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       window.removeEventListener("pointercancel", stopDragging);
     };
   }, [scriptActionMenu]);
+
+  useLayoutEffect(() => {
+    if (!scriptAudioMenu) return;
+
+    const menuElement = scriptAudioMenuRef.current;
+    if (!menuElement) return;
+
+    const rect = menuElement.getBoundingClientRect();
+    const nextPosition = clampFloatingMenuPosition(
+      scriptAudioMenu.x,
+      scriptAudioMenu.y,
+      rect.width,
+      rect.height,
+    );
+    if (
+      nextPosition.x === scriptAudioMenu.x &&
+      nextPosition.y === scriptAudioMenu.y
+    ) {
+      return;
+    }
+    setScriptAudioMenu(nextPosition);
+  }, [scriptAudioMenu]);
+
+  useEffect(() => {
+    if (!scriptAudioMenu) return;
+
+    function closeIfOutside(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (target && scriptAudioMenuRef.current?.contains(target)) return;
+      setScriptAudioMenu(null);
+    }
+
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setScriptAudioMenu(null);
+    }
+
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [scriptAudioMenu]);
 
   function resolveScriptSlidePreview(
     deckUrl: string,
@@ -4646,11 +4697,20 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
-  async function regenerateActiveScriptAudio(
-    event: ReactMouseEvent<HTMLButtonElement>,
-  ) {
+  function openScriptAudioMenu(event: ReactMouseEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
+
+    if (!activeScriptAudioItem) return;
+
+    setScriptActionMenu(null);
+    setScriptAudioMenu(
+      clampFloatingMenuPosition(event.clientX, event.clientY, 220, 48),
+    );
+  }
+
+  async function regenerateActiveScriptAudio() {
+    setScriptAudioMenu(null);
 
     const item = activeScriptAudioItem;
     if (!item || !item.canGenerate || scriptAudioStatus === "generating") return;
@@ -4663,6 +4723,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (payload?.errors?.length) {
       setError(payload.errors.join(" "));
     }
+  }
+
+  function handleRegenerateScriptAudioMenuClick(
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    void regenerateActiveScriptAudio();
   }
 
   async function generateMissingAudioBeforeRun() {
@@ -5203,6 +5271,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     !activeScriptAudioItem ||
     scriptAudioStatus === "generating" ||
     (!activeScriptAudioItem.audioUrl && !activeScriptAudioItem.canGenerate);
+  const activeScriptAudioRegenerateDisabled =
+    !activeScriptAudioItem ||
+    !activeScriptAudioItem.canGenerate ||
+    scriptAudioStatus === "generating";
   const activeScriptAudioPreviewLabel = isActiveScriptAudioPlaying
     ? "Stop audio script preview"
     : activeScriptAudioItem?.audioUrl
@@ -5278,8 +5350,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               .join(" ")}
             disabled={activeScriptAudioPreviewDisabled}
             onClick={() => void playOrGenerateActiveScriptAudio()}
-            onContextMenu={(event) => void regenerateActiveScriptAudio(event)}
-            title={`${activeScriptAudioPreviewLabel}. Right-click to regenerate.`}
+            onContextMenu={openScriptAudioMenu}
+            title={`${activeScriptAudioPreviewLabel}. Right-click for audio options.`}
             type="button"
           >
             {isActiveScriptAudioPlaying ? <StopIcon /> : <MicIcon />}
@@ -5293,7 +5365,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               aria-selected={activeScriptDetailTab === "audio" ? "true" : "false"}
               className={activeScriptDetailTab === "audio" ? "is-active" : ""}
               onClick={() => setActiveScriptDetailTab("audio")}
+              onContextMenu={openScriptAudioMenu}
               role="tab"
+              title="Right-click for audio options."
               type="button"
             >
               Audio
@@ -5799,6 +5873,37 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
               </div>
             ) : null}
           </div>,
+            document.body,
+          )
+        ) : null}
+        {scriptAudioMenu && typeof document !== "undefined" ? (
+          createPortal(
+            <div
+              aria-label="Audio options"
+              className="next-script-audio-menu"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              ref={scriptAudioMenuRef}
+              role="menu"
+              style={{ left: scriptAudioMenu.x, top: scriptAudioMenu.y }}
+            >
+              <button
+                disabled={activeScriptAudioRegenerateDisabled}
+                onClick={handleRegenerateScriptAudioMenuClick}
+                role="menuitem"
+                type="button"
+              >
+                {activeScriptAudioRegenerateDisabled
+                  ? "Regenerate unavailable"
+                  : "Regenerate audio"}
+              </button>
+            </div>,
             document.body,
           )
         ) : null}

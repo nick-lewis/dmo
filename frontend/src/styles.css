@@ -1723,6 +1723,50 @@ button {
   outline: 0;
 }
 
+.next-script-audio-menu {
+  --page-ink: #1f2529;
+  --muted-ink: #6c7478;
+  --panel-bg-strong: #ffffff;
+  --panel-border: rgba(35, 123, 148, 0.2);
+  --accent-2: #237b94;
+  --accent-2-soft: #e3f1f4;
+  position: fixed;
+  z-index: 7100;
+  display: grid;
+  gap: 4px;
+  width: min(220px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 7px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(31, 41, 55, 0.14);
+}
+
+.next-script-audio-menu button {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
+  background: transparent;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 780;
+}
+
+.next-script-audio-menu button:hover:not(:disabled),
+.next-script-audio-menu button:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
+  outline: 0;
+}
+
+.next-script-audio-menu button:disabled {
+  color: color-mix(in srgb, var(--muted-ink) 72%, transparent);
+  cursor: default;
+  opacity: 0.62;
+}
+
 .next-audio-script-panel {
   display: grid;
   grid-template-rows: auto 0 minmax(0, 1fr);
