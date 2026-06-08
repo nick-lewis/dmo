@@ -55,7 +55,7 @@ function resolveLocalModule(fromFile, specifier) {
 
 function outputFileFor(sourceFile) {
   const relativePath = path.relative(rootDir, sourceFile);
-  return path.join(outDir, relativePath).replace(/\.(tsx|ts)$/, ".mjs");
+  return path.join(outDir, relativePath).replace(/\.(json|tsx|ts)$/, ".mjs");
 }
 
 function outputSpecifier(fromFile, toFile) {
@@ -68,6 +68,8 @@ function outputSpecifier(fromFile, toFile) {
 }
 
 function localRuntimeDependencies(filePath) {
+  if (filePath.endsWith(".json")) return [];
+
   const source = sourceFor(filePath);
   const parsed = ts.createSourceFile(
     filePath,
@@ -137,6 +139,17 @@ function rewriteLocalSpecifiers(source, filePath) {
 }
 
 async function emitModule(filePath) {
+  if (filePath.endsWith(".json")) {
+    const outputFile = outputFileFor(filePath);
+    await mkdir(path.dirname(outputFile), { recursive: true });
+    await writeFile(
+      outputFile,
+      `export default ${sourceFor(filePath)};\n`,
+      "utf8",
+    );
+    return outputFile;
+  }
+
   const source = rewriteLocalSpecifiers(sourceFor(filePath), filePath);
   const output = ts.transpileModule(source, {
     compilerOptions: {

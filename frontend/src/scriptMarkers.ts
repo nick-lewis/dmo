@@ -1,4 +1,4 @@
-import { getMainPanelAppDefinition } from "./mainPanelApps";
+import { getMainPanelAppMetadata } from "./mainPanelAppMetadata";
 
 export type ScriptEditorViewMode = "text" | "chips" | "slides" | "timeline";
 
@@ -288,7 +288,7 @@ export function scriptMarkerDetail(type: string, args: string, argList: string[]
     const appId = argList[0] ?? "";
     const view = argList[1] ?? "";
     const destination = argList[2] ?? "";
-    const appDefinition = getMainPanelAppDefinition(appId);
+    const appDefinition = getMainPanelAppMetadata(appId);
     const appLabel = appDefinition?.label ?? appId;
     const viewLabel =
       appDefinition?.views.find((item) => item.id === view)?.label ?? view;

@@ -1,6 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-import mainPanelAppRegistryData from "./mainPanelAppRegistry.json";
+import {
+  mainPanelAppMetadataDefinitions,
+  type MainPanelAppConfigField,
+  type MainPanelAppMetadata,
+} from "./mainPanelAppMetadata";
+
+export type { MainPanelAppConfigField } from "./mainPanelAppMetadata";
 
 export type RuntimeInteractive = {
   config: Record<string, unknown>;
@@ -36,24 +42,7 @@ export type MainPanelAppProps = {
 
 export type MainPanelAppDefinition = {
   Component: (props: MainPanelAppProps) => ReactNode;
-  configFields?: MainPanelAppConfigField[];
-  defaultConfig?: Record<string, unknown>;
-  defaultView: string;
-  id: string;
-  label: string;
-  views: Array<{ id: string; label: string }>;
-};
-
-export type MainPanelAppConfigField = {
-  defaultValue?: string | number;
-  id: string;
-  inputMode?: "text" | "numeric" | "decimal";
-  label: string;
-  placeholder?: string;
-  type?: "text" | "number";
-};
-
-type MainPanelAppMetadata = Omit<MainPanelAppDefinition, "Component">;
+} & MainPanelAppMetadata;
 
 type DeliveryDataRow = {
   distance: number;
@@ -448,12 +437,11 @@ const mainPanelAppComponents: Partial<Record<
   timing_challenge: TimingChallengeInteractive,
 };
 
-export const mainPanelAppDefinitions: MainPanelAppDefinition[] = (
-  mainPanelAppRegistryData as MainPanelAppMetadata[]
-).flatMap((definition) => {
-  const Component = mainPanelAppComponents[definition.id];
-  return Component ? [{ ...definition, Component }] : [];
-});
+export const mainPanelAppDefinitions: MainPanelAppDefinition[] =
+  mainPanelAppMetadataDefinitions.flatMap((definition) => {
+    const Component = mainPanelAppComponents[definition.id];
+    return Component ? [{ ...definition, Component }] : [];
+  });
 
 export const defaultMainPanelApp = mainPanelAppDefinitions[0];
 
