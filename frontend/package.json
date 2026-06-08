@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:pure": "node ./scripts/run-pure-tests.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
