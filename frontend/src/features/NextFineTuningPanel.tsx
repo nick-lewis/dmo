@@ -43,6 +43,14 @@ import {
 import { NextFineTuningContextMenu } from "./NextFineTuningContextMenu";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import {
+  insertScriptMarkerAt,
+  linkedMarkerIndexes,
+  replaceScriptMarkerText,
+  replaceScriptMarkersInText,
+  sourceInsertionIndexBeforeSpokenWord,
+  type ScriptMarkerReplacement,
+} from "./fineTuningMarkerText";
+import {
   clamp,
   isSlideMarker,
   markerTimelineTimeSeconds,
@@ -94,50 +102,6 @@ const waveformZoomWheelRatio = 0.0015;
 const chatPreviewAutoScrollResumeThresholdPx = 28;
 const chatPreviewProgrammaticScrollIgnoreMs = 220;
 const chatPreviewUserScrollIntentMs = 900;
-
-function replaceScriptMarker(
-  text: string,
-  marker: ScriptMarkerInstance,
-  nextMarker: string,
-) {
-  return `${text.slice(0, marker.start)}${nextMarker}${text.slice(marker.end)}`;
-}
-
-function insertScriptMarkerAt(text: string, insertionIndex: number, marker: string) {
-  const safeIndex = Math.min(Math.max(0, insertionIndex), text.length);
-  const before = text.slice(0, safeIndex);
-  const after = text.slice(safeIndex);
-  const prefix = before && !/\s$/.test(before) ? " " : "";
-  const suffix = after && !/^\s/.test(after) ? " " : "";
-  return `${before}${prefix}${marker}${suffix}${after}`;
-}
-
-function replaceScriptMarkersInText(
-  text: string,
-  replacements: Array<{
-    marker: ScriptMarkerInstance;
-    nextMarker: string | null;
-  }>,
-) {
-  const seen = new Set<string>();
-  let nextText = text;
-  [...replacements]
-    .filter(({ marker }) => {
-      const key = `${marker.start}:${marker.end}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((left, right) => right.marker.start - left.marker.start)
-    .forEach(({ marker, nextMarker }) => {
-      nextText =
-        nextText.slice(0, marker.start) +
-        (nextMarker ?? "") +
-        nextText.slice(marker.end);
-    });
-
-  return nextText;
-}
 
 function displayCueLabel(chunk: ScriptDisplayChunkSpec) {
   return `Chunk ${chunk.index + 1}`;
@@ -480,41 +444,7 @@ export function NextFineTuningPanel({
       nextType ?? marker.type,
       appendScriptMarkerTimelineArg(nextArgs, timeMs, marker.linkId),
     );
-    onMarkedTextChange(replaceScriptMarker(text, marker, nextMarker));
-  }
-
-  function sourceInsertionIndexBeforeSpokenWord(wordIndex: number) {
-    if (wordIndex <= 0) return 0;
-
-    const wordPattern = /[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g;
-    let spokenIndex = 0;
-    let cursor = 0;
-
-    function scanSegment(segment: string, offset: number) {
-      wordPattern.lastIndex = 0;
-      for (const match of segment.matchAll(wordPattern)) {
-        if (spokenIndex === wordIndex) {
-          return offset + (match.index ?? 0);
-        }
-        spokenIndex += 1;
-      }
-      return null;
-    }
-
-    for (const marker of [...markers].sort((left, right) => left.start - right.start)) {
-      if (marker.start > cursor) {
-        const matchIndex = scanSegment(text.slice(cursor, marker.start), cursor);
-        if (matchIndex !== null) return matchIndex;
-      }
-      cursor = Math.max(cursor, marker.end);
-    }
-
-    if (cursor < text.length) {
-      const matchIndex = scanSegment(text.slice(cursor), cursor);
-      if (matchIndex !== null) return matchIndex;
-    }
-
-    return text.length;
+    onMarkedTextChange(replaceScriptMarkerText(text, marker, nextMarker));
   }
 
   function sourceInsertionIndexForTimelineTime(seconds: number) {
@@ -525,15 +455,21 @@ export function NextFineTuningPanel({
       const wordIndex = timingWords.findIndex(
         (word) => Number.isFinite(word.start) && word.start >= seconds,
       );
-      return sourceInsertionIndexBeforeSpokenWord(
-        wordIndex >= 0 ? wordIndex : timingWords.length,
-      );
+      return sourceInsertionIndexBeforeSpokenWord({
+        markers,
+        text,
+        wordIndex: wordIndex >= 0 ? wordIndex : timingWords.length,
+      });
     }
 
     const approximateWordIndex = Math.round(
       spokenWordCount * clamp(seconds / durationForLayout, 0, 1),
     );
-    return sourceInsertionIndexBeforeSpokenWord(approximateWordIndex);
+    return sourceInsertionIndexBeforeSpokenWord({
+      markers,
+      text,
+      wordIndex: approximateWordIndex,
+    });
   }
 
   function nextTimelineSlideRef(seconds: number, insertionIndex: number) {
@@ -1220,13 +1156,7 @@ export function NextFineTuningPanel({
   }
 
   function markerLinkedIndexes(markerIndex: number) {
-    const marker = markers[markerIndex];
-    if (!marker?.linkId) return [markerIndex];
-    return markers
-      .map((candidate, index) =>
-        candidate.linkId === marker.linkId ? index : -1,
-      )
-      .filter((index) => index >= 0);
+    return linkedMarkerIndexes(markers, markerIndex);
   }
 
   function markerHasLinkedGroup(markerIndex: number) {
@@ -1246,10 +1176,9 @@ export function NextFineTuningPanel({
     const linkedIndexes = markerLinkedIndexes(markerIndex).filter(
       (index) => index !== markerIndex,
     );
-    const replacements: Array<{
-      marker: ScriptMarkerInstance;
-      nextMarker: string | null;
-    }> = [{ marker, nextMarker: null }];
+    const replacements: ScriptMarkerReplacement[] = [
+      { marker, nextMarker: null },
+    ];
 
     if (marker.linkId && linkedIndexes.length === 1) {
       const remainingIndex = linkedIndexes[0];
@@ -1276,10 +1205,7 @@ export function NextFineTuningPanel({
     const linkedIndexes = markerLinkedIndexes(markerIndex).filter(
       (index) => index !== markerIndex,
     );
-    const replacements: Array<{
-      marker: ScriptMarkerInstance;
-      nextMarker: string | null;
-    }> = [
+    const replacements: ScriptMarkerReplacement[] = [
       {
         marker,
         nextMarker: markerWithTimeline(marker, markerIndex, { linkId: null }),
@@ -1321,10 +1247,7 @@ export function NextFineTuningPanel({
       sourceMarker.linkId && sourceMarker.linkId !== linkId
         ? markerLinkedIndexes(sourceIndex).filter((index) => index !== sourceIndex)
         : [];
-    const replacements: Array<{
-      marker: ScriptMarkerInstance;
-      nextMarker: string | null;
-    }> = [
+    const replacements: ScriptMarkerReplacement[] = [
       {
         marker: sourceMarker,
         nextMarker: markerWithTimeline(sourceMarker, sourceIndex, {
