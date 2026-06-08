@@ -66,10 +66,31 @@ def public_script_image_options():
                 {
                     "label": image_path.stem.replace("-", " ").replace("_", " "),
                     "path": asset_path,
+                    "removable": source == "Uploaded",
                     "source": source,
                 }
             )
     return options
+
+
+def uploaded_script_image_name_from_path(image_path):
+    image_path = str(image_path or "").strip().replace("\\", "/")
+    media_prefix = f"{settings.MEDIA_URL.strip('/')}/"
+    script_image_prefix = f"{media_prefix}{SCRIPT_IMAGE_DIR}/"
+    if not image_path.startswith(script_image_prefix):
+        return ""
+
+    relative_name = image_path.removeprefix(media_prefix)
+    path = Path(relative_name)
+    if (
+        path.is_absolute()
+        or len(path.parts) != 2
+        or path.parts[0] != SCRIPT_IMAGE_DIR
+        or path.name != path.parts[1]
+        or path.suffix.lower() not in {".gif", ".jpg", ".jpeg", ".png", ".webp"}
+    ):
+        return ""
+    return relative_name
 
 
 @require_http_methods(["GET", "POST"])
@@ -174,7 +195,7 @@ def upload_tutor_avatar(request, experience_id):
     return JsonResponse({"avatarPath": avatar_path})
 
 
-@require_http_methods(["GET", "POST"])
+@require_http_methods(["DELETE", "GET", "POST"])
 def script_images(request, experience_id):
     auth_response = auth_required_response(request)
     if auth_response:
@@ -186,6 +207,28 @@ def script_images(request, experience_id):
 
     if request.method == "GET":
         return JsonResponse({"images": public_script_image_options()})
+
+    if request.method == "DELETE":
+        data = parse_json_body(request)
+        if data is None:
+            data = {}
+        image_path = str(data.get("imagePath") or request.GET.get("imagePath") or "")
+        image_name = uploaded_script_image_name_from_path(image_path)
+        if not image_name:
+            return JsonResponse(
+                {"detail": "Only uploaded script images can be deleted."},
+                status=400,
+            )
+
+        storage = FileSystemStorage(location=settings.MEDIA_ROOT)
+        if storage.exists(image_name):
+            storage.delete(image_name)
+        return JsonResponse(
+            {
+                "deletedImagePath": image_path,
+                "images": public_script_image_options(),
+            },
+        )
 
     uploaded_file = request.FILES.get("image")
     if not uploaded_file:
@@ -217,6 +260,7 @@ def script_images(request, experience_id):
             "image": {
                 "label": Path(saved_name).stem,
                 "path": image_path,
+                "removable": True,
                 "source": "Uploaded",
             },
             "imagePath": image_path,

@@ -87,6 +87,12 @@ type MouseScrubState = {
   timeSeconds: number;
 };
 
+type WaveformPanState = {
+  lastClientX: number;
+  moved: boolean;
+  pointerId: number;
+};
+
 type WaveformWindow = {
   end: number;
   start: number;
@@ -603,17 +609,20 @@ export function NextFineTuningPanel({
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const displayCueDragRef = useRef<DisplayCueDragState | null>(null);
   const ignoreMarkerClickRef = useRef(false);
+  const ignoreWaveformContextMenuRef = useRef(false);
   const ignoreWaveformClickRef = useRef(false);
   const manualSeekRef = useRef<ManualSeekState | null>(null);
   const markerDragRef = useRef<MarkerDragState | null>(null);
   const mouseScrubRef = useRef<MouseScrubState | null>(null);
   const scrubRef = useRef<ScrubState | null>(null);
+  const waveformPanRef = useRef<WaveformPanState | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [draggingDisplayCue, setDraggingDisplayCue] =
     useState<ActiveDisplayCueDrag>(null);
   const [draggingMarker, setDraggingMarker] = useState<ActiveMarkerDrag>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPanningWaveform, setIsPanningWaveform] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(playbackRateFromStorage);
   const [selectedDisplayCueIndex, setSelectedDisplayCueIndex] = useState<
     number | null
@@ -1171,6 +1180,108 @@ export function NextFineTuningPanel({
     }, 120);
   }
 
+  function openWaveformInsertMenuAt(
+    clientX: number,
+    clientY: number,
+    targetTimeSeconds: number,
+  ) {
+    setSelectedMarkerIndex(null);
+    setSelectedDisplayCueIndex(null);
+    setTimelineContextMenu({
+      kind: "insert",
+      targetTimeSeconds,
+      ...timelineContextMenuPosition(clientX, clientY, 118),
+    });
+    seek(targetTimeSeconds, { pause: true });
+  }
+
+  function beginWaveformPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    if (
+      event.button === 2 &&
+      audioUrl &&
+      durationSeconds &&
+      waveformIsZoomed
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      waveformPanRef.current = {
+        lastClientX: event.clientX,
+        moved: false,
+        pointerId: event.pointerId,
+      };
+      setIsPanningWaveform(true);
+      setTimelineContextMenu(null);
+      return;
+    }
+
+    beginScrub(event);
+  }
+
+  function updateWaveformPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const panState = waveformPanRef.current;
+    if (panState && panState.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const deltaX = event.clientX - panState.lastClientX;
+      if (rect.width > 0 && Math.abs(deltaX) > 0) {
+        panState.moved = panState.moved || Math.abs(deltaX) > 2;
+        const shift = (-deltaX / rect.width) * visibleWaveformWindowSpan;
+        setWaveformWindow((current) =>
+          shiftedWaveformWindow(
+            normalizedWaveformWindow(current, minimumWaveformWindowSpan),
+            shift,
+          ),
+        );
+      }
+
+      panState.lastClientX = event.clientX;
+      return;
+    }
+
+    updateScrub(event);
+  }
+
+  function endWaveformPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const panState = waveformPanRef.current;
+    if (panState && panState.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      if (panState.moved) {
+        ignoreWaveformClickRef.current = true;
+        ignoreWaveformContextMenuRef.current = true;
+        window.setTimeout(() => {
+          ignoreWaveformClickRef.current = false;
+          ignoreWaveformContextMenuRef.current = false;
+        }, 160);
+      } else {
+        const targetTimeSeconds = timeFromWaveformEvent(event, currentTime);
+        openWaveformInsertMenuAt(
+          event.clientX,
+          event.clientY,
+          targetTimeSeconds,
+        );
+        ignoreWaveformContextMenuRef.current = true;
+        window.setTimeout(() => {
+          ignoreWaveformContextMenuRef.current = false;
+        }, 160);
+      }
+
+      waveformPanRef.current = null;
+      setIsPanningWaveform(false);
+      return;
+    }
+
+    endScrub(event);
+  }
+
   function beginMouseScrub(event: ReactMouseEvent<HTMLDivElement>) {
     if (!audioUrl || event.button > 0 || scrubRef.current) return;
     event.preventDefault();
@@ -1444,15 +1555,12 @@ export function NextFineTuningPanel({
 
     event.preventDefault();
     event.stopPropagation();
+    if (ignoreWaveformContextMenuRef.current) {
+      return;
+    }
+
     const targetTimeSeconds = timeFromWaveformEvent(event, currentTime);
-    setSelectedMarkerIndex(null);
-    setSelectedDisplayCueIndex(null);
-    setTimelineContextMenu({
-      kind: "insert",
-      targetTimeSeconds,
-      ...timelineContextMenuPosition(event.clientX, event.clientY, 118),
-    });
-    seek(targetTimeSeconds, { pause: true });
+    openWaveformInsertMenuAt(event.clientX, event.clientY, targetTimeSeconds);
   }
 
   function handleMarkerMouseDown(event: ReactMouseEvent<HTMLButtonElement>) {
@@ -2044,6 +2152,8 @@ export function NextFineTuningPanel({
     markerDragRef.current = null;
     mouseScrubRef.current = null;
     scrubRef.current = null;
+    waveformPanRef.current = null;
+    setIsPanningWaveform(false);
     setTimelineContextMenu(null);
   }, [audioItem?.id]);
 
@@ -2456,6 +2566,7 @@ export function NextFineTuningPanel({
           "next-fine-waveform",
           audioUrl ? "" : "is-disabled",
           draggingMarker || draggingDisplayCue ? "is-dragging-marker" : "",
+          isPanningWaveform ? "is-panning" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -2472,10 +2583,10 @@ export function NextFineTuningPanel({
         onMouseMove={updateMouseScrub}
         onMouseUp={endMouseScrub}
         onContextMenu={openWaveformInsertMenu}
-        onPointerCancel={endScrub}
-        onPointerDown={beginScrub}
-        onPointerMove={updateScrub}
-        onPointerUp={endScrub}
+        onPointerCancel={endWaveformPointer}
+        onPointerDown={beginWaveformPointer}
+        onPointerMove={updateWaveformPointer}
+        onPointerUp={endWaveformPointer}
         onWheel={handleWaveformWheel}
         ref={waveformRef}
         role="slider"

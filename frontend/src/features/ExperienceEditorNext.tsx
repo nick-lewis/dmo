@@ -1,5 +1,6 @@
 import {
   type ChangeEvent,
+  type FormEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -182,6 +183,7 @@ type AudioScriptSelection = {
 type ScriptImageOption = {
   label: string;
   path: string;
+  removable?: boolean;
   source: string;
 };
 
@@ -1928,6 +1930,44 @@ function DisplayTextEditor({
     applyDisplayDocumentHistoryEntry(element, targetEntry);
   }
 
+  function handleEditorBeforeInput(event: FormEvent<HTMLDivElement>) {
+    const nativeEvent = event.nativeEvent as InputEvent;
+    if (
+      nativeEvent.inputType !== "insertText" ||
+      typeof nativeEvent.data !== "string" ||
+      !nativeEvent.data
+    ) {
+      return;
+    }
+
+    const element = event.currentTarget;
+    const selection = window.getSelection();
+    if (
+      !selection ||
+      selection.isCollapsed ||
+      !selection.rangeCount ||
+      !selection.anchorNode ||
+      !selection.focusNode ||
+      !element.contains(selection.anchorNode) ||
+      !element.contains(selection.focusNode)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const textNode = document.createTextNode(nativeEvent.data);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    readDocumentDraft(element);
+  }
+
   return (
     <div
       aria-busy={isSaving ? "true" : "false"}
@@ -1951,6 +1991,7 @@ function DisplayTextEditor({
         aria-keyshortcuts="Control+Z Control+Y Meta+Z Meta+Y"
         className="next-display-document-editor"
         contentEditable
+        onBeforeInput={handleEditorBeforeInput}
         onBlur={(event) => {
           const draft = readDocumentDraft(event.currentTarget, false);
           renderDisplayDocument(
@@ -2641,6 +2682,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [scriptImageOptions, setScriptImageOptions] = useState<
     ScriptImageOption[]
   >([]);
+  const [deletingScriptImagePath, setDeletingScriptImagePath] = useState("");
   const [isLoadingScriptImages, setIsLoadingScriptImages] = useState(false);
   const [isScriptImagePickerOpen, setIsScriptImagePickerOpen] = useState(false);
   const [isUploadingScriptImage, setIsUploadingScriptImage] = useState(false);
@@ -5124,6 +5166,54 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
+  async function deleteUploadedScriptImage(imagePath: string, label: string) {
+    if (!experience || !imagePath) return;
+
+    const didConfirm = window.confirm(
+      `Delete "${label || imagePath}" from uploaded images? Existing scripts that use it may need a new image.`,
+    );
+    if (!didConfirm) return;
+
+    setError("");
+    setDeletingScriptImagePath(imagePath);
+    try {
+      const payload = await apiFetch<{
+        deletedImagePath: string;
+        images: ScriptImageOption[];
+      }>(
+        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({ imagePath }),
+        },
+      );
+
+      setScriptImageOptions(payload.images);
+      if (editingScriptMarker && editingSideImageState?.imagePath === imagePath) {
+        replaceScriptActionMarker(
+          editingScriptMarker,
+          sideImageActionArgs({
+            ...editingSideImageState,
+            imagePath: "",
+          }),
+        );
+      }
+      if (tutorForm.avatarPath === imagePath) {
+        updateTutorDraft("avatarPath", defaultSideImagePath);
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete script image.",
+      );
+    } finally {
+      setDeletingScriptImagePath((current) =>
+        current === imagePath ? "" : current,
+      );
+    }
+  }
+
   const selectedEventOnEntrySource = selectedEvent
     ? (onEntryDrafts[selectedEvent.id] ??
       (selectedEvent.onEntryDslSource ||
@@ -5785,16 +5875,42 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                                 const isSelected =
                                   option.path === editingSideImageState.imagePath;
                                 return (
-                                  <button
-                                    aria-pressed={isSelected}
+                                  <div
+                                    className="next-script-image-option"
                                     key={option.path}
-                                    onClick={() => selectScriptImage(option.path)}
-                                    type="button"
                                   >
-                                    <img alt="" src={publicAsset(option.path)} />
-                                    <span>{option.label}</span>
-                                    <small>{option.source}</small>
-                                  </button>
+                                    <button
+                                      aria-pressed={isSelected}
+                                      className="next-script-image-option-main"
+                                      onClick={() => selectScriptImage(option.path)}
+                                      type="button"
+                                    >
+                                      <img alt="" src={publicAsset(option.path)} />
+                                      <span>{option.label}</span>
+                                      <small>{option.source}</small>
+                                    </button>
+                                    {option.removable ? (
+                                      <button
+                                        aria-label={`Delete ${option.label}`}
+                                        className="next-script-image-delete-button"
+                                        disabled={
+                                          deletingScriptImagePath === option.path
+                                        }
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          void deleteUploadedScriptImage(
+                                            option.path,
+                                            option.label,
+                                          );
+                                        }}
+                                        title="Delete uploaded image"
+                                        type="button"
+                                      >
+                                        <TrashIcon />
+                                      </button>
+                                    ) : null}
+                                  </div>
                                 );
                               })
                             ) : (
@@ -6145,16 +6261,42 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                               const isSelected =
                                 option.path === tutorForm.avatarPath;
                               return (
-                                <button
-                                  aria-pressed={isSelected}
+                                <div
+                                  className="next-tutor-avatar-option"
                                   key={option.path}
-                                  onClick={() => selectTutorAvatar(option.path)}
-                                  type="button"
                                 >
-                                  <img alt="" src={publicAsset(option.path)} />
-                                  <span>{option.label}</span>
-                                  <small>{option.source}</small>
-                                </button>
+                                  <button
+                                    aria-pressed={isSelected}
+                                    className="next-tutor-avatar-option-main"
+                                    onClick={() => selectTutorAvatar(option.path)}
+                                    type="button"
+                                  >
+                                    <img alt="" src={publicAsset(option.path)} />
+                                    <span>{option.label}</span>
+                                    <small>{option.source}</small>
+                                  </button>
+                                  {option.removable ? (
+                                    <button
+                                      aria-label={`Delete ${option.label}`}
+                                      className="next-tutor-avatar-delete-button"
+                                      disabled={
+                                        deletingScriptImagePath === option.path
+                                      }
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        void deleteUploadedScriptImage(
+                                          option.path,
+                                          option.label,
+                                        );
+                                      }}
+                                      title="Delete uploaded image"
+                                      type="button"
+                                    >
+                                      <TrashIcon />
+                                    </button>
+                                  ) : null}
+                                </div>
                               );
                             })
                           ) : (

@@ -406,6 +406,44 @@ class EventEditorApiTests(TestCase):
                 }
                 self.assertIn(image_path, image_paths)
 
+    def test_script_images_delete_uploaded_image(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root, MEDIA_URL="media/"):
+                image = SimpleUploadedFile(
+                    "demo.png",
+                    b"fake-png-bytes",
+                    content_type="image/png",
+                )
+                upload_response = self.client.post(
+                    f"/api/experiences/{self.experience.id}/script-images/",
+                    data={"image": image},
+                )
+                image_path = upload_response.json()["imagePath"]
+                image_file = Path(media_root, image_path.removeprefix("media/"))
+                self.assertTrue(image_file.exists())
+
+                delete_response = self.client.delete(
+                    f"/api/experiences/{self.experience.id}/script-images/",
+                    data=json.dumps({"imagePath": image_path}),
+                    content_type="application/json",
+                )
+
+                self.assertEqual(delete_response.status_code, 200)
+                self.assertFalse(image_file.exists())
+                image_paths = {
+                    item["path"] for item in delete_response.json()["images"]
+                }
+                self.assertNotIn(image_path, image_paths)
+
+    def test_script_images_delete_rejects_built_in_image(self):
+        response = self.client.delete(
+            f"/api/experiences/{self.experience.id}/script-images/",
+            data=json.dumps({"imagePath": "test-images/dLU-right.png"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_start_event_persists_conversation_choices_without_immediate_action(self):
         TutorSettings.objects.create(
             experience=self.experience,
