@@ -3624,6 +3624,17 @@ button {
   cursor: pointer;
 }
 
+.cm-dsl-script-action-selected,
+.cm-focused .cm-dsl-script-action-selected,
+.cm-dsl-script-action-selected:hover,
+.cm-focused .cm-dsl-script-action-selected:hover {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--panel-border));
+  color: color-mix(in srgb, var(--accent) 82%, var(--page-ink));
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel-bg-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  cursor: pointer;
+}
+
 .cm-dsl-button-action {
   color: color-mix(in srgb, var(--accent-2) 82%, var(--page-ink));
 }

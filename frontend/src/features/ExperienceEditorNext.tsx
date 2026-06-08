@@ -5212,6 +5212,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           }
         >
           <PythonDslEditor
+            activeScriptAction={
+              activeScriptAction?.eventId === selectedEvent.id
+                ? activeScriptAction
+                : null
+            }
             ariaLabel="On entry script"
             eventTargets={experience?.events ?? []}
             onChange={updateSelectedEventOnEntryDraft}

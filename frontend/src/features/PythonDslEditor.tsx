@@ -16,6 +16,10 @@ import { basicSetup } from "codemirror";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type PythonDslEditorProps = {
+  activeScriptAction?: Pick<
+    PythonDslScriptAction,
+    "actionIndex" | "lineNumber" | "source"
+  > | null;
   ariaLabel: string;
   eventTargets?: PythonDslEventTarget[];
   mode?: PythonDslEditorMode;
@@ -677,6 +681,14 @@ const scriptActionDecoration = Decoration.mark({
   },
   class: "cm-dsl-script-action",
 });
+const activeScriptActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Selected script action",
+    "aria-pressed": "true",
+    role: "button",
+  },
+  class: "cm-dsl-script-action cm-dsl-script-action-selected",
+});
 const conversationButtonActionDecoration = Decoration.mark({
   attributes: {
     "aria-label": "Conversation button",
@@ -788,14 +800,40 @@ function explicitDslAnyActionTarget(
   return null;
 }
 
+function countScriptActionsBeforePosition(view: EditorView, position: number) {
+  let actionCount = 0;
+  let cursor = 0;
+
+  while (cursor < position) {
+    const line = view.state.doc.lineAt(cursor);
+    if (!line.text.trimStart().startsWith("#")) {
+      for (const match of line.text.matchAll(scriptActionPattern)) {
+        if (typeof match.index !== "number") continue;
+        if (line.from + match.index >= position) break;
+        actionCount += 1;
+      }
+    }
+
+    if (line.to >= position || line.number >= view.state.doc.lines) break;
+    cursor = line.to + 1;
+  }
+
+  return actionCount;
+}
+
 function dslActionDecorations(
   view: EditorView,
   mode: PythonDslEditorMode,
+  activeScriptActionIndex: number | null,
 ): DecorationSet {
   const ranges = [];
 
   for (const visibleRange of view.visibleRanges) {
     let position = visibleRange.from;
+    let scriptActionIndex =
+      mode === "on-entry"
+        ? countScriptActionsBeforePosition(view, visibleRange.from)
+        : 0;
 
     while (position <= visibleRange.to) {
       const line = view.state.doc.lineAt(position);
@@ -838,7 +876,12 @@ function dslActionDecorations(
             if (typeof match.index !== "number") continue;
             const from = line.from + match.index;
             const to = from + match[0].length;
-            ranges.push(scriptActionDecoration.range(from, to));
+            const decoration =
+              scriptActionIndex === activeScriptActionIndex
+                ? activeScriptActionDecoration
+                : scriptActionDecoration;
+            ranges.push(decoration.range(from, to));
+            scriptActionIndex += 1;
           }
         }
       }
@@ -851,18 +894,33 @@ function dslActionDecorations(
   return Decoration.set(ranges, true);
 }
 
-function dslActionPluginForMode(mode: PythonDslEditorMode) {
+function dslActionPluginForMode(
+  mode: PythonDslEditorMode,
+  activeScriptActionIndex: () => number | null,
+) {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
+      activeIndex: number | null;
 
       constructor(view: EditorView) {
-        this.decorations = dslActionDecorations(view, mode);
+        this.activeIndex = activeScriptActionIndex();
+        this.decorations = dslActionDecorations(view, mode, this.activeIndex);
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-          this.decorations = dslActionDecorations(update.view, mode);
+        const nextActiveIndex = activeScriptActionIndex();
+        if (
+          update.docChanged ||
+          update.viewportChanged ||
+          nextActiveIndex !== this.activeIndex
+        ) {
+          this.activeIndex = nextActiveIndex;
+          this.decorations = dslActionDecorations(
+            update.view,
+            mode,
+            nextActiveIndex,
+          );
         }
       }
     },
@@ -1304,6 +1362,7 @@ function contextMenuInsertionPoint(
 }
 
 export function PythonDslEditor({
+  activeScriptAction = null,
   ariaLabel,
   eventTargets = [],
   mode = "on-entry",
@@ -1315,6 +1374,8 @@ export function PythonDslEditor({
   const eventTargetsRef = useRef(eventTargets);
   const viewRef = useRef<EditorView | null>(null);
   const activeDslActionLineRef = useRef<ActiveDslActionLine | null>(null);
+  const activeScriptActionRef =
+    useRef<typeof activeScriptAction>(activeScriptAction);
   const onChangeRef = useRef(onChange);
   const modeRef = useRef(mode);
   const onOpenScriptActionRef = useRef(onOpenScriptAction);
@@ -1331,6 +1392,15 @@ export function PythonDslEditor({
   useEffect(() => {
     onOpenScriptActionRef.current = onOpenScriptAction;
   }, [onOpenScriptAction]);
+
+  useEffect(() => {
+    activeScriptActionRef.current = activeScriptAction;
+    viewRef.current?.dispatch({});
+  }, [
+    activeScriptAction?.actionIndex,
+    activeScriptAction?.lineNumber,
+    activeScriptAction?.source,
+  ]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1438,7 +1508,10 @@ export function PythonDslEditor({
       EditorState.tabSize.of(4),
       syntaxHighlighting(pythonDslHighlightStyle),
       pythonDslTheme,
-      dslActionPluginForMode(mode),
+      dslActionPluginForMode(
+        mode,
+        () => activeScriptActionRef.current?.actionIndex ?? null,
+      ),
       EditorView.contentAttributes.of({
         "aria-label": ariaLabel,
         autocapitalize: "off",
