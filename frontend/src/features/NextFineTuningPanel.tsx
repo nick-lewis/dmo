@@ -10,7 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { MicIcon, RefreshIcon, StopIcon } from "../components/Icons";
+import { MicIcon, StopIcon } from "../components/Icons";
 import {
   appendScriptMarkerTimelineArg,
   buildScriptMarker,
@@ -26,7 +26,6 @@ import { scriptAudioPlaybackRateOptions } from "../scriptAudio";
 import type { ScriptAudioItem } from "../types";
 import {
   scriptDisplayChunkStatesAt,
-  type ScriptDisplayChunkState,
 } from "./useScriptAudioPlayback";
 import {
   useAudioWaveform,
@@ -67,6 +66,7 @@ import {
   scriptDisplayChunkSpecsFromValues,
   type ScriptDisplayChunkSpec,
 } from "./scriptDisplayTiming";
+import { NextFineTuningPlaybackPreview } from "./NextFineTuningPlaybackPreview";
 
 type FineTuningPanelProps = {
   audioItem: ScriptAudioItem | null;
@@ -174,32 +174,6 @@ function isScrolledNearBottom(element: HTMLElement) {
   return (
     element.scrollHeight - element.scrollTop - element.clientHeight <=
     chatPreviewAutoScrollResumeThresholdPx
-  );
-}
-
-function FineTuningChatBubble({
-  chunk,
-  registerRef,
-}: {
-  chunk: ScriptDisplayChunkState;
-  registerRef: (element: HTMLDivElement | null) => void;
-}) {
-  const body =
-    chunk.text || (chunk.streaming || chunk.active ? "..." : chunk.fullText);
-
-  return (
-    <div
-      className={[
-        "next-fine-chat-bubble",
-        chunk.active ? "is-active" : "",
-        chunk.streaming ? "is-streaming" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      ref={registerRef}
-    >
-      {body}
-    </div>
   );
 }
 
@@ -1669,73 +1643,29 @@ export function NextFineTuningPanel({
   return (
     <div aria-label="Fine Tuning" className="next-fine-tuning-panel">
       <audio preload="auto" ref={audioRef} src={audioPlaybackUrl} />
-      <section className="next-fine-preview" aria-label="Playback preview">
-        <div className="next-fine-slide-preview" aria-label="Main panel preview">
-          <button
-            aria-label="Refresh slide previews"
-            className="next-fine-slide-refresh-button"
-            disabled={!canRefreshSlides || isRefreshingSlides}
-            onClick={onRefreshSlides}
-            title={
-              canRefreshSlides
-                ? "Refresh slide previews from the deck"
-                : "Add a slides link and slide action first"
-            }
-            type="button"
-          >
-            <RefreshIcon />
-          </button>
-          {slidePreview?.status === "ready" && slidePreview.imageUrl ? (
-            <img
-              alt={slideRef ? `Slide ${slideRef}` : ""}
-              src={slidePreview.imageUrl}
-            />
-          ) : (
-            <span>
-              {!slideRef
-                ? "No slide"
-                : !deckUrl.trim()
-                  ? "Deck URL needed"
-                  : slidePreview?.status === "loading"
-                    ? "Loading"
-                    : slidePreview?.detail || `Slide ${slideRef}`}
-            </span>
-          )}
-        </div>
-        <div className="next-fine-chat-preview" aria-label="Chat simulator">
-          <div
-            className={[
-              "next-fine-chat-scroll",
-              activeChatChunkId ? "is-turn-anchored" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onPointerDown={markChatPreviewUserScrollIntent}
-            onScroll={handleChatPreviewScroll}
-            onTouchStart={markChatPreviewUserScrollIntent}
-            onWheel={markChatPreviewUserScrollIntent}
-            ref={chatPreviewRef}
-          >
-            {visibleChatChunks.length ? (
-              visibleChatChunks.map((chunk) => (
-                <FineTuningChatBubble
-                  chunk={chunk}
-                  key={chunk.id}
-                  registerRef={(element) => {
-                    if (element) {
-                      chatPreviewChunkRefs.current.set(chunk.id, element);
-                    } else {
-                      chatPreviewChunkRefs.current.delete(chunk.id);
-                    }
-                  }}
-                />
-              ))
-            ) : (
-              <div className="next-fine-chat-empty">{chatPreviewPlaceholder}</div>
-            )}
-          </div>
-        </div>
-      </section>
+      <NextFineTuningPlaybackPreview
+        activeChatChunkId={activeChatChunkId}
+        canRefreshSlides={canRefreshSlides}
+        chatPreviewPlaceholder={chatPreviewPlaceholder}
+        chatPreviewRef={chatPreviewRef}
+        deckUrl={deckUrl}
+        isRefreshingSlides={isRefreshingSlides}
+        onChatPointerDown={markChatPreviewUserScrollIntent}
+        onChatScroll={handleChatPreviewScroll}
+        onChatTouchStart={markChatPreviewUserScrollIntent}
+        onChatWheel={markChatPreviewUserScrollIntent}
+        onRefreshSlides={onRefreshSlides}
+        registerChatChunkRef={(chunkId, element) => {
+          if (element) {
+            chatPreviewChunkRefs.current.set(chunkId, element);
+          } else {
+            chatPreviewChunkRefs.current.delete(chunkId);
+          }
+        }}
+        slidePreview={slidePreview}
+        slideRef={slideRef}
+        visibleChatChunks={visibleChatChunks}
+      />
 
       <div className="next-fine-transport">
         <button
