@@ -44,6 +44,7 @@ import {
   type FineTuningTimelineVisibility,
   type WaveformWindow,
 } from "./fineTuningTimelineLayout";
+import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import {
   clamp,
   isSlideMarker,
@@ -378,10 +379,7 @@ function timelineContextMenuPosition(
   height = 54,
   width = 220,
 ) {
-  return {
-    x: Math.max(12, Math.min(clientX, window.innerWidth - width - 12)),
-    y: Math.max(12, Math.min(clientY, window.innerHeight - height - 12)),
-  };
+  return clampFloatingMenuPosition(clientX, clientY, width, height);
 }
 
 function isScrolledNearBottom(element: HTMLElement) {

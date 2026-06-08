@@ -119,6 +119,7 @@ import {
   ImageLibraryPicker,
   type ImageLibraryOption,
 } from "./ImageLibraryPicker";
+import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
 import { alignScriptWordsToDisplaySlots } from "./scriptDisplayTiming";
 import {
@@ -257,7 +258,6 @@ const conversationDslStepSource = "next-conversation-dsl";
 const defaultSideImagePath = "test-images/dLU-right.png";
 const sideImageScaleMin = 0.2;
 const sideImageScaleMax = 3;
-const scriptActionMenuViewportPadding = 12;
 
 const nextEditorUiStoragePrefix = "dlu.next-editor-ui.v1";
 
@@ -785,29 +785,6 @@ function removeScriptMarker(text: string, marker: ScriptMarkerInstance) {
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([.,!?;:])/g, "$1")
     .trim();
-}
-
-function clampFloatingMenuPosition(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-) {
-  if (typeof window === "undefined") return { x, y };
-
-  const maxX = Math.max(
-    scriptActionMenuViewportPadding,
-    window.innerWidth - width - scriptActionMenuViewportPadding,
-  );
-  const maxY = Math.max(
-    scriptActionMenuViewportPadding,
-    window.innerHeight - height - scriptActionMenuViewportPadding,
-  );
-
-  return {
-    x: Math.round(clamp(x, scriptActionMenuViewportPadding, maxX)),
-    y: Math.round(clamp(y, scriptActionMenuViewportPadding, maxY)),
-  };
 }
 
 function deckUrlForNewTab(value: string) {

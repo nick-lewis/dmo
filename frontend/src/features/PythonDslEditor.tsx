@@ -15,6 +15,8 @@ import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { clampFloatingMenuPosition } from "./floatingMenuPosition";
+
 type PythonDslEditorProps = {
   activeScriptAction?: Pick<
     PythonDslScriptAction,
@@ -1325,10 +1327,7 @@ function contextMenuPosition(
   width = 196,
   height = 190,
 ) {
-  return {
-    x: Math.max(12, Math.min(clientX, window.innerWidth - width)),
-    y: Math.max(12, Math.min(clientY, window.innerHeight - height)),
-  };
+  return clampFloatingMenuPosition(clientX, clientY, width, height);
 }
 
 function contextMenuInsertionPoint(
