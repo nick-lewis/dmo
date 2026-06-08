@@ -24,7 +24,6 @@ import {
   HelpIcon,
   MicIcon,
   RefreshIcon,
-  SettingsIcon,
   StopIcon,
   TrashIcon,
 } from "../components/Icons";
@@ -91,6 +90,7 @@ import {
   useTutorAutosave,
 } from "./useExperienceAutosave";
 import { ExperienceEventFlow } from "./ExperienceEventFlow";
+import { ScriptAudioEditorPanel } from "./ScriptAudioEditorPanel";
 import {
   DisplayTextEditor,
   displayBreaksFromText,
@@ -4175,90 +4175,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           </div>
         </div>
         {activeScriptDetailTab === "audio" ? (
-          <div
-            className={[
-              "next-audio-script-panel",
-              isAudioVoiceSettingsOpen ? "has-voice-settings" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            <div className="next-audio-script-toolbar">
-              {activeAudioHasCustomVoiceInstructions ? (
-                <span>custom personality and tone</span>
-              ) : null}
-              <button
-                aria-label="Audio script personality and tone"
-                aria-expanded={isAudioVoiceSettingsOpen}
-                aria-pressed={isAudioVoiceSettingsOpen}
-                className={[
-                  "next-script-voice-settings-button",
-                  activeAudioHasCustomVoiceInstructions ? "has-custom" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                disabled={!activeScriptAudioItem}
-                onClick={() =>
-                  setIsAudioVoiceSettingsOpen((current) => !current)
-                }
-                title={
-                  activeAudioHasCustomVoiceInstructions
-                    ? "Custom personality and tone for this audio script"
-                    : "Personality and tone for this audio script"
-                }
-                type="button"
-              >
-                <SettingsIcon />
-              </button>
-            </div>
-            <div
-              aria-hidden={!isAudioVoiceSettingsOpen}
-              className={[
-                "next-script-voice-panel",
-                isAudioVoiceSettingsOpen ? "is-open" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <input
-                aria-label="Audio script personality and tone"
-                className="next-script-voice-input"
-                disabled={!activeScriptAudioItem || !isAudioVoiceSettingsOpen}
-                onBlur={() => void saveActiveAudioVoiceInstructionsOverride()}
-                onChange={(event) =>
-                  setAudioVoiceInstructionsDraft(event.currentTarget.value)
-                }
-                onContextMenu={(event) => event.stopPropagation()}
-                ref={audioVoiceInstructionsRef}
-                spellCheck
-                tabIndex={isAudioVoiceSettingsOpen ? 0 : -1}
-                type="text"
-                value={audioVoiceInstructionsDraft}
-              />
-            </div>
-            <div className="next-script-textarea-shell">
-              <textarea
-                aria-label="Audio script text"
-                className="next-script-textarea"
-                disabled={!activeScriptStep}
-                onBlur={blurActiveScriptText}
-                onChange={(event) =>
-                  changeActiveScriptText(
-                    event.currentTarget.value,
-                    event.currentTarget.selectionStart,
-                    event.currentTarget.selectionEnd,
-                    event.currentTarget.selectionDirection,
-                  )
-                }
-                onContextMenu={(event) => event.stopPropagation()}
-                onFocus={(event) => focusActiveScriptText(event.currentTarget.value)}
-                placeholder="No script text yet."
-                ref={audioScriptTextareaRef}
-                spellCheck
-                value={activeAudioScriptTextareaValue}
-              />
-            </div>
-          </div>
+          <ScriptAudioEditorPanel
+            audioText={activeAudioScriptTextareaValue}
+            audioTextareaRef={audioScriptTextareaRef}
+            hasCustomVoiceInstructions={activeAudioHasCustomVoiceInstructions}
+            isAudioTextDisabled={!activeScriptStep}
+            isVoiceSettingsDisabled={!activeScriptAudioItem}
+            isVoiceSettingsOpen={isAudioVoiceSettingsOpen}
+            onAudioTextBlur={blurActiveScriptText}
+            onAudioTextChange={changeActiveScriptText}
+            onAudioTextFocus={focusActiveScriptText}
+            onSaveVoiceInstructions={saveActiveAudioVoiceInstructionsOverride}
+            onToggleVoiceSettings={() =>
+              setIsAudioVoiceSettingsOpen((current) => !current)
+            }
+            onVoiceInstructionsChange={setAudioVoiceInstructionsDraft}
+            voiceInstructionsDraft={audioVoiceInstructionsDraft}
+            voiceInstructionsRef={audioVoiceInstructionsRef}
+          />
         ) : activeScriptDetailTab === "script" ? (
           <ScriptActionReadOnlyView
             actionRows={activeScriptActionView.rows}
