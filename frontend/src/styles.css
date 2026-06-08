@@ -1056,38 +1056,145 @@ button {
 }
 
 .next-tutor-avatar-options {
-  display: flex;
-  align-items: center;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.next-tutor-avatar-options > span {
+  color: color-mix(in srgb, var(--muted-ink) 82%, var(--page-ink));
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.next-tutor-avatar-control {
+  display: grid;
+  grid-template-columns: 72px auto;
   gap: 6px;
   min-width: 0;
-  grid-column: 1 / -1;
 }
 
-.next-tutor-avatar-options button {
-  display: inline-grid;
+.next-tutor-avatar-preview-button {
+  display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--accent-2) 14%, var(--panel-soft-border));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--panel-bg-strong) 68%, transparent);
+  width: 72px;
+  height: 56px;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 74%, white);
 }
 
-.next-tutor-avatar-options button[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--accent-2) 42%, var(--panel-border));
-  background: color-mix(in srgb, var(--accent-soft) 46%, var(--panel-bg-strong));
+.next-tutor-avatar-preview-button:hover,
+.next-tutor-avatar-preview-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-2) 34%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent-2-soft) 34%, var(--panel-bg-strong));
+  outline: 0;
 }
 
-.next-tutor-avatar-options button:disabled {
+.next-tutor-avatar-preview-button img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.next-tutor-avatar-upload-button {
+  align-self: start;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 18%, var(--panel-soft-border));
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent-2) 84%, var(--page-ink));
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 780;
+}
+
+.next-tutor-avatar-upload-button:hover:not(:disabled),
+.next-tutor-avatar-upload-button:focus-visible {
+  background: color-mix(in srgb, var(--accent-2-soft) 42%, transparent);
+  outline: 0;
+}
+
+.next-tutor-avatar-upload-button:disabled {
   cursor: progress;
   opacity: 0.62;
 }
 
-.next-tutor-avatar-options img {
-  width: 32px;
-  height: 32px;
-  object-fit: cover;
+.next-tutor-avatar-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 238px;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 14%, var(--panel-soft-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 96%, white);
+}
+
+.next-tutor-avatar-picker button {
+  display: grid;
+  grid-template-rows: 56px auto auto;
+  gap: 3px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--page-ink);
+  background: transparent;
+  text-align: left;
+}
+
+.next-tutor-avatar-picker button:hover,
+.next-tutor-avatar-picker button:focus-visible,
+.next-tutor-avatar-picker button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent-2) 26%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent-2-soft) 38%, transparent);
+  outline: 0;
+}
+
+.next-tutor-avatar-picker img {
+  width: 100%;
+  height: 56px;
+  object-fit: contain;
+  border: 1px solid color-mix(in srgb, var(--panel-soft-border) 62%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--page-bg) 74%, var(--panel-bg-strong));
+}
+
+.next-tutor-avatar-picker span,
+.next-tutor-avatar-picker small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-tutor-avatar-picker span {
+  font-size: 0.68rem;
+  font-weight: 760;
+}
+
+.next-tutor-avatar-picker small {
+  color: var(--muted-ink);
+  font-size: 0.58rem;
+  font-weight: 680;
+}
+
+.next-tutor-avatar-picker-empty {
+  grid-column: 1 / -1;
+  padding: 10px;
+  color: var(--muted-ink);
+  font-size: 0.72rem;
+  font-weight: 720;
 }
 
 .next-tutor-avatar-file-input {

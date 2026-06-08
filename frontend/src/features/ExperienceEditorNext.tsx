@@ -2611,6 +2611,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
   const [isTutorSettingsOpen, setIsTutorSettingsOpen] = useState(false);
+  const [isTutorAvatarPickerOpen, setIsTutorAvatarPickerOpen] = useState(false);
   const [isUploadingTutorAvatar, setIsUploadingTutorAvatar] = useState(false);
   const [activeScriptAction, setActiveScriptAction] =
     useState<ActiveScriptAction | null>(null);
@@ -3548,6 +3549,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     };
   }, [flushTutorAutosave, isTutorSettingsOpen]);
 
+  useEffect(() => {
+    if (isTutorSettingsOpen) return;
+    setIsTutorAvatarPickerOpen(false);
+  }, [isTutorSettingsOpen]);
+
   const voiceOptions = realtimeVoiceOptionsForModel(tutorForm.realtimeModel);
   const activeVoice = isRealtimeVoiceSupported(
     tutorForm.realtimeModel,
@@ -3574,7 +3580,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         : "Play voice sample";
   const tutorAvatarUploadLabel = isUploadingTutorAvatar
     ? "Uploading tutor image"
-    : "Choose tutor image";
+    : "Upload tutor image";
 
   function saveScriptTextRevealSpeed(value: number) {
     const nextSpeed = clampScriptTextAudioRevealSpeed(value);
@@ -5012,6 +5018,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     setIsScriptImagePickerOpen(false);
   }
 
+  function selectTutorAvatar(imagePath: string) {
+    updateTutorDraft("avatarPath", imagePath);
+    setIsTutorAvatarPickerOpen(false);
+  }
+
   async function uploadScriptImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file || !experience) return;
@@ -5078,15 +5089,20 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     try {
       const formData = new FormData();
       formData.append("image", file);
-      const payload = await apiFetch<{ avatarPath: string }>(
-        `/api/experiences/${encodeURIComponent(experience.id)}/tutor-avatar/`,
+      const payload = await apiFetch<{
+        imagePath: string;
+        images: ScriptImageOption[];
+      }>(
+        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
         {
           method: "POST",
           body: formData,
         },
       );
 
-      updateTutorDraft("avatarPath", payload.avatarPath);
+      setScriptImageOptions(payload.images);
+      updateTutorDraft("avatarPath", payload.imagePath);
+      setIsTutorAvatarPickerOpen(false);
     } catch (uploadError) {
       setError(
         uploadError instanceof Error
@@ -5305,6 +5321,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       : null;
   const scriptImagePickerOptions = (() => {
     const currentPath = editingSideImageState?.imagePath.trim() ?? "";
+    if (
+      !currentPath ||
+      scriptImageOptions.some((option) => option.path === currentPath)
+    ) {
+      return scriptImageOptions;
+    }
+
+    return [
+      {
+        label: "Current image",
+        path: currentPath,
+        source: "Custom",
+      },
+      ...scriptImageOptions,
+    ];
+  })();
+  const tutorAvatarPickerOptions = (() => {
+    const currentPath = tutorForm.avatarPath.trim();
     if (
       !currentPath ||
       scriptImageOptions.some((option) => option.path === currentPath)
@@ -6057,15 +6091,71 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
                   className="next-tutor-settings-menu"
                 >
                   <div className="next-tutor-avatar-options">
-                    <button
-                      aria-label={tutorAvatarUploadLabel}
-                      disabled={isUploadingTutorAvatar}
-                      onClick={() => tutorAvatarFileInputRef.current?.click()}
-                      title={tutorAvatarUploadLabel}
-                      type="button"
-                    >
-                      <img alt="" src={publicAsset(tutorForm.avatarPath)} />
-                    </button>
+                    <span>Image</span>
+                    <div className="next-tutor-avatar-control">
+                      <button
+                        aria-expanded={isTutorAvatarPickerOpen}
+                        aria-label="Choose tutor image"
+                        className="next-tutor-avatar-preview-button"
+                        onClick={() => {
+                          setIsTutorAvatarPickerOpen((isOpen) => !isOpen);
+                          if (
+                            !isTutorAvatarPickerOpen &&
+                            !scriptImageOptions.length &&
+                            !isLoadingScriptImages &&
+                            experience
+                          ) {
+                            void loadScriptImages(experience.id);
+                          }
+                        }}
+                        title="Choose tutor image"
+                        type="button"
+                      >
+                        <img alt="" src={publicAsset(tutorForm.avatarPath)} />
+                      </button>
+                      <button
+                        className="next-tutor-avatar-upload-button"
+                        disabled={isUploadingTutorAvatar}
+                        onClick={() => tutorAvatarFileInputRef.current?.click()}
+                        title={tutorAvatarUploadLabel}
+                        type="button"
+                      >
+                        {isUploadingTutorAvatar ? "Uploading" : "Upload"}
+                      </button>
+                      {isTutorAvatarPickerOpen ? (
+                        <div
+                          aria-label="Tutor image options"
+                          className="next-tutor-avatar-picker"
+                        >
+                          {isLoadingScriptImages ? (
+                            <div className="next-tutor-avatar-picker-empty">
+                              Loading images
+                            </div>
+                          ) : tutorAvatarPickerOptions.length ? (
+                            tutorAvatarPickerOptions.map((option) => {
+                              const isSelected =
+                                option.path === tutorForm.avatarPath;
+                              return (
+                                <button
+                                  aria-pressed={isSelected}
+                                  key={option.path}
+                                  onClick={() => selectTutorAvatar(option.path)}
+                                  type="button"
+                                >
+                                  <img alt="" src={publicAsset(option.path)} />
+                                  <span>{option.label}</span>
+                                  <small>{option.source}</small>
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="next-tutor-avatar-picker-empty">
+                              No images yet
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                     <input
                       accept="image/png,image/jpeg,image/webp,image/gif"
                       className="next-tutor-avatar-file-input"
