@@ -9104,6 +9104,38 @@ button {
   background: color-mix(in srgb, var(--accent-soft) 46%, var(--panel-bg-strong));
 }
 
+.next-editor-error-banner {
+  position: fixed;
+  z-index: 250;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  max-width: min(560px, calc(100vw - 28px));
+  box-shadow: 0 14px 40px rgba(22, 74, 92, 0.2);
+}
+
+.next-editor-error-banner span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.next-editor-error-dismiss {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  color: inherit;
+  background: color-mix(in srgb, var(--panel-soft-border) 60%, transparent);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .next-audio-prep-overlay {
   position: fixed;
   z-index: 260;

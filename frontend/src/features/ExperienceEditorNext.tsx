@@ -2,7 +2,6 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
   useEffect,
@@ -54,7 +53,6 @@ import type {
   Experience,
   ExperienceEvent,
   ExperienceForm,
-  ExperiencesPayload,
   ResolvedSlide,
   ScriptAudioItem,
   SessionPayload,
@@ -98,9 +96,9 @@ import {
   viewMarkerEditKey,
   type ScriptActionViewMarker,
 } from "./scriptActionProjection";
-import type { ImageLibraryOption } from "./ImageLibraryPicker";
 import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
+import { useFloatingMenuDrag } from "./useFloatingMenuDrag";
 import { useFloatingMenuLifecycle } from "./useFloatingMenuLifecycle";
 import { NextFineTuningPanel } from "./NextFineTuningPanel";
 import {
@@ -118,15 +116,15 @@ import {
   slidePreviewKeyForDeck,
 } from "./scriptActionEditorUtils";
 import {
-  appendScriptActionHistoryEntry,
   displayBreakDraftForItem,
   insertScriptMarkerAt,
-  isNativeUndoTarget,
   mergeMarkersIntoSpokenText,
   removeScriptMarker,
   replaceScriptMarker,
   scriptAudioItemForScriptText,
 } from "./nextEditorScriptUtils";
+import { useScriptActionHistory } from "./useScriptActionHistory";
+import { useScriptImageLibrary } from "./useScriptImageLibrary";
 import {
   conversationChoiceDslSourceFromChoices,
   conversationChoicesFromDslSource,
@@ -187,17 +185,10 @@ type AudioScriptSelection = {
   stepId: string;
 };
 
-type ScriptActionMenuDragState = {
-  menuX: number;
-  menuY: number;
-  pointerId: number;
-  startX: number;
-  startY: number;
-};
-
-const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/g;
+const onEntryScriptActionPattern = /\bscript\s*\([^)]*\)/;
 const onEntryDslStepSource = "next-on-entry-dsl";
 const conversationDslStepSource = "next-conversation-dsl";
+const displayTranscriptAutosaveDelayMs = 700;
 
 function defaultTutorSettings(): TutorSettings {
   return {
@@ -243,7 +234,6 @@ function firstTopLevelScriptActionFromDsl(
   for (const [lineIndex, line] of normalizedSource.split("\n").entries()) {
     const trimmed = line.trimStart();
     if (trimmed && !/^\s/.test(line) && !trimmed.startsWith("#")) {
-      onEntryScriptActionPattern.lastIndex = 0;
       const match = onEntryScriptActionPattern.exec(line);
       if (match?.[0] && typeof match.index === "number") {
         const from = lineStart + match.index;
@@ -270,6 +260,34 @@ function scriptActionAutoOpenKey(
   return action
     ? `${eventId}:${action.actionIndex}:${action.lineNumber}:${action.from}:${action.source}`
     : "";
+}
+
+function plainValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (
+    typeof left !== "object" ||
+    typeof right !== "object" ||
+    left === null ||
+    right === null
+  ) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => plainValuesEqual(value, right[index]))
+    );
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  return (
+    leftKeys.length === Object.keys(rightRecord).length &&
+    leftKeys.every((key) => plainValuesEqual(leftRecord[key], rightRecord[key]))
+  );
 }
 
 function replaceEventStep(
@@ -323,11 +341,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     useState<ScriptActionMenuState | null>(null);
   const [scriptAudioMenu, setScriptAudioMenu] =
     useState<ScriptAudioMenuState | null>(null);
-  const [scriptImageOptions, setScriptImageOptions] = useState<
-    ImageLibraryOption[]
-  >([]);
-  const [deletingScriptImagePath, setDeletingScriptImagePath] = useState("");
-  const [isLoadingScriptImages, setIsLoadingScriptImages] = useState(false);
   const [isScriptImagePickerOpen, setIsScriptImagePickerOpen] = useState(false);
   const [isUploadingScriptImage, setIsUploadingScriptImage] = useState(false);
   const [scriptSlidePreviews, setScriptSlidePreviews] = useState<
@@ -352,12 +365,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   const pendingScriptDisplayDraftsRef = useRef<
     Record<string, PendingScriptDisplayDraft>
   >({});
+  const autosaveFlushQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const failedDisplayAutosavesRef = useRef<Record<string, string>>({});
   const autoOpenedScriptActionKeyRef = useRef("");
-  const scriptActionHistoryStepIdRef = useRef("");
-  const scriptActionRedoStackRef = useRef<string[]>([]);
-  const scriptActionUndoStackRef = useRef<string[]>([]);
-  const scriptActionMenuDragRef = useRef<ScriptActionMenuDragState | null>(null);
   const scriptActionMenuRef = useRef<HTMLDivElement | null>(null);
   const scriptAudioMenuRef = useRef<HTMLDivElement | null>(null);
   const audioScriptTextareaFocusedRef = useRef(false);
@@ -393,6 +403,17 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     flushScriptTextAutosave,
   });
 
+  const {
+    deleteScriptImageFile,
+    deletingScriptImagePath,
+    isLoadingScriptImages,
+    loadScriptImages,
+    scriptImageOptions,
+    uploadScriptImageFile,
+  } = useScriptImageLibrary({
+    experienceId: experience?.id ?? "",
+    setError,
+  });
   const {
     clearOverviewAutosaveTimer,
     flushOverviewAutosave,
@@ -515,12 +536,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     activeDisplaySlots,
     activeDisplayEditorBreaks,
   );
+  // Both memos key on activeScriptActionViewKey instead of the slot/break
+  // arrays: those arrays are rebuilt every render, so the derived string key
+  // is what prevents memo thrash.
   const activeScriptActionTimingWords = useMemo(
     () =>
       alignScriptWordsToDisplaySlots(
         activeDisplaySlots,
         activeScriptAudioItem?.timingWords ?? [],
       ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeScriptActionViewKey, activeScriptAudioItem?.timingWords],
   );
   const activeScriptActionView = useMemo(
@@ -532,6 +557,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         sourceText: activeScriptText,
         timingWords: activeScriptActionTimingWords,
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       activeScriptActionViewKey,
       activeScriptMarkers,
@@ -564,6 +590,18 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     audioScriptDraft.stepId === activeAudioScriptDraftStepId
       ? audioScriptDraft.text
       : activeAudioScriptVisualText;
+  const { recordHistory: recordScriptActionHistory } = useScriptActionHistory({
+    activeStepId: activeScriptStep?.id ?? "",
+    activeText: activeScriptText,
+    isEnabled:
+      activeScriptDetailTab === "script" &&
+      Boolean(activeScriptAction) &&
+      Boolean(activeScriptStep),
+    onApplyHistory: (text) => {
+      setScriptActionMenu(null);
+      updateActiveScriptMarkedText(text, false);
+    },
+  });
   const snapshotContextMenu = useExperienceSnapshotContextMenu({
     actions: [
       {
@@ -645,61 +683,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   }, [activeAudioScriptDraftStepId, activeAudioScriptTextareaValue]);
 
   useEffect(() => {
-    const stepId = activeScriptStep?.id ?? "";
-    if (scriptActionHistoryStepIdRef.current === stepId) return;
-
-    scriptActionHistoryStepIdRef.current = stepId;
-    scriptActionRedoStackRef.current = [];
-    scriptActionUndoStackRef.current = [];
-  }, [activeScriptStep?.id]);
-
-  useEffect(() => {
-    function handleScriptActionHistoryShortcut(
-      event: globalThis.KeyboardEvent,
-    ) {
-      if (
-        activeScriptDetailTab !== "script" ||
-        !activeScriptAction ||
-        !activeScriptStep ||
-        isNativeUndoTarget(event.target)
-      ) {
-        return;
-      }
-
-      const key = event.key.toLowerCase();
-      const isMod = event.ctrlKey || event.metaKey;
-      const isRedo =
-        isMod &&
-        !event.altKey &&
-        (key === "y" || (key === "z" && event.shiftKey));
-      const isUndo =
-        isMod && !event.altKey && key === "z" && !event.shiftKey;
-      if (!isRedo && !isUndo) return;
-
-      const stack = isRedo
-        ? scriptActionRedoStackRef.current
-        : scriptActionUndoStackRef.current;
-      if (!stack.length) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      applyScriptActionHistory(isRedo ? "redo" : "undo");
-    }
-
-    document.addEventListener("keydown", handleScriptActionHistoryShortcut);
-    return () =>
-      document.removeEventListener(
-        "keydown",
-        handleScriptActionHistoryShortcut,
-      );
-  }, [
-    activeScriptAction,
-    activeScriptDetailTab,
-    activeScriptStep,
-    activeScriptText,
-  ]);
-
-  useEffect(() => {
     let isCancelled = false;
 
     async function loadEditor() {
@@ -708,14 +691,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
       try {
         await apiFetch<{ user: ApiUser }>("/api/auth/me/");
-        const payload = await apiFetch<ExperiencesPayload>("/api/experiences/");
-        const nextExperience =
-          payload.experiences.find((candidate) => candidate.id === experienceId) ??
-          null;
-
-        if (!nextExperience) {
-          throw new Error("Experience not found.");
-        }
+        const payload = await apiFetch<{ experience: Experience }>(
+          `/api/experiences/${encodeURIComponent(experienceId)}/`,
+        );
+        const nextExperience = payload.experience;
 
         if (isCancelled) return;
 
@@ -773,6 +752,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       clearOverviewAutosaveTimer();
       clearTutorAutosaveTimer();
     };
+    // The load runs once per experience; the timer-clearing callbacks are
+    // re-created each render and only matter during cleanup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experienceId]);
 
   useEffect(() => {
@@ -820,28 +802,31 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     status,
   ]);
 
+  // The two loaders below run once per experience id; depending on the
+  // experience object or loader identity would re-fetch on every edit.
   useEffect(() => {
     if (!experience || status !== "ready") return;
 
     void loadScriptAudioItems(experience.id, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experience?.id, status]);
 
   useEffect(() => {
     if (!experience || status !== "ready") return;
 
     void loadScriptImages(experience.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experience?.id, status]);
 
   useEffect(() => {
     setScriptActionMenu(null);
   }, [activeScriptStep?.id]);
 
+  const editingScriptMarkerKey =
+    scriptActionMenu?.mode === "edit" ? scriptActionMenu.markerKey : "";
   useEffect(() => {
     setIsScriptImagePickerOpen(false);
-  }, [
-    scriptActionMenu?.mode,
-    scriptActionMenu?.mode === "edit" ? scriptActionMenu.markerKey : "",
-  ]);
+  }, [scriptActionMenu?.mode, editingScriptMarkerKey]);
 
   useFloatingMenuLifecycle({
     isOpen: Boolean(scriptActionMenu),
@@ -856,34 +841,17 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     ],
   });
 
-  useEffect(() => {
-    if (!scriptActionMenu) return;
-
-    function moveWhileDragging(event: PointerEvent) {
-      const dragState = scriptActionMenuDragRef.current;
-      if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-      event.preventDefault();
-      moveScriptActionMenuToPointer(event.clientX, event.clientY);
-    }
-
-    function stopDragging(event: PointerEvent) {
-      const dragState = scriptActionMenuDragRef.current;
-      if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-      event.preventDefault();
-      scriptActionMenuDragRef.current = null;
-    }
-
-    window.addEventListener("pointermove", moveWhileDragging);
-    window.addEventListener("pointerup", stopDragging);
-    window.addEventListener("pointercancel", stopDragging);
-    return () => {
-      window.removeEventListener("pointermove", moveWhileDragging);
-      window.removeEventListener("pointerup", stopDragging);
-      window.removeEventListener("pointercancel", stopDragging);
-    };
-  }, [scriptActionMenu]);
+  const {
+    beginDrag: beginScriptActionMenuDrag,
+    endDrag: endScriptActionMenuDrag,
+    moveDrag: moveScriptActionMenuDrag,
+  } = useFloatingMenuDrag({
+    fallbackHeight: 260,
+    fallbackWidth: 290,
+    menuRef: scriptActionMenuRef,
+    position: scriptActionMenu,
+    setPosition: setScriptActionMenu,
+  });
 
   useFloatingMenuLifecycle({
     isOpen: Boolean(scriptAudioMenu),
@@ -971,6 +939,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
       void resolveScriptSlidePreview(deckUrl, slideRef);
     });
+    // scriptSlidePreviews is read but deliberately omitted: this effect
+    // writes to it, so depending on it would loop on every resolution.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeScriptDeckUrl,
     activeScriptDetailTab,
@@ -1109,7 +1080,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             current === scriptId ? "" : current,
           ),
         );
-    }, 700);
+    }, displayTranscriptAutosaveDelayMs);
 
     return () => window.clearTimeout(timeoutId);
   }, [
@@ -1143,7 +1114,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     setScriptTextRevealSpeedDraft(String(nextSpeed));
   }
 
-  async function flushEventAutosave() {
+  // Event, on-entry, conversation, and script-text saves can all touch the
+  // same event's steps, so their flushes run one at a time through a queue.
+  function enqueueAutosaveFlush(flush: () => Promise<boolean>) {
+    const run = autosaveFlushQueueRef.current.then(flush, flush);
+    autosaveFlushQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  function flushEventAutosave() {
+    return enqueueAutosaveFlush(flushEventAutosaveNow);
+  }
+
+  async function flushEventAutosaveNow() {
     const pending = pendingEventAutosaveRef.current;
     if (!experience || !pending) return true;
 
@@ -1240,6 +1226,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       },
     ) {
       if (existingStep) {
+        const isUnchanged =
+          existingStep.actionType === stepPayload.actionType &&
+          existingStep.enabled === stepPayload.enabled &&
+          existingStep.label === stepPayload.label &&
+          plainValuesEqual(existingStep.condition, stepPayload.condition) &&
+          plainValuesEqual(existingStep.config, stepPayload.config);
+        if (isUnchanged) return existingStep;
+
         const payload = await apiFetch<{ step: EventActionStep }>(
           `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
             existingStep.id,
@@ -1367,25 +1361,39 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     if (desiredStepIds.length) {
       const desiredStepIdSet = new Set(desiredStepIds);
-      const remainingStepIds = sortedEventSteps(nextEvent.steps)
-        .map((step) => step.id)
-        .filter((stepId) => !desiredStepIdSet.has(stepId));
-      const payload = await apiFetch<{ event: ExperienceEvent }>(
-        `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/reorder/`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            stepIds: [...desiredStepIds, ...remainingStepIds],
-          }),
-        },
+      const currentStepIds = sortedEventSteps(nextEvent.steps).map(
+        (step) => step.id,
       );
-      nextEvent = payload.event;
+      const remainingStepIds = currentStepIds.filter(
+        (stepId) => !desiredStepIdSet.has(stepId),
+      );
+      const orderedStepIds = [...desiredStepIds, ...remainingStepIds];
+      const isAlreadyOrdered =
+        currentStepIds.length === orderedStepIds.length &&
+        currentStepIds.every(
+          (stepId, index) => stepId === orderedStepIds[index],
+        );
+
+      if (!isAlreadyOrdered) {
+        const payload = await apiFetch<{ event: ExperienceEvent }>(
+          `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/reorder/`,
+          {
+            method: "POST",
+            body: JSON.stringify({ stepIds: orderedStepIds }),
+          },
+        );
+        nextEvent = payload.event;
+      }
     }
 
     return nextEvent;
   }
 
-  async function flushOnEntryAutosave() {
+  function flushOnEntryAutosave() {
+    return enqueueAutosaveFlush(flushOnEntryAutosaveNow);
+  }
+
+  async function flushOnEntryAutosaveNow() {
     const pending = pendingOnEntryAutosaveRef.current;
     if (!experience || !pending) return true;
 
@@ -1441,7 +1449,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
-  async function flushConversationAutosave() {
+  function flushConversationAutosave() {
+    return enqueueAutosaveFlush(flushConversationAutosaveNow);
+  }
+
+  async function flushConversationAutosaveNow() {
     const pending = pendingConversationAutosaveRef.current;
     if (!experience || !pending) return true;
 
@@ -1502,7 +1514,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
-  async function flushScriptTextAutosave() {
+  function flushScriptTextAutosave() {
+    return enqueueAutosaveFlush(flushScriptTextAutosaveNow);
+  }
+
+  async function flushScriptTextAutosaveNow() {
     const pending = pendingScriptTextAutosaveRef.current;
     if (!experience || !pending) return true;
 
@@ -1844,16 +1860,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     queueActiveScriptTextChange(nextMarkedScriptText, value);
   }
 
-  function recordScriptActionHistory(previousText: string, nextText: string) {
-    if (!activeScriptStep || previousText === nextText) return;
-
-    scriptActionUndoStackRef.current = appendScriptActionHistoryEntry(
-      scriptActionUndoStackRef.current,
-      previousText,
-    );
-    scriptActionRedoStackRef.current = [];
-  }
-
   function updateActiveScriptMarkedText(value: string, recordHistory = true) {
     if (value === activeScriptText) return;
 
@@ -1861,37 +1867,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       recordScriptActionHistory(activeScriptText, value);
     }
     queueActiveScriptTextChange(value);
-  }
-
-  function applyScriptActionHistory(direction: "redo" | "undo") {
-    if (!activeScriptStep) return;
-
-    const sourceStack =
-      direction === "undo"
-        ? scriptActionUndoStackRef.current
-        : scriptActionRedoStackRef.current;
-    let targetText = sourceStack.pop();
-    while (targetText !== undefined && targetText === activeScriptText) {
-      targetText = sourceStack.pop();
-    }
-    if (targetText === undefined) return;
-
-    if (direction === "undo") {
-      scriptActionUndoStackRef.current = sourceStack;
-      scriptActionRedoStackRef.current = appendScriptActionHistoryEntry(
-        scriptActionRedoStackRef.current,
-        activeScriptText,
-      );
-    } else {
-      scriptActionRedoStackRef.current = sourceStack;
-      scriptActionUndoStackRef.current = appendScriptActionHistoryEntry(
-        scriptActionUndoStackRef.current,
-        activeScriptText,
-      );
-    }
-
-    setScriptActionMenu(null);
-    updateActiveScriptMarkedText(targetText, false);
   }
 
   function openScriptInsertMenu(
@@ -1920,69 +1895,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       mode: "edit",
       ...position,
     });
-  }
-
-  function beginScriptActionMenuDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) {
-    if (!scriptActionMenu || event.button > 0) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    scriptActionMenuDragRef.current = {
-      menuX: scriptActionMenu.x,
-      menuY: scriptActionMenu.y,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
-  }
-
-  function moveScriptActionMenuToPointer(clientX: number, clientY: number) {
-    const dragState = scriptActionMenuDragRef.current;
-    if (!dragState) return;
-
-    const rect = scriptActionMenuRef.current?.getBoundingClientRect();
-    const nextPosition = clampFloatingMenuPosition(
-      dragState.menuX + clientX - dragState.startX,
-      dragState.menuY + clientY - dragState.startY,
-      rect?.width ?? 290,
-      rect?.height ?? 260,
-    );
-    setScriptActionMenu((current) =>
-      current
-        ? {
-            ...current,
-            ...nextPosition,
-          }
-        : current,
-    );
-  }
-
-  function moveScriptActionMenuDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) {
-    const dragState = scriptActionMenuDragRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    moveScriptActionMenuToPointer(event.clientX, event.clientY);
-  }
-
-  function endScriptActionMenuDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) {
-    const dragState = scriptActionMenuDragRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    scriptActionMenuDragRef.current = null;
   }
 
   function insertScriptAction(type: "slide" | "side-image" | "sound") {
@@ -2431,6 +2343,9 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (pendingScriptTextAutosaveRef.current?.eventId === eventId) {
       pendingScriptTextAutosaveRef.current = null;
     }
+    for (const step of targetEvent.steps) {
+      delete pendingScriptDisplayDraftsRef.current[step.id];
+    }
 
     try {
       const payload = await apiFetch<{ events: ExperienceEvent[] }>(
@@ -2479,26 +2394,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
-  async function loadScriptImages(targetExperienceId = experience?.id ?? "") {
-    if (!targetExperienceId) return;
-
-    setIsLoadingScriptImages(true);
-    try {
-      const payload = await apiFetch<{ images: ImageLibraryOption[] }>(
-        `/api/experiences/${encodeURIComponent(targetExperienceId)}/script-images/`,
-      );
-      setScriptImageOptions(payload.images);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Could not load script images.",
-      );
-    } finally {
-      setIsLoadingScriptImages(false);
-    }
-  }
-
   function selectScriptImage(imagePath: string) {
     if (!editingScriptMarker || !editingSideImageState) return;
 
@@ -2529,42 +2424,24 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     setError("");
     setIsUploadingScriptImage(true);
+    const imagePath = await uploadScriptImageFile(
+      file,
+      "Could not upload script image.",
+    );
+    setIsUploadingScriptImage(false);
+    event.target.value = "";
+    if (imagePath === null) return;
 
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
-      const payload = await apiFetch<{
-        imagePath: string;
-        images: ImageLibraryOption[];
-      }>(
-        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
-        {
-          method: "POST",
-          body: formData,
-        },
+    if (editingScriptMarker && editingSideImageState) {
+      replaceScriptActionMarker(
+        editingScriptMarker,
+        scriptSideImageArgsFromState({
+          ...editingSideImageState,
+          imagePath,
+        }),
       );
-
-      setScriptImageOptions(payload.images);
-      if (editingScriptMarker && editingSideImageState) {
-        replaceScriptActionMarker(
-          editingScriptMarker,
-          scriptSideImageArgsFromState({
-            ...editingSideImageState,
-            imagePath: payload.imagePath,
-          }),
-        );
-      }
-      setIsScriptImagePickerOpen(false);
-    } catch (uploadError) {
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "Could not upload script image.",
-      );
-    } finally {
-      setIsUploadingScriptImage(false);
-      event.target.value = "";
     }
+    setIsScriptImagePickerOpen(false);
   }
 
   async function uploadTutorAvatar(event: ChangeEvent<HTMLInputElement>) {
@@ -2579,34 +2456,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     setError("");
     setIsUploadingTutorAvatar(true);
+    const imagePath = await uploadScriptImageFile(
+      file,
+      "Could not upload tutor image.",
+    );
+    setIsUploadingTutorAvatar(false);
+    event.target.value = "";
+    if (imagePath === null) return;
 
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
-      const payload = await apiFetch<{
-        imagePath: string;
-        images: ImageLibraryOption[];
-      }>(
-        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
-
-      setScriptImageOptions(payload.images);
-      updateTutorDraft("avatarPath", payload.imagePath);
-      setIsTutorAvatarPickerOpen(false);
-    } catch (uploadError) {
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "Could not upload tutor image.",
-      );
-    } finally {
-      setIsUploadingTutorAvatar(false);
-      event.target.value = "";
-    }
+    updateTutorDraft("avatarPath", imagePath);
+    setIsTutorAvatarPickerOpen(false);
   }
 
   async function deleteUploadedScriptImage(imagePath: string, label: string) {
@@ -2618,42 +2477,20 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (!didConfirm) return;
 
     setError("");
-    setDeletingScriptImagePath(imagePath);
-    try {
-      const payload = await apiFetch<{
-        deletedImagePath: string;
-        images: ImageLibraryOption[];
-      }>(
-        `/api/experiences/${encodeURIComponent(experience.id)}/script-images/`,
-        {
-          method: "DELETE",
-          body: JSON.stringify({ imagePath }),
-        },
-      );
+    const didDelete = await deleteScriptImageFile(imagePath);
+    if (!didDelete) return;
 
-      setScriptImageOptions(payload.images);
-      if (editingScriptMarker && editingSideImageState?.imagePath === imagePath) {
-        replaceScriptActionMarker(
-          editingScriptMarker,
-          scriptSideImageArgsFromState({
-            ...editingSideImageState,
-            imagePath: "",
-          }),
-        );
-      }
-      if (tutorForm.avatarPath === imagePath) {
-        updateTutorDraft("avatarPath", defaultScriptSideImagePath);
-      }
-    } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Could not delete script image.",
+    if (editingScriptMarker && editingSideImageState?.imagePath === imagePath) {
+      replaceScriptActionMarker(
+        editingScriptMarker,
+        scriptSideImageArgsFromState({
+          ...editingSideImageState,
+          imagePath: "",
+        }),
       );
-    } finally {
-      setDeletingScriptImagePath((current) =>
-        current === imagePath ? "" : current,
-      );
+    }
+    if (tutorForm.avatarPath === imagePath) {
+      updateTutorDraft("avatarPath", defaultScriptSideImagePath);
     }
   }
 
@@ -3089,6 +2926,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         ) : null}
         {status === "error" ? (
           <div className="experience-state error">{error}</div>
+        ) : null}
+        {status === "ready" && error ? (
+          <div className="experience-state error next-editor-error-banner" role="alert">
+            <span>{error}</span>
+            <button
+              aria-label="Dismiss error"
+              className="next-editor-error-dismiss"
+              onClick={() => setError("")}
+              type="button"
+            >
+              &times;
+            </button>
+          </div>
         ) : null}
 
         {experience ? (
