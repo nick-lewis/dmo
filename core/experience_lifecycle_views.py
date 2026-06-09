@@ -122,7 +122,7 @@ def experiences(request):
     return JsonResponse({"experience": serialize_experience(experience)}, status=201)
 
 
-@require_http_methods(["DELETE", "PATCH", "POST"])
+@require_http_methods(["DELETE", "GET", "PATCH", "POST"])
 def update_experience(request, experience_id):
     auth_response = auth_required_response(request)
     if auth_response:
@@ -131,6 +131,9 @@ def update_experience(request, experience_id):
     experience = Experience.objects.filter(id=experience_id, user=request.user).first()
     if not experience:
         return JsonResponse({"detail": "Experience not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({"experience": serialize_experience(experience)})
 
     if request.method == "DELETE":
         current_experience, user_experiences = delete_experience_for_user(

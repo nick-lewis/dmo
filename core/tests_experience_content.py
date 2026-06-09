@@ -461,6 +461,23 @@ class ExperienceContentMaturityTests(TestCase):
         self.assertEqual(delete_response.status_code, 404)
         self.assertEqual(restore_response.status_code, 404)
 
+    def test_experience_detail_get_returns_serialized_experience(self):
+        source = self.create_rich_experience()
+        self.client.force_login(self.user)
+
+        response = self.client.get(f"/api/experiences/{source.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["experience"], serialize_experience(source))
+
+    def test_other_user_cannot_fetch_experience_detail(self):
+        source = self.create_rich_experience()
+        self.client.force_login(self.other_user)
+
+        response = self.client.get(f"/api/experiences/{source.id}/")
+
+        self.assertEqual(response.status_code, 404)
+
     def test_import_normalizes_legacy_realtime_model_alias(self):
         source = self.create_rich_experience()
         payload = {
