@@ -97,3 +97,10 @@ test("DSL argument parsing preserves commas and quoted values", () => {
   assert.equal(parseDslBoolean("off", true), false);
   assert.equal(parseDslBoolean(undefined, true), true);
 });
+
+test("DSL value parsing unescapes quotes inside string literals", () => {
+  assert.equal(parseDslValue("'it\\'s fine'"), "it's fine");
+  assert.equal(parseDslValue("'say \"hi\"'"), 'say "hi"');
+  assert.equal(parseDslValue('"it\'s fine"'), "it's fine");
+  assert.equal(parseDslValue("'a\\\\b'"), "a\\b");
+});

@@ -85,11 +85,16 @@ export function parseDslValue(value: string) {
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
     try {
-      return JSON.parse(
-        trimmed.startsWith("'")
-          ? `"${trimmed.slice(1, -1).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-          : trimmed,
-      );
+      if (trimmed.startsWith('"')) return JSON.parse(trimmed);
+
+      const jsonBody = trimmed
+        .slice(1, -1)
+        .replace(/\\(.)|"/g, (match, escapedChar: string | undefined) => {
+          if (escapedChar === "'") return "'";
+          if (escapedChar !== undefined) return match;
+          return '\\"';
+        });
+      return JSON.parse(`"${jsonBody}"`);
     } catch {
       return trimmed.slice(1, -1);
     }
