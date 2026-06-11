@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   type RealtimeModelId,
   type RealtimeStatus,
@@ -125,6 +125,7 @@ function localMessageId(prefix: string) {
 
 export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialSlideSettings = useRef(readSlideSettings());
   const {
     dragLowerDivider,
@@ -1318,14 +1319,14 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     closeRealtimeConnection();
 
     try {
-      applySelectedExperience(nextExperience);
-      if (routeExperience(window.location.pathname).mode === "run") {
-        window.history.replaceState(
-          null,
-          "",
-          experienceRunPath(nextExperience.id),
-        );
+      // On the run route the URL is the source of truth: navigating remounts
+      // the player on the new experience (the route key changes).
+      if (routeExperience(location.pathname).mode === "run") {
+        writeSelectedExperienceId(nextExperience.id);
+        navigate(experienceRunPath(nextExperience.id), { replace: true });
+        return;
       }
+      applySelectedExperience(nextExperience);
       await loadCurrentSessionForExperience(nextExperience.id);
     } catch (error) {
       const detail =
@@ -1349,14 +1350,12 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         }),
       });
       setExperiences((current) => [payload.experience, ...current]);
-      applySelectedExperience(payload.experience);
-      if (routeExperience(window.location.pathname).mode === "run") {
-        window.history.replaceState(
-          null,
-          "",
-          experienceRunPath(payload.experience.id),
-        );
+      if (routeExperience(location.pathname).mode === "run") {
+        writeSelectedExperienceId(payload.experience.id);
+        navigate(experienceRunPath(payload.experience.id), { replace: true });
+        return;
       }
+      applySelectedExperience(payload.experience);
       await loadCurrentSessionForExperience(payload.experience.id);
     } catch (error) {
       setExperienceError(
