@@ -1,5 +1,11 @@
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import {
+  BrowserRouter,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router-dom";
 
 // Client-side routing: moving between pages keeps the app alive (no full
 // reloads), which is what lets session context, audio, and an ever-present
@@ -48,6 +54,16 @@ const VoicePersonalityLab = lazy(() =>
   })),
 );
 
+// Full page loads always started a page at the top; client-side navigation
+// keeps the old scroll position, so reset it ourselves per page change.
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 function ExperienceRunRoute() {
   const { experienceId = "" } = useParams();
   return <PanelStudy initialExperienceId={experienceId} key={experienceId} />;
@@ -73,6 +89,7 @@ function ExperienceEditRoute() {
 function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <Suspense
         fallback={
           <div
