@@ -1,0 +1,261 @@
+/*
+ * Design lab stylesheet — loaded ONLY by the /run-design page.
+ *
+ * Two kinds of rules live here:
+ *
+ * 1. Toolbar chrome (below): permanent harness UI, leave as is.
+ *
+ * 2. EXPERIMENTS (bottom section): visual ideas being tried out.
+ *    Scope every experiment under `.design-lab` so it cannot leak
+ *    into the real player. Example:
+ *
+ *      .design-lab .chat-message.tutor p { font-size: 17px; }
+ *
+ *    When an experiment is worth keeping, move it into styles.css
+ *    without the `.design-lab` prefix (or change the component) as
+ *    its own commit, then delete it from here.
+ */
+
+.design-lab-toolbar {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 280px;
+  padding: 10px;
+  border: 1px solid rgba(120, 110, 100, 0.35);
+  border-radius: 12px;
+  background: rgba(28, 26, 24, 0.92);
+  color: #f3efe9;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.design-lab-toolbar.is-collapsed {
+  padding: 4px;
+}
+
+.design-lab-toolbar-toggle {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.design-lab-toolbar-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.design-lab-toolbar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.design-lab-scene-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.design-lab-scene {
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.design-lab-scene:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.design-lab-scene.is-active {
+  background: #f3efe9;
+  border-color: #f3efe9;
+  color: #221f1c;
+  font-weight: 600;
+}
+
+.design-lab-scene-description {
+  margin: 0;
+  color: rgba(243, 239, 233, 0.7);
+  line-height: 1.4;
+}
+
+.design-lab-layout-readout {
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(243, 239, 233, 0.55);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.design-lab-group-label {
+  margin: 4px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(243, 239, 233, 0.55);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* --- Dock design tools (harness chrome, like the toolbar above) --------- */
+
+/* The wrapper that catches right-clicks must not affect layout. */
+.design-lab-dock-zone {
+  display: contents;
+}
+
+/* With no panels placed, the rail stays visible (unlike the player) so
+   there is something to right-click. */
+.design-lab-empty-dock .side-dock-rail {
+  align-items: center;
+}
+
+.design-lab-empty-dock .side-dock-rail span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--muted-ink);
+  font-size: 16px;
+  opacity: 0.55;
+}
+
+.design-lab-context-menu {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 280px;
+  max-height: 72vh;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(120, 110, 100, 0.35);
+  border-radius: 12px;
+  background: rgba(28, 26, 24, 0.96);
+  color: #f3efe9;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.design-lab-menu-title {
+  margin: 0;
+  color: rgba(243, 239, 233, 0.55);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.design-lab-menu-error {
+  margin: 0;
+  color: #f2b8ad;
+  line-height: 1.35;
+}
+
+.design-lab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.design-lab-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.design-lab-menu-item i {
+  margin-left: auto;
+  color: #9ad8a0;
+  font-style: normal;
+}
+
+.design-lab-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.design-lab-menu-actions button {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.design-lab-menu-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* The icon picker inside the menu is the editor's image picker component;
+   cap its height so the menu stays a menu. */
+.design-lab-context-menu .next-script-image-picker {
+  max-height: 240px;
+  overflow: auto;
+}
+
+/* ============================================================
+ * EXPERIMENTS — scope everything under `.design-lab`.
+ * Promote keepers into styles.css, then delete them here.
+ * ============================================================ */
+
+/* (Slide pagination was PROMOTED 2026-06-11: it is now the real SlidePager
+   component + .slide-pager* styles in styles.css; the lab consumes it.) */
+
+/* --- Bigger rail icons WITHOUT a bigger rail: the rail's own padding was
+   the margin boxing the icons in (7px around each 32px button). Shrink the
+   rail padding to 3px and grow the buttons to 40px — outer rail width is
+   unchanged (1+7+32+7+1 = 1+3+40+3+1 = 48px). The icon fills the button
+   face; `cover` crops a sliver off non-square images instead of
+   letterboxing them. ------------------------------------------------------ */
+
+.design-lab .side-dock-rail {
+  gap: 4px;
+  padding: 4px 3px;
+}
+
+.design-lab .side-dock-rail button {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.design-lab .side-dock-rail button span {
+  font-size: 24px;
+}
+
+.design-lab .side-dock-rail button span img {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  /* `contain` scales the whole image to fit — nothing clips; a non-square
+     image just leaves a sliver of space on its narrow axis. */
+  object-fit: contain;
+}

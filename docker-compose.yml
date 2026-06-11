@@ -52,6 +52,7 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
       VITE_API_PROXY_TARGET: http://backend:8000
+      VITE_WATCH_POLLING: "1"
     ports:
       - "5173:5173"
     volumes:

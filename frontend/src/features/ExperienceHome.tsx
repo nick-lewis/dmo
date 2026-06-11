@@ -335,6 +335,13 @@ export function ExperienceHome() {
           </button>
           <button
             className="header-action secondary"
+            onClick={() => window.location.assign("/run-design")}
+            type="button"
+          >
+            Design lab
+          </button>
+          <button
+            className="header-action secondary"
             disabled={isSigningOut}
             onClick={signOut}
             type="button"

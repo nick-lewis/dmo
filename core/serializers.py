@@ -15,6 +15,7 @@ from .models import (
 from .validation import (
     normalize_choice_icon_background,
     normalize_conversation_choices,
+    normalize_side_panel_overrides,
     validate_conversation_choices,
     validate_event_slug,
 )
@@ -269,6 +270,7 @@ def serialize_experience(experience):
         "title": experience.title,
         "slug": experience.slug,
         "description": experience.description,
+        "sidePanels": normalize_side_panel_overrides(experience.side_panels),
         "tutor": serialize_tutor_settings(tutor_settings),
         "events": [
             serialize_experience_event(event)

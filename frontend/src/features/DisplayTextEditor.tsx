@@ -12,6 +12,7 @@ import {
   displayBreaksAreEqual,
   displaySlotsAreEqual,
   normalizeDisplayBreaks,
+  remapDisplayCaretOffset,
 } from "./scriptAudioDisplayUtils";
 
 const displayDocumentHistoryLimit = 80;
@@ -474,10 +475,16 @@ function insertDisplayTextAtSelection(
   }
 
   const range = selection.getRangeAt(0);
+  // Double-click word selections usually include the trailing space; keep it
+  // so the replacement does not merge with the following word.
+  const keepTrailingSpace =
+    /\s$/.test(range.toString()) && !/\s$/.test(text);
   range.deleteContents();
-  const textNode = document.createTextNode(text);
+  const textNode = document.createTextNode(
+    keepTrailingSpace ? `${text} ` : text,
+  );
   range.insertNode(textNode);
-  range.setStartAfter(textNode);
+  range.setStart(textNode, text.length);
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
@@ -549,6 +556,7 @@ export function DisplayTextEditor({
   function readDocumentDraft(element: HTMLElement, recordHistory = true) {
     const selectionOffset = displayDocumentSelectionOffset(element);
     const scrollTop = element.scrollTop;
+    const liveText = displayDocumentTextFromElement(element);
     const documentRead = displayDocumentReadFromElement(element, baseSlots);
     const draft = {
       displayBreaks: documentRead.displayBreaks,
@@ -582,7 +590,11 @@ export function DisplayTextEditor({
         element,
         selectionOffset === null
           ? null
-          : Math.min(selectionOffset, displayDocumentDraftTextLength(draft)),
+          : remapDisplayCaretOffset(
+              liveText,
+              selectionOffset,
+              displayDocumentTextFromElement(element),
+            ),
       );
     }
     return draft;

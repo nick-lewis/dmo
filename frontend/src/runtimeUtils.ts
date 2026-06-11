@@ -6,6 +6,7 @@ import type {
   RuntimeNote,
   RuntimeOverlay,
   RuntimeSideImage,
+  RuntimeSidePanelState,
 } from "./types";
 
 export function compactPreview(value: string, fallback: string) {
@@ -241,6 +242,12 @@ export function runtimeActionText(action: Record<string, unknown>) {
   if (type === "chat_availability") {
     return action.enabled === false ? "chat off" : "chat on";
   }
+  if (type === "side_panel") {
+    return `panel ${compactRuntimeValue(action.panelId, "panel")} ${compactRuntimeValue(
+      action.mode,
+      "open",
+    )}`;
+  }
   if (type === "gslide") {
     return `slide ${compactRuntimeValue(action.slideRef, "1")}`;
   }
@@ -340,6 +347,45 @@ export function runtimeSlideFromRecord(
   };
 }
 
+// Mirrors the backend's slide_history_key: identifies a slide for history
+// deduplication and for finding the showing slide's position among the dots.
+export function slideHistoryKey(slide: {
+  imageUrl: string;
+  pageId: string;
+  presentationId: string;
+}) {
+  return `${slide.presentationId}|${slide.pageId}|${slide.imageUrl}`;
+}
+
+export function runtimeSlideHistoryFromValue(value: unknown): ResolvedSlide[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((entry) => {
+    const slide = runtimeSlideFromRecord(entry);
+    return slide
+      ? [
+          {
+            cached: slide.cached,
+            imageUrl: slide.imageUrl,
+            pageId: slide.pageId,
+            presentationId: slide.presentationId,
+            slideRef: slide.slideRef,
+          },
+        ]
+      : [];
+  });
+}
+
+export function appendSlideHistory(
+  history: ResolvedSlide[],
+  slide: ResolvedSlide,
+): ResolvedSlide[] {
+  const key = slideHistoryKey(slide);
+  if (key === "||") return history;
+  if (history.some((entry) => slideHistoryKey(entry) === key)) return history;
+  return [...history, slide].slice(-60);
+}
+
 export function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -397,6 +443,23 @@ export function runtimeSideImagesFromRecord(
       Math.abs(scale - 1) > 0.001
         ? { imagePath, scale, slot, visible }
         : { imagePath, slot, visible };
+  }
+  return next;
+}
+
+export function runtimeSidePanelsFromRecord(
+  value: unknown,
+): Record<string, RuntimeSidePanelState> {
+  const next: Record<string, RuntimeSidePanelState> = {};
+  const source = recordFromUnknown(value);
+  for (const [panelId, rawPanel] of Object.entries(source)) {
+    if (!panelId.trim()) continue;
+    const panel = recordFromUnknown(rawPanel);
+    if (panel.available === false) continue;
+    next[panelId] = {
+      available: true,
+      open: panel.open === true,
+    };
   }
   return next;
 }

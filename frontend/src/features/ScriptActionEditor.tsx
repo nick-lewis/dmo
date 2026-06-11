@@ -1996,16 +1996,12 @@ export function ScriptActionEditor({
       const slideHref = googleSlideUrl(marker);
       return (
         <div className="script-slide-preview">
-          <a
-            aria-label={`Open slide ${slideRef} in Google Slides`}
-            className={`script-slide-open${slideHref ? "" : " disabled"}`}
-            href={slideHref || undefined}
-            onClick={(event) => {
-              if (!slideHref) event.preventDefault();
-            }}
-            rel="noreferrer"
-            target="_blank"
-            title="Open this slide in Google Slides."
+          <button
+            aria-label={`Edit slide ${slideRef} marker`}
+            className="script-slide-open"
+            onClick={() => editMarker(marker)}
+            title="Choose which slide this shows."
+            type="button"
           >
             {preview.status === "ready" && preview.imageUrl ? (
               <img alt={`Slide ${slideRef}`} src={preview.imageUrl} />
@@ -2016,7 +2012,7 @@ export function ScriptActionEditor({
                   : `Slide ${slideRef}`}
               </span>
             )}
-          </a>
+          </button>
           <div className="script-slide-controls">
             <label>
               <span>Slide</span>
@@ -2027,6 +2023,16 @@ export function ScriptActionEditor({
                 value={slideRef}
               />
             </label>
+            <a
+              aria-label={`Open slide ${slideRef} in Google Slides`}
+              className={`script-slide-external${slideHref ? "" : " disabled"}`}
+              href={slideHref || undefined}
+              rel="noreferrer"
+              target="_blank"
+              title="Open this slide in Google Slides."
+            >
+              Open
+            </a>
             <button
               disabled={!deckUrl.trim() || preview.status === "loading"}
               onClick={() => void resolveSlidePreview(slideRef, true)}
@@ -2046,7 +2052,15 @@ export function ScriptActionEditor({
     }
     return (
       <div className="script-slide-preview">
-        <img alt="" src={publicAsset(imagePath)} />
+        <button
+          aria-label={`Edit ${marker.label} marker`}
+          className="script-slide-open"
+          onClick={() => editMarker(marker)}
+          title={`Edit ${marker.label}.`}
+          type="button"
+        >
+          <img alt="" src={publicAsset(imagePath)} />
+        </button>
       </div>
     );
   }

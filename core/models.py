@@ -17,6 +17,9 @@ class Experience(models.Model):
     title = models.CharField(max_length=160)
     slug = models.SlugField(max_length=180)
     description = models.TextField(blank=True, default="")
+    # Per-experience overrides (icon/title) for registry-defined side panels:
+    # [{panelId, title, iconPath}]
+    side_panels = models.JSONField(blank=True, default=list)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -143,6 +146,7 @@ class EventActionStep(models.Model):
         PYTHON_NOTEBOOK = "python_notebook", "Python notebook"
         CHAT_AVAILABILITY = "chat_availability", "Chat availability"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
+        SIDE_PANEL = "side_panel", "Side panel"
         GOTO_EVENT = "goto_event", "Go to event"
         BUTTON_CHOICE = "button_choice", "Button choice"
 

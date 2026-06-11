@@ -134,6 +134,51 @@ def validate_conversation_choices(value):
     return normalize_conversation_choices(normalized), ""
 
 
+def validate_side_panels(value):
+    """Validate per-experience side panel overrides: [{panelId, title, iconPath}]."""
+    if value is None:
+        return [], ""
+    if not isinstance(value, list):
+        return None, "Side panels must be a list."
+    if len(value) > 20:
+        return None, "Side panels are limited to 20 per experience."
+
+    normalized = []
+    seen_panel_ids = set()
+    for raw_panel in value:
+        if not isinstance(raw_panel, dict):
+            return None, "Each side panel must be an object."
+
+        panel_id = str(raw_panel.get("panelId", "") or "").strip()
+        if not panel_id:
+            return None, "Side panel id is required."
+        if len(panel_id) > 60:
+            return None, "Side panel id is too long."
+        if panel_id in seen_panel_ids:
+            continue
+        seen_panel_ids.add(panel_id)
+
+        title = str(raw_panel.get("title", "") or "").strip()
+        if len(title) > 80:
+            return None, "Side panel title is too long."
+        icon_path = str(raw_panel.get("iconPath", "") or "").strip()
+        if len(icon_path) > 220:
+            return None, "Side panel icon path is too long."
+
+        normalized.append(
+            {"iconPath": icon_path, "panelId": panel_id, "title": title}
+        )
+
+    return normalized, ""
+
+
+def normalize_side_panel_overrides(value):
+    if not isinstance(value, list):
+        return []
+    normalized, error = validate_side_panels(value)
+    return normalized if not error and normalized is not None else []
+
+
 def validation_template_is_dynamic(value):
     return "{{" in str(value or "")
 
@@ -590,6 +635,18 @@ def normalize_emitted_runtime_action(action):
             "enabled": action.get("enabled"),
             "source": "interactive",
             "type": "chat_availability",
+        }, None
+
+    if action_type == "side_panel":
+        panel_id = runtime_action_string(action.get("panelId"), max_length=60)
+        mode = str(action.get("mode", "open") or "open").strip()
+        if not panel_id or mode not in {"open", "available", "off"}:
+            return None, rejected_emitted_runtime_action(action, "invalid_side_panel")
+        return {
+            "mode": mode,
+            "panelId": panel_id,
+            "source": "interactive",
+            "type": "side_panel",
         }, None
 
     if action_type in {"interactive", "interactive_update"}:
@@ -1231,13 +1288,36 @@ def validate_action_config(action_type, value):
         color = str(value.get("color", "rgba(59, 130, 246, 0.6)")).strip()
         if len(color) > 120:
             return None, "Highlight color is too long."
-        return {"color": color, "selector": selector}, ""
+        config = {"color": color, "selector": selector}
+        source = str(value.get("source", "")).strip()
+        if source:
+            config["source"] = source[:80]
+        return config, ""
 
     if action_type == EventActionStep.ActionType.HIGHLIGHT_OFF:
         selector, selector_error = validate_selector(value.get("selector"))
         if selector_error:
             return None, selector_error
-        return {"selector": selector}, ""
+        config = {"selector": selector}
+        source = str(value.get("source", "")).strip()
+        if source:
+            config["source"] = source[:80]
+        return config, ""
+
+    if action_type == EventActionStep.ActionType.SIDE_PANEL:
+        panel_id = str(value.get("panelId", "")).strip()
+        if not panel_id:
+            return None, "Panel id is required."
+        if len(panel_id) > 60:
+            return None, "Panel id is too long."
+        mode = str(value.get("mode", "open")).strip() or "open"
+        if mode not in {"open", "available", "off"}:
+            return None, "Panel mode must be open, available, or off."
+        config = {"mode": mode, "panelId": panel_id}
+        source = str(value.get("source", "")).strip()
+        if source:
+            config["source"] = source[:80]
+        return config, ""
 
     if action_type in {
         EventActionStep.ActionType.INTERACTIVE,

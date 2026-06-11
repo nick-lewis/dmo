@@ -1,3 +1,8 @@
+import {
+  defaultGlowColor,
+  glowTargetById,
+  glowTargetBySelector,
+} from "../glowTargets";
 import type { EventActionStep } from "../types";
 
 export type PythonDslChatAction = {
@@ -17,11 +22,28 @@ export type PythonDslGotoAction = {
   triggersEvent: string;
 };
 
+export type PythonDslPanelAction = {
+  mode: "open" | "available" | "off";
+  panelId: string;
+};
+
+export type PythonDslGlowOnAction = {
+  color: string;
+  selector: string;
+};
+
+export type PythonDslGlowOffAction = {
+  selector: string;
+};
+
 export type PythonDslStepAction =
   | ({ actionType: "chat_availability" } & PythonDslChatAction)
   | ({ actionType: "goto_event" } & PythonDslGotoAction)
+  | ({ actionType: "highlight_off" } & PythonDslGlowOffAction)
+  | ({ actionType: "highlight_on" } & PythonDslGlowOnAction)
   | ({ actionType: "script" } & PythonDslScriptAction)
-  | ({ actionType: "set_context" } & PythonDslContextAction);
+  | ({ actionType: "set_context" } & PythonDslContextAction)
+  | ({ actionType: "side_panel" } & PythonDslPanelAction);
 
 function sortedEventActionSteps(steps: EventActionStep[]) {
   return [...steps].sort(
@@ -278,6 +300,51 @@ function parseGotoActionFromArgs(args: string): PythonDslGotoAction | null {
   return { triggersEvent };
 }
 
+const sidePanelModes = new Set(["open", "available", "off"]);
+
+function parsePanelActionFromArgs(args: string): PythonDslPanelAction | null {
+  const { namedArgs, positionalArgs } = parseDslNamedAndPositionalArgs(args);
+  const panelId = String(
+    parseDslValue(
+      namedArgs.get("id") ?? namedArgs.get("panel") ?? positionalArgs[0],
+    ),
+  ).trim();
+  if (!panelId) return null;
+
+  const rawMode = String(
+    parseDslValue(namedArgs.get("mode") ?? positionalArgs[1]),
+  )
+    .trim()
+    .toLowerCase();
+  const mode = sidePanelModes.has(rawMode) ? rawMode : "open";
+  return { mode: mode as PythonDslPanelAction["mode"], panelId };
+}
+
+function parseGlowTargetFromArgs(args: string) {
+  const { namedArgs, positionalArgs } = parseDslNamedAndPositionalArgs(args);
+  const targetId = String(
+    parseDslValue(namedArgs.get("target") ?? positionalArgs[0]),
+  ).trim();
+  return { namedArgs, positionalArgs, target: glowTargetById(targetId) };
+}
+
+function parseGlowOnActionFromArgs(args: string): PythonDslGlowOnAction | null {
+  const { namedArgs, positionalArgs, target } = parseGlowTargetFromArgs(args);
+  if (!target) return null;
+
+  const color = String(
+    parseDslValue(namedArgs.get("color") ?? positionalArgs[1]),
+  ).trim();
+  return { color: color || defaultGlowColor, selector: target.selector };
+}
+
+function parseGlowOffActionFromArgs(
+  args: string,
+): PythonDslGlowOffAction | null {
+  const { target } = parseGlowTargetFromArgs(args);
+  return target ? { selector: target.selector } : null;
+}
+
 export function parsePythonDslGotoActions(source: string): PythonDslGotoAction[] {
   const gotoCallPattern = /^(?:goto_event|goto)\s*\((.*)\)\s*$/;
 
@@ -300,6 +367,9 @@ export function parsePythonDslStepActions(source: string): PythonDslStepAction[]
   const scriptCallPattern = /^script\s*\([^)]*\)\s*$/;
   const setContextCallPattern = /^set_context\s*\((.*)\)\s*$/;
   const gotoCallPattern = /^(?:goto_event|goto)\s*\((.*)\)\s*$/;
+  const panelCallPattern = /^panel\s*\((.*)\)\s*$/;
+  const glowOffCallPattern = /^glow_off\s*\((.*)\)\s*$/;
+  const glowCallPattern = /^glow\s*\((.*)\)\s*$/;
 
   return executablePythonDslSource(source)
     .split("\n")
@@ -333,7 +403,39 @@ export function parsePythonDslStepActions(source: string): PythonDslStepAction[]
         return action ? [{ actionType: "goto_event", ...action }] : [];
       }
 
+      const panelMatch = panelCallPattern.exec(trimmed);
+      if (panelMatch) {
+        const action = parsePanelActionFromArgs(panelMatch[1] ?? "");
+        return action ? [{ actionType: "side_panel", ...action }] : [];
+      }
+
+      const glowOffMatch = glowOffCallPattern.exec(trimmed);
+      if (glowOffMatch) {
+        const action = parseGlowOffActionFromArgs(glowOffMatch[1] ?? "");
+        return action ? [{ actionType: "highlight_off", ...action }] : [];
+      }
+
+      const glowMatch = glowCallPattern.exec(trimmed);
+      if (glowMatch) {
+        const action = parseGlowOnActionFromArgs(glowMatch[1] ?? "");
+        return action ? [{ actionType: "highlight_on", ...action }] : [];
+      }
+
       return [];
+    });
+}
+
+// Disabled script steps project as "# script()" comment lines. Surplus-step
+// deletion must stay conservative while any of those are present, because
+// commented scripts are invisible to the parser yet still own a step.
+export function hasCommentedScriptAction(source: string) {
+  return source
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .some((line) => {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith("#")) return false;
+      return /\bscript\s*\([^)]*\)/.test(trimmed.replace(/^#\s*/, ""));
     });
 }
 
@@ -346,13 +448,27 @@ function hasScriptStepContent(step: EventActionStep) {
   );
 }
 
+function glowStepTarget(step: EventActionStep) {
+  return glowTargetBySelector(String(step.config.selector ?? ""));
+}
+
+function isDslOwnedGlowStep(step: EventActionStep) {
+  const source = typeof step.config.source === "string" ? step.config.source : "";
+  return Boolean(source) && Boolean(glowStepTarget(step));
+}
+
 export function pythonDslSourceFromEventSteps(steps: EventActionStep[]) {
   return sortedEventActionSteps(steps)
     .filter(
       (step) =>
         ((step.actionType === "set_context" ||
-          step.actionType === "goto_event") &&
+          step.actionType === "goto_event" ||
+          step.actionType === "side_panel") &&
           step.config.source !== "next-conversation-dsl") ||
+        ((step.actionType === "highlight_on" ||
+          step.actionType === "highlight_off") &&
+          step.config.source !== "next-conversation-dsl" &&
+          isDslOwnedGlowStep(step)) ||
         step.actionType === "chat_availability" ||
         (step.actionType === "script" && hasScriptStepContent(step)),
     )
@@ -373,6 +489,33 @@ export function pythonDslSourceFromEventSteps(steps: EventActionStep[]) {
         const source = `goto_event(destination=${JSON.stringify(
           String(step.config.triggersEvent ?? ""),
         )})`;
+        return step.enabled ? source : `# ${source}`;
+      }
+
+      if (step.actionType === "side_panel") {
+        const panelId = JSON.stringify(String(step.config.panelId ?? ""));
+        const mode = String(step.config.mode ?? "open");
+        const source =
+          mode === "open"
+            ? `panel(${panelId})`
+            : `panel(${panelId}, mode=${JSON.stringify(mode)})`;
+        return step.enabled ? source : `# ${source}`;
+      }
+
+      if (step.actionType === "highlight_on") {
+        const target = glowStepTarget(step);
+        const targetId = JSON.stringify(target?.id ?? "");
+        const color = String(step.config.color ?? "").trim();
+        const source =
+          color && color !== defaultGlowColor
+            ? `glow(${targetId}, color=${JSON.stringify(color)})`
+            : `glow(${targetId})`;
+        return step.enabled ? source : `# ${source}`;
+      }
+
+      if (step.actionType === "highlight_off") {
+        const target = glowStepTarget(step);
+        const source = `glow_off(${JSON.stringify(target?.id ?? "")})`;
         return step.enabled ? source : `# ${source}`;
       }
 

@@ -134,7 +134,12 @@ export function markerSupportsFineTuningSettings(marker: ScriptMarkerInstance) {
     marker.type === "side_image" ||
     marker.type === "show_image" ||
     marker.type === "agent_image_on" ||
-    marker.type === "agent_image_off"
+    marker.type === "agent_image_off" ||
+    marker.type === "highlight" ||
+    marker.type === "highlight_on" ||
+    marker.type === "highlight_off" ||
+    marker.type === "panel_on" ||
+    marker.type === "panel_off"
   );
 }
 
@@ -149,6 +154,16 @@ export function markerContextMenuEstimatedHeight(marker: ScriptMarkerInstance) {
     return 420;
   }
   if (marker.type === "play_sound") return 300;
+  if (
+    marker.type === "highlight" ||
+    marker.type === "highlight_on" ||
+    marker.type === "panel_on"
+  ) {
+    return 260;
+  }
+  if (marker.type === "highlight_off" || marker.type === "panel_off") {
+    return 210;
+  }
   return 224;
 }
 

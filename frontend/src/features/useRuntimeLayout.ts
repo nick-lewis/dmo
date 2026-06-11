@@ -277,10 +277,12 @@ export function useRuntimeLayout({ initiallyOpen }: RuntimeLayoutOptions) {
     dragLowerDivider,
     dragWorkspaceDivider,
     isLeftOpen,
+    leftWidth,
     lowerHeight,
     rightRef,
     setIsLeftOpen,
     shellRef,
     shellStyle,
+    workspaceWidth,
   };
 }

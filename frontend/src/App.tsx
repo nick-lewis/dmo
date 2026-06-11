@@ -27,6 +27,11 @@ const PanelStudy = lazy(() =>
     default: module.PanelStudy,
   })),
 );
+const PanelStudyDesign = lazy(() =>
+  import("./features/PanelStudyDesign").then((module) => ({
+    default: module.PanelStudyDesign,
+  })),
+);
 const ScriptTextSpeedLab = lazy(() =>
   import("./features/ScriptTextSpeedLab").then((module) => ({
     default: module.ScriptTextSpeedLab,
@@ -50,6 +55,8 @@ function App() {
     screen = <ScriptTextSpeedLab />;
   } else if (normalizedPath === "/voice-personality-lab") {
     screen = <VoicePersonalityLab />;
+  } else if (normalizedPath === "/run-design") {
+    screen = <PanelStudyDesign />;
   } else if (experienceRoute.experienceId && experienceRoute.mode === "run") {
     screen = <PanelStudy initialExperienceId={experienceRoute.experienceId} />;
   } else if (experienceRoute.experienceId && experienceRoute.mode === "next") {

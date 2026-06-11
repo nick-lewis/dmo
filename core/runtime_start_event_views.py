@@ -6,7 +6,7 @@ from django.views.decorators.http import require_POST
 from .experience_services import ensure_start_event
 from .http_utils import auth_required_response, parse_json_body, session_payload
 from .models import TutoringSession
-from .runtime import apply_runtime_actions_to_state
+from .runtime import apply_client_side_panel_state, apply_runtime_actions_to_state
 from .runtime_execution import parse_client_ui_state, run_event_chain
 from .serializers import (
     conversation_choice_actions_for_ran_events,
@@ -46,6 +46,7 @@ def run_start_event(request, session_id):
 
         event = ensure_start_event(session.experience)
         state = dict(session.runtime_state or {})
+        state = apply_client_side_panel_state(state, client_ui_state)
         event_runs = dict(state.get("eventRuns") or {})
         run_key = str(event.id)
 

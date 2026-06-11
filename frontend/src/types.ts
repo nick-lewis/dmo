@@ -98,6 +98,7 @@ export type EventActionStep = {
     | "python_notebook"
     | "chat_availability"
     | "set_ui_trigger"
+    | "side_panel"
     | "goto_event"
     | "button_choice";
   label: string;
@@ -217,11 +218,15 @@ export type EventStructuralHistoryItem =
       type: "reorder_events";
     };
 
+export type { SidePanelOverride } from "./sidePanelMetadata";
+import type { SidePanelOverride } from "./sidePanelMetadata";
+
 export type Experience = {
   id: string;
   title: string;
   slug: string;
   description: string;
+  sidePanels?: SidePanelOverride[];
   tutor: TutorSettings;
   events: ExperienceEvent[];
   createdAt: string;
@@ -390,6 +395,11 @@ export type PythonNotebookPayload = SessionPayload & {
   notebook: PythonNotebookState;
 };
 
+export type RuntimeSidePanelState = {
+  available: boolean;
+  open: boolean;
+};
+
 export type RuntimeUiState = {
   avatarPath?: string;
   avatarVisible?: boolean;
@@ -399,6 +409,7 @@ export type RuntimeUiState = {
   notes?: RuntimeNote[];
   notesVisible: boolean;
   overlays?: Record<string, RuntimeOverlay>;
+  sidePanels?: Record<string, RuntimeSidePanelState>;
 };
 
 export type RuntimeHighlight = {

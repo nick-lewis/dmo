@@ -7,6 +7,8 @@ import {
   lineStartOffset,
   parseButtonActionArgumentRanges,
   parseDestinationArgumentRange,
+  removedScriptActionIndices,
+  scriptActionRangesFromSource,
 } from "../src/features/pythonDslEditorUtils";
 
 test("formatPythonDsl normalizes indentation and dedents else blocks", () => {
@@ -63,4 +65,76 @@ test("line movement helpers preserve hierarchy boundaries", () => {
     true,
   );
   assert.equal(lineStartOffset(["one", "two", "three"], 2), 8);
+});
+
+test("script action ranges skip commented lines", () => {
+  const source = 'chat(enabled=False)\nscript()\n# script()\nscript("x")';
+  assert.deepEqual(scriptActionRangesFromSource(source), [
+    { from: 20, to: 28 },
+    { from: 40, to: 51 },
+  ]);
+});
+
+function mapThroughSingleDeletion(deleteFrom: number, deleteTo: number) {
+  return (position: number) => {
+    if (position <= deleteFrom) return position;
+    if (position >= deleteTo) return position - (deleteTo - deleteFrom);
+    return deleteFrom;
+  };
+}
+
+test("deleting the first of two script lines reports index 0", () => {
+  const oldSource = "script()\nscript()";
+  const newSource = "script()";
+  const mapPosition = mapThroughSingleDeletion(0, 9);
+  assert.deepEqual(
+    removedScriptActionIndices(
+      scriptActionRangesFromSource(oldSource),
+      scriptActionRangesFromSource(newSource),
+      mapPosition,
+    ),
+    [0],
+  );
+});
+
+test("deleting the last script line reports the last index", () => {
+  const oldSource = "script()\nscript()";
+  const newSource = "script()";
+  const mapPosition = mapThroughSingleDeletion(8, 17);
+  assert.deepEqual(
+    removedScriptActionIndices(
+      scriptActionRangesFromSource(oldSource),
+      scriptActionRangesFromSource(newSource),
+      mapPosition,
+    ),
+    [1],
+  );
+});
+
+test("backspacing one character inside a script call reports it removed", () => {
+  const oldSource = "script()\nscript()";
+  const newSource = "script(\nscript()";
+  const mapPosition = mapThroughSingleDeletion(7, 8);
+  assert.deepEqual(
+    removedScriptActionIndices(
+      scriptActionRangesFromSource(oldSource),
+      scriptActionRangesFromSource(newSource),
+      mapPosition,
+    ),
+    [0],
+  );
+});
+
+test("inserting a script line reports no removals", () => {
+  const oldSource = "script()";
+  const newSource = "script()\nscript()";
+  const mapPosition = (position: number) => position;
+  assert.deepEqual(
+    removedScriptActionIndices(
+      scriptActionRangesFromSource(oldSource),
+      scriptActionRangesFromSource(newSource),
+      mapPosition,
+    ),
+    [],
+  );
 });

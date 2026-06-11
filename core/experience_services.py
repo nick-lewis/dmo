@@ -30,8 +30,10 @@ from .validation import (
     DEFAULT_CHOICE_ICON_BACKGROUND,
     normalize_conversation_choices,
     normalize_choice_icon_background,
+    normalize_side_panel_overrides,
     validate_action_sequence,
     validate_conversation_choices,
+    validate_side_panels,
 )
 
 
@@ -182,6 +184,14 @@ def update_experience_from_data(experience, data):
             return None, "Description is too long."
         experience.description = description
 
+    if "sidePanels" in data:
+        side_panels, side_panels_error = validate_side_panels(
+            data.get("sidePanels")
+        )
+        if side_panels_error:
+            return None, side_panels_error
+        experience.side_panels = side_panels
+
     tutor_data = data.get("tutor")
     tutor_settings = ensure_tutor_settings(experience)
     if tutor_data is not None:
@@ -276,6 +286,10 @@ def duplicate_experience_for_user(source, user):
             title=copy_title,
             slug=unique_experience_slug(user, copy_title),
             description=source.description,
+            side_panels=clone_json(
+                normalize_side_panel_overrides(source.side_panels),
+                [],
+            ),
         )
         duplicate_tutor = ensure_tutor_settings(duplicate)
         duplicate_tutor.assistant_name = source_tutor.assistant_name
@@ -616,6 +630,9 @@ def create_experience_from_export_payload(user, payload):
                 title=title,
                 slug=unique_experience_slug(user, title),
                 description=description,
+                side_panels=normalize_side_panel_overrides(
+                    data.get("sidePanels")
+                ),
             )
             tutor_data = data.get("tutor") if isinstance(data.get("tutor"), dict) else {}
             tutor_settings = ensure_tutor_settings(experience)

@@ -291,8 +291,10 @@ export function useScriptAudioPlayback({
 }: ScriptAudioPlaybackOptions) {
   const activeSessionIdRef = useRef("");
   const playedScriptMessageIdsRef = useRef(new Set<string>());
+  const appliedImmediateCueMessageIdsRef = useRef(new Set<string>());
   const deferredConversationChoiceStepIdsRef = useRef(new Set<string>());
   const scriptAudioRef = useRef<HTMLAudioElement | null>(null);
+  const scriptAudioQueueDepthRef = useRef(0);
   const scriptAudioQueueRef = useRef(Promise.resolve());
   const scriptAudioSkipRef = useRef<(() => void) | null>(null);
   const scriptTextSkipRef = useRef<(() => void) | null>(null);
@@ -715,6 +717,20 @@ export function useScriptAudioPlayback({
     );
   }
 
+  function applyImmediateScriptCues(message: ChatMessage | undefined) {
+    if (!message || appliedImmediateCueMessageIdsRef.current.has(message.id)) {
+      return;
+    }
+    appliedImmediateCueMessageIdsRef.current.add(message.id);
+
+    const immediateActions = scriptCuesFromMessage(message)
+      .filter((cue) => cue.progress <= scriptImmediateCueProgress)
+      .map((cue) => cue.action);
+    if (immediateActions.length) {
+      applyRuntimeActions(immediateActions);
+    }
+  }
+
   async function playScriptMessages(
     activeSession: TutoringSession,
     candidateMessages: ChatMessage[],
@@ -726,6 +742,7 @@ export function useScriptAudioPlayback({
       if (activeSessionIdRef.current !== activeSession.id) break;
       if (playedScriptMessageIdsRef.current.has(message.id)) continue;
       playedScriptMessageIdsRef.current.add(message.id);
+      applyImmediateScriptCues(message);
 
       let payload: MessageAudioPayload | null = null;
       try {
@@ -847,12 +864,13 @@ export function useScriptAudioPlayback({
     deferConversationChoiceActions(afterEntryActions);
 
     const scriptMessageIds = new Set(scriptMessages.map((message) => message.id));
-    const immediateActions = scriptMessages.flatMap((message) =>
-      scriptCuesFromMessage(message)
-        .filter((cue) => cue.progress <= scriptImmediateCueProgress)
-        .map((cue) => cue.action),
-    );
-    applyRuntimeActions(immediateActions);
+    // Only the first script's start-of-script cues run at queue time (so its
+    // opening slide shows while audio loads), and only when nothing is still
+    // playing. Every other script's immediate cues run when its own playback
+    // starts, not minutes early.
+    if (scriptAudioQueueDepthRef.current === 0) {
+      applyImmediateScriptCues(scriptMessages[0]);
+    }
 
     setMessages((current) =>
       current.map((message) =>
@@ -870,6 +888,7 @@ export function useScriptAudioPlayback({
       ),
     );
 
+    scriptAudioQueueDepthRef.current += 1;
     scriptAudioQueueRef.current = scriptAudioQueueRef.current
       .catch(() => undefined)
       .then(async () => {
@@ -883,6 +902,12 @@ export function useScriptAudioPlayback({
           setIsScriptAudioPlaying(false);
         }
       });
+    scriptAudioQueueRef.current = scriptAudioQueueRef.current.finally(() => {
+      scriptAudioQueueDepthRef.current = Math.max(
+        0,
+        scriptAudioQueueDepthRef.current - 1,
+      );
+    });
   }
 
   useEffect(() => {
@@ -917,6 +942,7 @@ export function useScriptAudioPlayback({
   useEffect(() => {
     scriptAudioQueueRef.current = Promise.resolve();
     playedScriptMessageIdsRef.current.clear();
+    appliedImmediateCueMessageIdsRef.current.clear();
     deferredConversationChoiceStepIdsRef.current.clear();
     setIsScriptAudioPlaying(false);
     scriptTextSkipRef.current?.();

@@ -29,7 +29,12 @@ import {
   defaultChoiceIconBackground,
   resizeTextareaToContent,
 } from "../uiHelpers";
+import { defaultGlowColor, glowTargets } from "../glowTargets";
 import { stringConfigValue } from "../runtimeUtils";
+import {
+  sidePanelMetadataDefinitions,
+  type SidePanelOverride,
+} from "../sidePanelMetadata";
 import {
   appendScriptMarkerTimelineArg,
   buildScriptMarker,
@@ -61,6 +66,7 @@ import type {
 import { experienceAutosaveDelayMs } from "./eventEditorUtils";
 import type { PythonDslScriptAction } from "./PythonDslEditor";
 import {
+  hasCommentedScriptAction,
   parsePythonDslStepActions,
   pythonDslSourceFromEventSteps,
 } from "./pythonDslActions";
@@ -381,6 +387,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
   );
   const selectedEventDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const scriptImageFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Script step IDs queued for deletion by editor chip removals, applied on
+  // the next on-entry autosave flush. Keyed by event ID.
+  const pendingScriptStepRemovalsRef = useRef(new Map<string, string[]>());
+  // Recently deleted script step payloads so an undone script() line gets its
+  // content back instead of coming back empty. Keyed by event ID.
+  const scriptStepStashRef = useRef(
+    new Map<
+      string,
+      Array<{
+        condition: Record<string, unknown>;
+        config: Record<string, unknown>;
+        index: number;
+        label: string;
+      }>
+    >(),
+  );
   const {
     clearConversationAutosaveTimer,
     clearEventAutosaveTimer,
@@ -1168,7 +1190,59 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     }
   }
 
+  function stashScriptStep(eventId: string, index: number, step: EventActionStep) {
+    const stash = scriptStepStashRef.current.get(eventId) ?? [];
+    stash.push({
+      condition: step.condition,
+      config: step.config,
+      index,
+      label: step.label,
+    });
+    while (stash.length > 20) stash.shift();
+    scriptStepStashRef.current.set(eventId, stash);
+  }
+
+  function takeStashedScriptStep(eventId: string, index: number) {
+    const stash = scriptStepStashRef.current.get(eventId);
+    if (!stash?.length) return null;
+
+    for (let position = stash.length - 1; position >= 0; position -= 1) {
+      if (stash[position].index === index) {
+        return stash.splice(position, 1)[0];
+      }
+    }
+    return stash.pop() ?? null;
+  }
+
+  function queueOnEntryScriptRemovals(
+    indices: number[],
+    totalScriptActions: number,
+  ) {
+    if (!selectedEvent) return;
+
+    const eventId = selectedEvent.id;
+    const pending = pendingScriptStepRemovalsRef.current.get(eventId) ?? [];
+    const pendingSet = new Set(pending);
+    const remaining = sortedScriptSteps(selectedEvent).filter(
+      (step) => !pendingSet.has(step.id),
+    );
+    // Editor indices are only trustworthy when its view of the script list
+    // matches ours; on mismatch the count-based sync fallback applies instead.
+    if (remaining.length !== totalScriptActions) return;
+
+    const targets = indices.flatMap((index) => {
+      const step = remaining[index];
+      return step ? [{ index, step }] : [];
+    });
+    for (const { index, step } of targets) {
+      pending.push(step.id);
+      stashScriptStep(eventId, index, step);
+    }
+    pendingScriptStepRemovalsRef.current.set(eventId, pending);
+  }
+
   async function syncDslActionStepsFromSource({
+    eventId,
     eventPathId,
     experiencePathId,
     includeChatActions = false,
@@ -1177,6 +1251,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     source,
     sourceLabel,
   }: {
+    eventId: string;
     eventPathId: string;
     experiencePathId: string;
     includeChatActions?: boolean;
@@ -1208,10 +1283,27 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const existingScriptSteps = includeScriptActions
       ? sortedScriptSteps(latestEvent)
       : [];
+    const existingPanelSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "side_panel" && step.config.source === sourceLabel,
+    );
+    const existingGlowOnSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "highlight_on" &&
+        step.config.source === sourceLabel,
+    );
+    const existingGlowOffSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "highlight_off" &&
+        step.config.source === sourceLabel,
+    );
     let contextIndex = 0;
     let gotoIndex = 0;
     let chatIndex = 0;
     let scriptIndex = 0;
+    let panelIndex = 0;
+    let glowOnIndex = 0;
+    let glowOffIndex = 0;
     let nextEvent = latestEvent;
     const desiredStepIds: string[] = [];
 
@@ -1264,13 +1356,19 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     for (const action of nextActions) {
       if (action.actionType === "script") {
         const existingStep = existingScriptSteps[scriptIndex];
+        // A script() line without a matching step usually means an undone
+        // deletion; restore the stashed content instead of creating empty.
+        const stashedStep = existingStep
+          ? null
+          : takeStashedScriptStep(eventId, scriptIndex);
         scriptIndex += 1;
         const step = await upsertDslStep(existingStep, {
           actionType: "script",
-          condition: existingStep?.condition ?? {},
-          config: existingStep?.config ?? { deckUrl: "", text: "" },
+          condition: existingStep?.condition ?? stashedStep?.condition ?? {},
+          config: existingStep?.config ??
+            stashedStep?.config ?? { deckUrl: "", text: "" },
           enabled: true,
-          label: existingStep?.label || "Script",
+          label: existingStep?.label || stashedStep?.label || "Script",
         });
         desiredStepIds.push(step.id);
         continue;
@@ -1319,13 +1417,76 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         });
         gotoIndex += 1;
         desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "side_panel") {
+        const step = await upsertDslStep(existingPanelSteps[panelIndex], {
+          actionType: "side_panel",
+          condition: {},
+          config: {
+            mode: action.mode,
+            panelId: action.panelId,
+            source: sourceLabel,
+          },
+          enabled: true,
+          label: `Panel ${action.panelId} ${action.mode}`,
+        });
+        panelIndex += 1;
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "highlight_on") {
+        const step = await upsertDslStep(existingGlowOnSteps[glowOnIndex], {
+          actionType: "highlight_on",
+          condition: {},
+          config: {
+            color: action.color,
+            selector: action.selector,
+            source: sourceLabel,
+          },
+          enabled: true,
+          label: "Glow",
+        });
+        glowOnIndex += 1;
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
+      if (action.actionType === "highlight_off") {
+        const step = await upsertDslStep(existingGlowOffSteps[glowOffIndex], {
+          actionType: "highlight_off",
+          condition: {},
+          config: {
+            selector: action.selector,
+            source: sourceLabel,
+          },
+          enabled: true,
+          label: "Clear glow",
+        });
+        glowOffIndex += 1;
+        desiredStepIds.push(step.id);
       }
     }
 
+    // Commented "# script()" lines keep owning their step, so surplus script
+    // deletion is only safe while none are present in the source.
+    const surplusScriptSteps =
+      includeScriptActions && !hasCommentedScriptAction(source)
+        ? existingScriptSteps.slice(scriptIndex)
+        : [];
+    surplusScriptSteps.forEach((step, offset) =>
+      stashScriptStep(eventId, scriptIndex + offset, step),
+    );
     const extraSteps = [
       ...existingChatSteps.slice(chatIndex),
       ...existingContextSteps.slice(contextIndex),
       ...existingGotoSteps.slice(gotoIndex),
+      ...existingPanelSteps.slice(panelIndex),
+      ...existingGlowOnSteps.slice(glowOnIndex),
+      ...existingGlowOffSteps.slice(glowOffIndex),
+      ...surplusScriptSteps,
     ];
 
     if (
@@ -1410,6 +1571,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
 
     const experiencePathId = encodeURIComponent(experience.id);
     const eventPathId = encodeURIComponent(pending.eventId);
+    const removalStepIds =
+      pendingScriptStepRemovalsRef.current.get(pending.eventId) ?? [];
+    pendingScriptStepRemovalsRef.current.delete(pending.eventId);
+    const remainingRemovalStepIds = [...removalStepIds];
     let latestEvent = targetEvent;
 
     try {
@@ -1422,7 +1587,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
       latestEvent = sourcePayload.event;
 
+      while (remainingRemovalStepIds.length) {
+        const stepId = remainingRemovalStepIds[0];
+        if (latestEvent.steps.some((step) => step.id === stepId)) {
+          const payload = await apiFetch<{ event: ExperienceEvent }>(
+            `/api/experiences/${experiencePathId}/events/${eventPathId}/steps/${encodeURIComponent(
+              stepId,
+            )}/`,
+            { method: "DELETE" },
+          );
+          latestEvent = payload.event;
+        }
+        remainingRemovalStepIds.shift();
+      }
+
       latestEvent = await syncDslActionStepsFromSource({
+        eventId: pending.eventId,
         eventPathId,
         experiencePathId,
         includeChatActions: true,
@@ -1439,6 +1619,12 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       );
       return true;
     } catch (saveError) {
+      if (remainingRemovalStepIds.length) {
+        pendingScriptStepRemovalsRef.current.set(pending.eventId, [
+          ...remainingRemovalStepIds,
+          ...(pendingScriptStepRemovalsRef.current.get(pending.eventId) ?? []),
+        ]);
+      }
       pendingOnEntryAutosaveRef.current = pending;
       setError(
         saveError instanceof Error
@@ -1490,6 +1676,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       latestEvent = payload.event;
 
       latestEvent = await syncDslActionStepsFromSource({
+        eventId: pending.eventId,
         eventPathId: encodeURIComponent(pending.eventId),
         experiencePathId: encodeURIComponent(experience.id),
         latestEvent,
@@ -1897,7 +2084,32 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     });
   }
 
-  function insertScriptAction(type: "slide" | "side-image" | "sound") {
+  async function saveSidePanelOverrides(next: SidePanelOverride[]) {
+    if (!experience) return;
+
+    const experienceId = experience.id;
+    setExperience((current) =>
+      current && current.id === experienceId
+        ? { ...current, sidePanels: next }
+        : current,
+    );
+    try {
+      await apiFetch(`/api/experiences/${encodeURIComponent(experienceId)}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ sidePanels: next }),
+      });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save side panels.",
+      );
+    }
+  }
+
+  function insertScriptAction(
+    type: "glow" | "panel" | "slide" | "side-image" | "sound",
+  ) {
     if (!activeScriptStep || scriptActionMenu?.mode !== "insert") return;
 
     let marker = buildScriptMarker("play_sound", [
@@ -1916,6 +2128,16 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         "left",
         "show",
         tutorForm.avatarPath || defaultScriptSideImagePath,
+      ]);
+    } else if (type === "panel") {
+      marker = buildScriptMarker("panel_on", [
+        sidePanelMetadataDefinitions[0]?.id ?? "roadmap",
+      ]);
+    } else if (type === "glow") {
+      const target = glowTargets()[0];
+      marker = buildScriptMarker("highlight_on", [
+        target?.selector ?? ".glow-chat-input",
+        defaultGlowColor,
       ]);
     }
     updateActiveScriptMarkedText(
@@ -2229,6 +2451,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     window.location.assign("/experiences");
   }
 
+  async function openDesignLab() {
+    const didSave = await flushNextEditorAutosave();
+    if (!didSave) return;
+
+    window.location.assign("/run-design");
+  }
+
   async function runEvent(eventId: string) {
     if (!experience || runningEventId) return;
 
@@ -2343,6 +2572,8 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     if (pendingScriptTextAutosaveRef.current?.eventId === eventId) {
       pendingScriptTextAutosaveRef.current = null;
     }
+    pendingScriptStepRemovalsRef.current.delete(eventId);
+    scriptStepStashRef.current.delete(eventId);
     for (const step of targetEvent.steps) {
       delete pendingScriptDisplayDraftsRef.current[step.id];
     }
@@ -2616,6 +2847,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             eventTargets={experience?.events ?? []}
             onChange={updateSelectedEventOnEntryDraft}
             onOpenScriptAction={openSelectedEventScriptAction}
+            onRemoveScriptActions={queueOnEntryScriptRemovals}
             value={selectedEventOnEntrySource}
           />
         </Suspense>
@@ -2917,6 +3149,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
           >
             Experiences
           </button>
+          <button
+            className="header-action secondary"
+            onClick={() => void openDesignLab()}
+            type="button"
+          >
+            Design lab
+          </button>
         </div>
       </header>
 
@@ -2971,6 +3210,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             voiceSampleStatus={voiceSampleStatus}
           />
         ) : null}
+
+        {/* Per-experience panel icon/title overrides are hidden for now:
+            render <ExperiencePanelsEditor> here (wired to
+            saveSidePanelOverrides) to bring the "Panels" settings back. */}
 
         {experience ? (
           <ExperienceEventFlow

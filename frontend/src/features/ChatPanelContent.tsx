@@ -484,7 +484,9 @@ export function ChatPanelContent({
 
         <form
           aria-disabled={isInputDisabled}
-          className={`composer-row${isInputDisabled ? " is-disabled" : ""}`}
+          className={`composer-row glow-chat-input${
+            isInputDisabled ? " is-disabled" : ""
+          }`}
           onSubmit={sendMessage}
         >
           <input
@@ -511,7 +513,7 @@ export function ChatPanelContent({
       {leftImageVisible ? (
         <img
           alt={assistantDisplayName}
-          className="chat-side-image chat-side-image-left"
+          className="chat-side-image chat-side-image-left glow-avatar"
           src={publicAsset(leftImagePath)}
           style={
             {

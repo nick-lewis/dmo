@@ -297,6 +297,15 @@ def emitted_transition_slug(actions):
     return ""
 
 
+def slide_history_key(slide_value):
+    if not isinstance(slide_value, dict):
+        return ""
+    return "|".join(
+        str(slide_value.get(field, "") or "")
+        for field in ("presentationId", "pageId", "imageUrl")
+    )
+
+
 def apply_runtime_actions_to_state(
     state,
     actions,
@@ -328,8 +337,20 @@ def apply_runtime_actions_to_state(
         if isinstance(left_panels_value, dict)
         else {}
     )
+    side_panels_value = ui_runtime.get("sidePanels")
+    side_panels = (
+        dict(side_panels_value)
+        if isinstance(side_panels_value, dict)
+        else {}
+    )
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
+    slide_history_value = ui_runtime.get("slideHistory")
+    slide_history = (
+        [entry for entry in slide_history_value if isinstance(entry, dict)]
+        if isinstance(slide_history_value, list)
+        else []
+    )
     triggers = list(ui_runtime.get("triggers") or [])
 
     if clear_buttons:
@@ -358,6 +379,14 @@ def apply_runtime_actions_to_state(
             slide_error = ""
             interactive = None
             interactive_state = {}
+            # Revealed slides accumulate so students can page back through
+            # them; a re-shown slide keeps its original history position.
+            new_key = slide_history_key(slide)
+            if new_key.strip("|") and all(
+                slide_history_key(entry) != new_key for entry in slide_history
+            ):
+                slide_history.append(dict(slide))
+                slide_history = slide_history[-60:]
             continue
 
         if action_type == "slide_error":
@@ -422,6 +451,23 @@ def apply_runtime_actions_to_state(
 
         if action_type == "chat_availability":
             chat_enabled = bool(action.get("enabled", True))
+            continue
+
+        if action_type == "side_panel":
+            panel_id = str(action.get("panelId", "") or "").strip()
+            mode = str(action.get("mode", "open") or "open").strip()
+            if not panel_id:
+                continue
+            if mode == "off":
+                side_panels.pop(panel_id, None)
+            elif mode == "available":
+                existing_panel = dict(side_panels.get(panel_id) or {})
+                side_panels[panel_id] = {
+                    "available": True,
+                    "open": bool(existing_panel.get("open", False)),
+                }
+            else:
+                side_panels[panel_id] = {"available": True, "open": True}
             continue
 
         if action_type == "show_image":
@@ -574,13 +620,52 @@ def apply_runtime_actions_to_state(
     ui_runtime["interactiveState"] = interactive_state
     ui_runtime["images"] = images
     ui_runtime["leftPanels"] = left_panels
+    ui_runtime["sidePanels"] = side_panels
     ui_runtime["notes"] = notes[-80:]
     ui_runtime["overlays"] = overlays
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
+    ui_runtime["slideHistory"] = slide_history
     ui_runtime["triggers"] = triggers
     state["uiRuntime"] = ui_runtime
     return append_runtime_debug_trace(state, actions)
+
+
+def apply_client_side_panel_state(state, client_ui_state):
+    """Merge student rail open/close toggles into persisted side panel state.
+
+    Clients may only flip the open flag of panels the runtime already made
+    available; they cannot grant or revoke availability.
+    """
+    if not isinstance(state, dict) or not isinstance(client_ui_state, dict):
+        return state
+
+    client_panels = client_ui_state.get("sidePanels")
+    if not isinstance(client_panels, dict):
+        return state
+
+    ui_runtime = dict(state.get("uiRuntime") or {})
+    side_panels_value = ui_runtime.get("sidePanels")
+    if not isinstance(side_panels_value, dict) or not side_panels_value:
+        return state
+
+    side_panels = {}
+    changed = False
+    for panel_id, panel_state in side_panels_value.items():
+        panel = dict(panel_state if isinstance(panel_state, dict) else {})
+        client_panel = client_panels.get(panel_id)
+        if isinstance(client_panel, dict) and isinstance(
+            client_panel.get("open"), bool
+        ):
+            if bool(panel.get("open", False)) != client_panel["open"]:
+                panel["open"] = client_panel["open"]
+                changed = True
+        side_panels[panel_id] = panel
+
+    if changed:
+        ui_runtime["sidePanels"] = side_panels
+        state["uiRuntime"] = ui_runtime
+    return state
 
 
 def set_runtime_current_event(state, event):
@@ -626,6 +711,7 @@ def hydrate_initial_script_runtime_state(session):
         or ui_runtime.get("images")
         or ui_runtime.get("overlays")
         or ui_runtime.get("notes")
+        or ui_runtime.get("sidePanels")
     ):
         return
 
@@ -695,6 +781,8 @@ def runtime_action_summary(action):
         return f"{action.get('actionType', 'action')}: {action.get('reason', 'rejected')}"
     if action_type == "chat_availability":
         return "chat on" if action.get("enabled", True) else "chat off"
+    if action_type == "side_panel":
+        return f"panel {action.get('panelId', 'panel')} {action.get('mode', 'open')}"
     if action_type == "gslide":
         return f"slide {action.get('slideRef', '1')}"
     if action_type == "slide_error":
@@ -752,6 +840,7 @@ def runtime_action_debug_details(action):
         "mode",
         "noteId",
         "overlayId",
+        "panelId",
         "reason",
         "result",
         "resultContextKey",

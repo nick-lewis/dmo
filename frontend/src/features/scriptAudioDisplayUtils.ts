@@ -38,6 +38,31 @@ export function normalizeDisplayBreaks(value: unknown, slotCount = 0) {
   return breaks.sort((left, right) => left - right);
 }
 
+// Re-rendering the display document normalizes whitespace (empty slots gain
+// placeholder spaces, runs of spaces collapse), so absolute caret offsets
+// measured before a re-render land in the wrong place afterwards. Mapping by
+// the count of visible characters before the caret is immune to that.
+export function remapDisplayCaretOffset(
+  oldText: string,
+  oldOffset: number,
+  newText: string,
+) {
+  const visibleCharTarget = oldText
+    .slice(0, Math.max(0, oldOffset))
+    .replace(/\s/g, "").length;
+  if (!visibleCharTarget) return 0;
+
+  let visibleCharCount = 0;
+  for (let index = 0; index < newText.length; index += 1) {
+    if (!/\s/.test(newText[index])) {
+      visibleCharCount += 1;
+      if (visibleCharCount === visibleCharTarget) return index + 1;
+    }
+  }
+
+  return newText.length;
+}
+
 export function displayBreaksAreEqual(left: number[], right: number[]) {
   if (left.length !== right.length) return false;
   return left.every((breakIndex, index) => breakIndex === right[index]);

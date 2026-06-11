@@ -1,5 +1,7 @@
+import { defaultGlowColor, glowTargets } from "./glowTargets";
 import { cloneMainPanelAppConfig, defaultMainPanelApp } from "./mainPanelApps";
 import { defaultPythonNotebookState } from "./PythonNotebookPanel";
+import { sidePanelMetadataDefinitions } from "./sidePanelMetadata";
 import type { EventActionStep, ExperienceEvent } from "./types";
 
 function sortedExperienceEvents(events: ExperienceEvent[]) {
@@ -23,6 +25,7 @@ export const eventActionOptions = [
   { id: "python_notebook", label: "Notebook" },
   { id: "chat_availability", label: "Chat" },
   { id: "set_ui_trigger", label: "UI trigger" },
+  { id: "side_panel", label: "Side panel" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
 ] as const;
@@ -42,12 +45,12 @@ export function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   }
   if (actionType === "highlight_on") {
     return {
-      color: "rgba(59, 130, 246, 0.6)",
-      selector: ".runtime-notes-toggle",
+      color: defaultGlowColor,
+      selector: glowTargets()[0]?.selector ?? ".glow-chat-input",
     };
   }
   if (actionType === "highlight_off") {
-    return { selector: ".runtime-notes-toggle" };
+    return { selector: glowTargets()[0]?.selector ?? ".glow-chat-input" };
   }
   if (actionType === "interactive") {
     return {
@@ -77,9 +80,15 @@ export function defaultStepConfig(actionType: EventActionStep["actionType"]) {
   if (actionType === "chat_availability") {
     return { enabled: false };
   }
+  if (actionType === "side_panel") {
+    return {
+      mode: "open",
+      panelId: sidePanelMetadataDefinitions[0]?.id ?? "roadmap",
+    };
+  }
   if (actionType === "set_ui_trigger") {
     return {
-      selector: ".runtime-notes-toggle",
+      selector: glowTargets()[0]?.selector ?? ".glow-chat-input",
       triggersEvent: "",
     };
   }
@@ -125,6 +134,7 @@ export function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "interactive_clear") return "Clear main-panel app";
   if (actionType === "python_notebook") return "Load Python notebook";
   if (actionType === "chat_availability") return "Set chat availability";
+  if (actionType === "side_panel") return "Show side panel";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -230,6 +240,9 @@ export function eventActionDescription(actionType: EventActionStep["actionType"]
   if (actionType === "chat_availability") {
     return "Enable or block learner typing";
   }
+  if (actionType === "side_panel") {
+    return "Show, make available, or hide a side panel option";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -265,7 +278,8 @@ export function eventActionToneClass(actionType: EventActionStep["actionType"]) 
     actionType === "interactive_update" ||
     actionType === "interactive_clear" ||
     actionType === "python_notebook" ||
-    actionType === "chat_availability"
+    actionType === "chat_availability" ||
+    actionType === "side_panel"
   ) {
     return "ui";
   }

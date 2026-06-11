@@ -2,7 +2,12 @@ import { autocompletion, type Completion, type CompletionContext, type Completio
 import { indentWithTab, redo, toggleLineComment, undo } from "@codemirror/commands";
 import { pythonLanguage } from "@codemirror/lang-python";
 import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
-import { EditorState, type Extension } from "@codemirror/state";
+import {
+  Annotation,
+  EditorState,
+  Prec,
+  type Extension,
+} from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -22,6 +27,8 @@ import {
   lineStartOffset,
   parseButtonActionArgumentRanges,
   parseDestinationArgumentRange,
+  removedScriptActionIndices,
+  scriptActionRangesFromSource,
   type PythonDslButtonBooleanArgument,
   type PythonDslButtonStringArgument,
 } from "./pythonDslEditorUtils";
@@ -36,6 +43,10 @@ type PythonDslEditorProps = {
   mode?: PythonDslEditorMode;
   onChange: (value: string) => void;
   onOpenScriptAction?: (action: PythonDslScriptAction) => void;
+  onRemoveScriptActions?: (
+    indices: number[],
+    totalScriptActions: number,
+  ) => void;
   value: string;
 };
 
@@ -247,6 +258,30 @@ const rootDslCompletions: Completion[] = [
     type: "function",
   },
   {
+    label: "panel",
+    apply: 'panel("roadmap")',
+    detail: "side panel",
+    info: "Show a side panel option (mode: open, available, or off).",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "glow",
+    apply: 'glow("chat-input")',
+    detail: "ui glow",
+    info: "Make a named interface target glow.",
+    section: "Actions",
+    type: "function",
+  },
+  {
+    label: "glow_off",
+    apply: 'glow_off("chat-input")',
+    detail: "clear glow",
+    info: "Remove a glow from a named interface target.",
+    section: "Actions",
+    type: "function",
+  },
+  {
     label: "say",
     apply: 'say("...")',
     detail: "voice",
@@ -311,6 +346,30 @@ const conversationDslCompletions: Completion[] = [
     apply: 'goto_event(destination="event")',
     detail: "route",
     info: "Route to another event.",
+    section: "Conversation",
+    type: "function",
+  },
+  {
+    label: "panel",
+    apply: 'panel("roadmap")',
+    detail: "side panel",
+    info: "Show a side panel option (mode: open, available, or off).",
+    section: "Conversation",
+    type: "function",
+  },
+  {
+    label: "glow",
+    apply: 'glow("chat-input")',
+    detail: "ui glow",
+    info: "Make a named interface target glow.",
+    section: "Conversation",
+    type: "function",
+  },
+  {
+    label: "glow_off",
+    apply: 'glow_off("chat-input")',
+    detail: "clear glow",
+    info: "Remove a glow from a named interface target.",
     section: "Conversation",
     type: "function",
   },
@@ -617,6 +676,55 @@ function runHistoryShortcut(
 const chatActionPattern =
   /\bchat\s*\(\s*(?:enabled\s*=\s*)?(True|False|true|false)\s*\)/g;
 const scriptActionPattern = /\bscript\s*\([^)]*\)/g;
+
+// Marks transactions that replace the document from the value prop (event
+// switches, server round-trips) so they are not mistaken for user deletions.
+const externalDslSync = Annotation.define<boolean>();
+
+function scriptActionRangeAtProbe(view: EditorView, probe: number) {
+  if (probe < 0 || probe >= view.state.doc.length) return null;
+
+  const line = view.state.doc.lineAt(probe);
+  if (line.text.trimStart().startsWith("#")) return null;
+
+  for (const match of line.text.matchAll(scriptActionPattern)) {
+    if (typeof match.index !== "number") continue;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (probe >= from && probe < to) return { from, line, to };
+  }
+
+  return null;
+}
+
+// Script actions are placeholders for content stored elsewhere, so partial
+// text deletion is meaningless; Backspace/Delete removes the whole action
+// (and its line when nothing else is on it) as one undoable step.
+function atomicScriptActionDelete(view: EditorView, direction: -1 | 1) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+
+  const probe = direction === -1 ? selection.head - 1 : selection.head;
+  const target = scriptActionRangeAtProbe(view, probe);
+  if (!target) return false;
+
+  const lineRemainder = (
+    target.line.text.slice(0, target.from - target.line.from) +
+    target.line.text.slice(target.to - target.line.from)
+  ).trim();
+  const from = lineRemainder ? target.from : target.line.from;
+  const to = lineRemainder
+    ? target.to
+    : Math.min(target.line.to + 1, view.state.doc.length);
+
+  view.dispatch({
+    changes: { from, to },
+    scrollIntoView: true,
+    selection: { anchor: from },
+    userEvent: "delete",
+  });
+  return true;
+}
 const setContextActionPattern = /\bset_context\s*\([^)]*\)/g;
 const gotoActionPattern = /\b(?:goto_event|goto)\s*\([^)]*\)/g;
 const conversationButtonActionPattern = /\b(?:button|choice)\s*\([^)]*\)/g;
@@ -663,11 +771,29 @@ const gotoActionDecoration = Decoration.mark({
   },
   class: "cm-dsl-route-action",
 });
+const panelActionPattern = /\bpanel\s*\([^)]*\)/g;
+const glowActionPattern = /\bglow(?:_off)?\s*\([^)]*\)/g;
+const panelActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Side panel action",
+    role: "button",
+  },
+  class: "cm-dsl-panel-action",
+});
+const glowActionDecoration = Decoration.mark({
+  attributes: {
+    "aria-label": "Glow action",
+    role: "button",
+  },
+  class: "cm-dsl-glow-action",
+});
 
 function dslActionPatternsForMode(mode: PythonDslEditorMode) {
   return [
     setContextActionPattern,
     gotoActionPattern,
+    panelActionPattern,
+    glowActionPattern,
     ...(mode === "conversation"
       ? [conversationButtonActionPattern]
       : [chatActionPattern, scriptActionPattern]),
@@ -678,6 +804,8 @@ function dslActionClassNamesForMode(mode: PythonDslEditorMode) {
   return [
     "cm-dsl-context-action",
     "cm-dsl-route-action",
+    "cm-dsl-panel-action",
+    "cm-dsl-glow-action",
     ...(mode === "conversation"
       ? ["cm-dsl-button-action"]
       : ["cm-dsl-chat-action", "cm-dsl-script-action"]),
@@ -806,6 +934,20 @@ function dslActionDecorations(
           const from = line.from + match.index;
           const to = from + match[0].length;
           ranges.push(gotoActionDecoration.range(from, to));
+        }
+
+        for (const match of lineText.matchAll(panelActionPattern)) {
+          if (typeof match.index !== "number") continue;
+          const from = line.from + match.index;
+          const to = from + match[0].length;
+          ranges.push(panelActionDecoration.range(from, to));
+        }
+
+        for (const match of lineText.matchAll(glowActionPattern)) {
+          if (typeof match.index !== "number") continue;
+          const from = line.from + match.index;
+          const to = from + match[0].length;
+          ranges.push(glowActionDecoration.range(from, to));
         }
 
         if (mode === "conversation") {
@@ -1207,6 +1349,7 @@ export function PythonDslEditor({
   mode = "on-entry",
   onChange,
   onOpenScriptAction,
+  onRemoveScriptActions,
   value,
 }: PythonDslEditorProps) {
   const editorParentRef = useRef<HTMLDivElement | null>(null);
@@ -1218,6 +1361,7 @@ export function PythonDslEditor({
   const onChangeRef = useRef(onChange);
   const modeRef = useRef(mode);
   const onOpenScriptActionRef = useRef(onOpenScriptAction);
+  const onRemoveScriptActionsRef = useRef(onRemoveScriptActions);
   const [contextMenu, setContextMenu] = useState<DslContextMenuState | null>(
     null,
   );
@@ -1231,6 +1375,10 @@ export function PythonDslEditor({
   useEffect(() => {
     onOpenScriptActionRef.current = onOpenScriptAction;
   }, [onOpenScriptAction]);
+
+  useEffect(() => {
+    onRemoveScriptActionsRef.current = onRemoveScriptActions;
+  }, [onRemoveScriptActions]);
 
   useEffect(() => {
     activeScriptActionRef.current = activeScriptAction;
@@ -1545,8 +1693,55 @@ export function PythonDslEditor({
       }),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
+
+        const isExternalSync = update.transactions.some((transaction) =>
+          transaction.annotation(externalDslSync),
+        );
+        if (
+          !isExternalSync &&
+          modeRef.current === "on-entry" &&
+          onRemoveScriptActionsRef.current
+        ) {
+          const oldRanges = scriptActionRangesFromSource(
+            update.startState.doc.toString(),
+          );
+          const newRanges = scriptActionRangesFromSource(
+            update.state.doc.toString(),
+          );
+          if (oldRanges.length && newRanges.length < oldRanges.length) {
+            const removed = removedScriptActionIndices(
+              oldRanges,
+              newRanges,
+              (position, assoc) => update.changes.mapPos(position, assoc),
+            );
+            // Only trust the mapping when it accounts for every lost action;
+            // otherwise the count-based fallback in the autosave sync applies.
+            if (removed.length === oldRanges.length - newRanges.length) {
+              onRemoveScriptActionsRef.current(removed, oldRanges.length);
+            }
+          }
+        }
+
         onChangeRef.current(update.state.doc.toString());
       }),
+      // Highest precedence so these run before basicSetup's default
+      // Backspace/Delete bindings.
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Backspace",
+            run: (view) =>
+              modeRef.current === "on-entry" &&
+              atomicScriptActionDelete(view, -1),
+          },
+          {
+            key: "Delete",
+            run: (view) =>
+              modeRef.current === "on-entry" &&
+              atomicScriptActionDelete(view, 1),
+          },
+        ]),
+      ),
       keymap.of([
         { key: "Mod-z", run: undo },
         { key: "Mod-Shift-z", run: redo },
@@ -1585,6 +1780,7 @@ export function PythonDslEditor({
     if (value === currentValue) return;
 
     view.dispatch({
+      annotations: externalDslSync.of(true),
       changes: { from: 0, insert: value, to: currentValue.length },
     });
   }, [value]);
@@ -1634,6 +1830,32 @@ export function PythonDslEditor({
     insertStatementAtCursor(
       view,
       'set_context(key="context_key", value="yes")',
+      contextMenu?.insertionPoint,
+    );
+    setContextMenu(null);
+    setButtonDestinationMenu(null);
+  }
+
+  function insertPanelAction() {
+    const view = viewRef.current;
+    if (!view) return;
+
+    insertStatementAtCursor(
+      view,
+      'panel("roadmap")',
+      contextMenu?.insertionPoint,
+    );
+    setContextMenu(null);
+    setButtonDestinationMenu(null);
+  }
+
+  function insertGlowAction() {
+    const view = viewRef.current;
+    if (!view) return;
+
+    insertStatementAtCursor(
+      view,
+      'glow("chat-input")',
       contextMenu?.insertionPoint,
     );
     setContextMenu(null);
@@ -1762,6 +1984,22 @@ export function PythonDslEditor({
               >
                 Go to event
               </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-panel"
+                onClick={insertPanelAction}
+                role="menuitem"
+                type="button"
+              >
+                Panel
+              </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-glow"
+                onClick={insertGlowAction}
+                role="menuitem"
+                type="button"
+              >
+                Glow
+              </button>
             </>
           ) : (
             <>
@@ -1788,6 +2026,22 @@ export function PythonDslEditor({
                 type="button"
               >
                 Go to event
+              </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-panel"
+                onClick={insertPanelAction}
+                role="menuitem"
+                type="button"
+              >
+                Panel
+              </button>
+              <button
+                className="python-dsl-context-action python-dsl-context-glow"
+                onClick={insertGlowAction}
+                role="menuitem"
+                type="button"
+              >
+                Glow
               </button>
               <div className="python-dsl-context-label">
                 Chat

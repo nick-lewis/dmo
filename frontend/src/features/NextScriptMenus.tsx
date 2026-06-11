@@ -9,11 +9,13 @@ import type {
 import { createPortal } from "react-dom";
 
 import { publicAsset } from "../assets";
+import { defaultGlowColor, glowTargets } from "../glowTargets";
 import {
   customSoundOptionValue,
   scriptSoundOptions,
   type ScriptMarkerInstance,
 } from "../scriptMarkers";
+import { sidePanelMetadataDefinitions } from "../sidePanelMetadata";
 import { ImageLibraryPicker, type ImageLibraryOption } from "./ImageLibraryPicker";
 import { isSlideMarker } from "./scriptActionEditorUtils";
 import {
@@ -44,7 +46,12 @@ export type ScriptAudioMenuState = {
   y: number;
 };
 
-type ScriptActionInsertKind = "side-image" | "slide" | "sound";
+type ScriptActionInsertKind =
+  | "glow"
+  | "panel"
+  | "side-image"
+  | "slide"
+  | "sound";
 
 type NextScriptActionMenuPortalProps = {
   deletingScriptImagePath: string;
@@ -138,6 +145,22 @@ export function NextScriptActionMenuPortal({
           >
             Sound
           </button>
+          <button
+            className="next-script-action-menu-item is-action"
+            onClick={() => onInsertAction("panel")}
+            role="menuitem"
+            type="button"
+          >
+            Panel
+          </button>
+          <button
+            className="next-script-action-menu-item is-action"
+            onClick={() => onInsertAction("glow")}
+            role="menuitem"
+            type="button"
+          >
+            Glow
+          </button>
         </>
       ) : editingScriptMarker ? (
         <div className="next-script-action-editor">
@@ -213,6 +236,129 @@ function ScriptActionMarkerFields({
           value={editingScriptMarker.argList[0] ?? ""}
         />
       </label>
+    );
+  }
+
+  if (
+    editingScriptMarker.type === "highlight" ||
+    editingScriptMarker.type === "highlight_on" ||
+    editingScriptMarker.type === "highlight_off"
+  ) {
+    const isGlowOff = editingScriptMarker.type === "highlight_off";
+    const currentSelector = editingScriptMarker.argList[0] ?? "";
+    const currentColor = editingScriptMarker.argList[1] ?? "";
+    const targets = glowTargets();
+    const isKnownTarget = targets.some(
+      (target) => target.selector === currentSelector,
+    );
+    return (
+      <>
+        <label>
+          <span>Target</span>
+          <select
+            aria-label="Glow target"
+            onChange={(event) =>
+              onReplaceMarker(
+                editingScriptMarker,
+                isGlowOff
+                  ? [event.target.value]
+                  : [event.target.value, currentColor || defaultGlowColor],
+              )
+            }
+            value={currentSelector}
+          >
+            {!isKnownTarget && currentSelector ? (
+              <option value={currentSelector}>{currentSelector}</option>
+            ) : null}
+            {targets.map((target) => (
+              <option key={target.id} value={target.selector}>
+                {target.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!isGlowOff ? (
+          <label>
+            <span>Color</span>
+            <input
+              aria-label="Glow color"
+              onChange={(event) =>
+                onReplaceMarker(editingScriptMarker, [
+                  currentSelector,
+                  event.target.value,
+                ])
+              }
+              placeholder={defaultGlowColor}
+              value={currentColor}
+            />
+          </label>
+        ) : null}
+      </>
+    );
+  }
+
+  if (
+    editingScriptMarker.type === "panel_on" ||
+    editingScriptMarker.type === "panel_off"
+  ) {
+    const isPanelOff = editingScriptMarker.type === "panel_off";
+    const currentPanelId = editingScriptMarker.argList[0] ?? "";
+    const currentMode =
+      (editingScriptMarker.argList[1] ?? "").toLowerCase() === "available"
+        ? "available"
+        : "open";
+    const isKnownPanel = sidePanelMetadataDefinitions.some(
+      (panel) => panel.id === currentPanelId,
+    );
+    return (
+      <>
+        <label>
+          <span>Panel</span>
+          <select
+            aria-label="Side panel"
+            onChange={(event) =>
+              onReplaceMarker(
+                editingScriptMarker,
+                isPanelOff
+                  ? [event.target.value]
+                  : currentMode === "available"
+                    ? [event.target.value, "available"]
+                    : [event.target.value],
+              )
+            }
+            value={currentPanelId}
+          >
+            {!isKnownPanel && currentPanelId ? (
+              <option value={currentPanelId}>{currentPanelId}</option>
+            ) : null}
+            {sidePanelMetadataDefinitions.map((panel) => (
+              <option key={panel.id} value={panel.id}>
+                {panel.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!isPanelOff ? (
+          <label>
+            <span>Mode</span>
+            <select
+              aria-label="Panel mode"
+              onChange={(event) =>
+                onReplaceMarker(
+                  editingScriptMarker,
+                  event.target.value === "available"
+                    ? [currentPanelId, "available"]
+                    : [currentPanelId],
+                )
+              }
+              value={currentMode}
+            >
+              <option value="open">Open window</option>
+              <option value="available">Icon only</option>
+            </select>
+          </label>
+        ) : null}
+      </>
     );
   }
 

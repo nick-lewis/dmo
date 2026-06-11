@@ -223,6 +223,7 @@ class SerializerShapeContractTests(TestCase):
                 "description",
                 "events",
                 "id",
+                "sidePanels",
                 "slug",
                 "title",
                 "tutor",

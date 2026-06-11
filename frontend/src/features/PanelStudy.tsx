@@ -38,6 +38,7 @@ import {
   defaultChoiceIconBackground,
 } from "../uiHelpers";
 import {
+  appendSlideHistory,
   recordFromUnknown,
   runtimeActionText,
   runtimeInteractiveFromRecord,
@@ -46,8 +47,13 @@ import {
   runtimeSideImageScale,
   runtimeSideImageSlot,
   runtimeSideImagesFromRecord,
+  runtimeSidePanelsFromRecord,
   runtimeSlideFromRecord,
+  runtimeSlideHistoryFromValue,
+  slideHistoryKey,
 } from "../runtimeUtils";
+import { resolveSidePanels } from "../sidePanelMetadata";
+import { getSidePanelDefinition } from "../sidePanels";
 import type {
   ApiUser,
   ChatMessage,
@@ -68,6 +74,7 @@ import type {
   RuntimeNote,
   RuntimeOverlay,
   RuntimeSideImage,
+  RuntimeSidePanelState,
   RuntimeUiState,
   RuntimeUiTrigger,
   SessionPayload,
@@ -79,18 +86,13 @@ import type {
   VoiceSamplePayload,
   VoiceSampleStatus,
 } from "../types";
-import {
-  ArrowLeftIcon,
-  InspectorIcon,
-} from "../components/Icons";
+import { ArrowLeftIcon } from "../components/Icons";
 import { ChatPanelContent } from "./ChatPanelContent";
-import {
-  LeftPanelContent,
-  leftPanels,
-} from "./LeftPanelContent";
 import { MainPanelContent } from "./MainPanelContent";
 import { PanelWindow } from "./PanelWindow";
 import { RuntimeInspectorPanel } from "./RuntimeInspectorPanel";
+import { SidePanelDock } from "./SidePanelDock";
+import { SlidePager } from "./SlidePager";
 import { TutorControls } from "./TutorControls";
 import { usePythonNotebookPersistence } from "./usePythonNotebookPersistence";
 import { useRuntimeInteractivePersistence } from "./useRuntimeInteractivePersistence";
@@ -123,20 +125,33 @@ function localMessageId(prefix: string) {
 export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string }) {
   const initialSlideSettings = useRef(readSlideSettings());
   const {
-    dragLeftDivider,
     dragLowerDivider,
     dragWorkspaceDivider,
-    isLeftOpen,
     lowerHeight,
     rightRef,
-    setIsLeftOpen,
     shellRef,
     shellStyle,
-  } = useRuntimeLayout({ initiallyOpen: !initialExperienceId });
+    workspaceWidth,
+  } = useRuntimeLayout({ initiallyOpen: false });
   const startedSessionIds = useRef(new Set<string>());
   const runtimeSoundEffectsRef = useRef(new Set<HTMLAudioElement>());
   const suppressSlideControlResetRef = useRef(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+
+  // Hidden dev affordance: Ctrl+Shift+. toggles the runtime inspector.
+  useEffect(() => {
+    function handleInspectorShortcut(event: KeyboardEvent) {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) {
+        return;
+      }
+      if (event.code !== "Period") return;
+      event.preventDefault();
+      setIsInspectorOpen((current) => !current);
+    }
+
+    window.addEventListener("keydown", handleInspectorShortcut);
+    return () => window.removeEventListener("keydown", handleInspectorShortcut);
+  }, []);
   const [user, setUser] = useState<ApiUser | null>(null);
   const [experiences, setExperiences] = useState<Experience[]>([]);
   const [selectedExperienceId, setSelectedExperienceId] = useState("");
@@ -168,6 +183,10 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
   const [resolvedSlide, setResolvedSlide] = useState<ResolvedSlide | null>(null);
   const [slideStatus, setSlideStatus] = useState<SlideStatus>("empty");
   const [slideError, setSlideError] = useState("");
+  // Slides revealed so far in this session; students can page back through
+  // them. null index = following the live slide.
+  const [slideHistory, setSlideHistory] = useState<ResolvedSlide[]>([]);
+  const [viewedSlideIndex, setViewedSlideIndex] = useState<number | null>(null);
   const [runtimeInteractive, setRuntimeInteractive] =
     useState<RuntimeInteractive | null>(null);
   const [runtimeInteractiveState, setRuntimeInteractiveState] = useState<
@@ -216,6 +235,9 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
   const [runtimeAvatarVisible, setRuntimeAvatarVisible] = useState(true);
   const [runtimeHighlights, setRuntimeHighlights] = useState<
     Record<string, RuntimeHighlight>
+  >({});
+  const [runtimeSidePanels, setRuntimeSidePanels] = useState<
+    Record<string, RuntimeSidePanelState>
   >({});
   const [runtimeOverlays, setRuntimeOverlays] = useState<
     Record<string, RuntimeOverlay>
@@ -315,6 +337,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       notes: runtimeNotes,
       notesVisible,
       overlays: runtimeOverlays,
+      sidePanels: runtimeSidePanels,
       ...overrides,
     };
   }
@@ -420,13 +443,18 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         const slide = runtimeSlideFromRecord(action);
         if (!slide) continue;
 
-        setResolvedSlide({
+        const nextSlide = {
           cached: slide.cached,
           imageUrl: slide.imageUrl,
           pageId: slide.pageId,
           presentationId: slide.presentationId,
           slideRef: slide.slideRef,
-        });
+        };
+        setResolvedSlide(nextSlide);
+        // A newly revealed slide always takes over, even if the student was
+        // paging back through earlier slides.
+        setSlideHistory((current) => appendSlideHistory(current, nextSlide));
+        setViewedSlideIndex(null);
         suppressSlideControlResetRef.current = true;
         setSlideDeckUrl(slide.deckUrl);
         setSlideError("");
@@ -444,6 +472,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
             : "Could not load that slide.",
         );
         setSlideStatus("error");
+        setViewedSlideIndex(null);
         setRuntimeInteractive(null);
         setRuntimeInteractiveState({});
       }
@@ -459,6 +488,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         setResolvedSlide(null);
         setSlideError("");
         setSlideStatus("empty");
+        setViewedSlideIndex(null);
       }
 
       if (action.type === "interactive_state") {
@@ -645,6 +675,29 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       return next;
     });
 
+    setRuntimeSidePanels((current) => {
+      const next = { ...current };
+      for (const action of actions) {
+        if (action.type !== "side_panel") continue;
+        const panelId =
+          typeof action.panelId === "string" ? action.panelId.trim() : "";
+        if (!panelId) continue;
+        const mode = typeof action.mode === "string" ? action.mode : "open";
+
+        if (mode === "off") {
+          delete next[panelId];
+        } else if (mode === "available") {
+          next[panelId] = {
+            available: true,
+            open: next[panelId]?.open ?? false,
+          };
+        } else {
+          next[panelId] = { available: true, open: true };
+        }
+      }
+      return next;
+    });
+
     setRuntimeTriggers((current) => {
       let next = [...current];
       for (const action of actions) {
@@ -783,12 +836,32 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     );
     setRuntimeHighlights(nextHighlights);
     setRuntimeSideImages(runtimeSideImagesFromRecord(imagesValue));
+    setRuntimeSidePanels(runtimeSidePanelsFromRecord(uiRuntime.sidePanels));
     setRuntimeNotes(runtimeNotesFromValue(notesValue));
     setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
     setPythonNotebook(
       normalizePythonNotebookState(leftPanelsValue.pythonNotebook),
     );
+
+    // Restore the revealed-slide history; sessions from before history
+    // existed seed it with their current slide so the pager stays honest.
+    const storedSlideHistory = runtimeSlideHistoryFromValue(
+      uiRuntime.slideHistory,
+    );
+    const liveSlide = runtimeSlideFromRecord(slideValue);
+    setSlideHistory(
+      liveSlide
+        ? appendSlideHistory(storedSlideHistory, {
+            cached: liveSlide.cached,
+            imageUrl: liveSlide.imageUrl,
+            pageId: liveSlide.pageId,
+            presentationId: liveSlide.presentationId,
+            slideRef: liveSlide.slideRef,
+          })
+        : storedSlideHistory,
+    );
+    setViewedSlideIndex(null);
 
     const nextInteractive = runtimeInteractiveFromRecord(interactiveValue);
     if (nextInteractive) {
@@ -1437,9 +1510,6 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       setTurnAnchorMessageId(null);
       setRuntimeActionLog([]);
       setChatStatus("ready");
-      if (routeExperience(window.location.pathname).mode === "run") {
-        setIsLeftOpen(false);
-      }
     } catch (error) {
       setAudioPreparation(null);
       setChatStatus("error");
@@ -1461,6 +1531,64 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       });
     } finally {
       window.location.assign("/accounts/login/");
+    }
+  }
+
+  const dockPanels = resolveSidePanels(selectedExperience?.sidePanels).filter(
+    (panel) => runtimeSidePanels[panel.id]?.available,
+  );
+  const openSidePanelIds = dockPanels
+    .filter((panel) => runtimeSidePanels[panel.id]?.open)
+    .map((panel) => panel.id);
+
+  function toggleSidePanel(panelId: string, open: boolean) {
+    setRuntimeSidePanels((current) =>
+      current[panelId]
+        ? { ...current, [panelId]: { available: true, open } }
+        : current,
+    );
+  }
+
+  function renderSidePanelContent(panelId: string) {
+    const definition = getSidePanelDefinition(panelId);
+    if (!definition) return null;
+    const PanelComponent = definition.Component;
+    return (
+      <PanelComponent
+        host={{
+          experienceId: selectedExperience?.id ?? "",
+          runtimeContext: session?.runtimeContext ?? {},
+          sessionId: session?.id ?? "",
+        }}
+      />
+    );
+  }
+
+  const isTurnLocked =
+    isSendingMessage || isScriptAudioPlaying || realtimeStatus === "streaming";
+
+  // The slide on screen: a history slide the student paged to, or the live
+  // one. Paging is locked while a script plays out; new slides take over.
+  const viewedSlide =
+    viewedSlideIndex !== null ? slideHistory[viewedSlideIndex] ?? null : null;
+  const displayedSlide = viewedSlide ?? resolvedSlide;
+  const displayedSlideStatus: SlideStatus = viewedSlide ? "ready" : slideStatus;
+  const slidePagerIndex = displayedSlide
+    ? slideHistory.findIndex(
+        (entry) => slideHistoryKey(entry) === slideHistoryKey(displayedSlide),
+      )
+    : -1;
+
+  function selectHistorySlide(index: number) {
+    const target = slideHistory[index];
+    if (!target) return;
+    if (
+      resolvedSlide &&
+      slideHistoryKey(target) === slideHistoryKey(resolvedSlide)
+    ) {
+      setViewedSlideIndex(null);
+    } else {
+      setViewedSlideIndex(index);
     }
   }
 
@@ -1525,6 +1653,14 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         <div className="study-actions">
           <button
             className="header-action secondary"
+            disabled={isCreatingSession || !selectedExperience}
+            onClick={() => void createNewSession()}
+            type="button"
+          >
+            {isCreatingSession ? "Starting..." : "New session"}
+          </button>
+          <button
+            className="header-action secondary"
             onClick={() => window.location.assign("/")}
             type="button"
           >
@@ -1536,7 +1672,8 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       <section
         className={[
           "workspace-shell",
-          isLeftOpen ? "drawer-open" : "drawer-closed",
+          "drawer-closed",
+          "side-dock-active",
           isInspectorOpen ? "inspector-open" : "",
         ]
           .filter(Boolean)
@@ -1544,148 +1681,6 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         ref={shellRef}
         style={shellStyle}
       >
-        <button
-          aria-label={isLeftOpen ? "Hide left panels" : "Show left panels"}
-          aria-pressed={isLeftOpen}
-          className="left-panel-toggle"
-          onClick={() => setIsLeftOpen((current) => !current)}
-          type="button"
-        >
-          <span className="toggle-panel-icon" aria-hidden="true">
-            <i />
-            <i />
-          </span>
-        </button>
-
-        <aside
-          aria-hidden={!isLeftOpen}
-          className="left-tools-drawer"
-          aria-label="Panel stack"
-        >
-          <div className="left-stack-scroll">
-            {leftPanels.map((panel) => (
-              <PanelWindow
-                ariaLabel={panel.label}
-                density={panel.density}
-                key={panel.label}
-              >
-                <LeftPanelContent
-                  experience={{
-                    chatStatus,
-                    error: experienceError,
-                    experienceForm,
-                    experiences,
-                    isCreatingSession,
-                    isCreatingExperience,
-                    isSavingExperience,
-                    isSigningOut,
-                    onCreateExperience: createExperience,
-                    onCreateNewSession: createNewSession,
-                    onExperienceFormChange: setExperienceForm,
-                    onSaveExperience: saveExperienceDetails,
-                    onSelectExperience: selectExperience,
-                    onSignOut: signOut,
-                    selectedExperienceId,
-                    user,
-                  }}
-                  kind={panel.kind}
-                  notebook={{
-                    error: pythonNotebookError,
-                    notebook: pythonNotebook,
-                    onChange: changePythonNotebook,
-                    onClearOutputs: clearPythonNotebookOutputs,
-                    onFormatCell: formatPythonNotebookCell,
-                    onRunAll: runPythonNotebookAll,
-                    onRunCell: runPythonNotebookCell,
-                    status: pythonNotebookStatus,
-                  }}
-                  runtime={{
-                    notes: runtimeNotes,
-                    notesVisible,
-                    onToggleNotes: toggleRuntimeNotes,
-                  }}
-                  slides={{
-                    deckUrl: slideDeckUrl,
-                    error: slideError,
-                    onClear: clearSlides,
-                    onDeckUrlChange: setSlideDeckUrl,
-                    onRefreshSlide: () => resolveCurrentSlide(true),
-                    onResolveSlide: () => resolveCurrentSlide(false),
-                    onSampleDeck: loadSampleSlideDeck,
-                    onSlideRefChange: setSlideRef,
-                    resolvedSlide,
-                    slideRef,
-                    status: slideStatus,
-                  }}
-                  tutor={{
-                    avatarUrl: publicAsset(tutorForm.avatarPath),
-                    error: experienceError,
-                    isSaving: isSavingTutor,
-                    onAvatarPathChange: (avatarPath) =>
-                      setTutorForm((current) => ({
-                        ...current,
-                        avatarPath,
-                      })),
-                    onChoiceIconBackgroundChange: (choiceIconBackground) =>
-                      setTutorForm((current) => ({
-                        ...current,
-                        choiceIconBackground,
-                      })),
-                    onClassificationModelChange: (classificationModel) =>
-                      setTutorForm((current) => ({
-                        ...current,
-                        classificationModel,
-                      })),
-                    onModelChange: (model) => {
-                      const nextVoice = isRealtimeVoiceSupported(
-                        model,
-                        selectedVoice,
-                      )
-                        ? selectedVoice
-                        : (realtimeVoiceOptionsForModel(model)[0]?.id ??
-                          selectedVoice);
-                      setTutorForm((current) => ({
-                        ...current,
-                        realtimeModel: model,
-                        voice: nextVoice,
-                      }));
-                      setSelectedModel(model);
-                      setSelectedVoice(nextVoice);
-                    },
-                    onNameChange: (assistantName) =>
-                      setTutorForm((current) => ({
-                        ...current,
-                        assistantName,
-                      })),
-                    onSave: saveTutorSettings,
-                    onVoiceChange: (voice) => {
-                      setTutorForm((current) => ({
-                        ...current,
-                        voice,
-                      }));
-                      setSelectedVoice(voice);
-                    },
-                    onVoiceInstructionsChange: (voiceInstructions) =>
-                      setTutorForm((current) => ({
-                        ...current,
-                        voiceInstructions,
-                      })),
-                    realtimeStatus,
-                    tutor: tutorForm,
-                  }}
-                />
-              </PanelWindow>
-            ))}
-          </div>
-        </aside>
-
-        <div
-          aria-label="Resize tools"
-          className="vertical-resizer drawer-resizer"
-          onPointerDown={dragLeftDivider}
-          role="separator"
-        />
-
         <section className="panel-stage">
           <div
             aria-label="Resize workspace width"
@@ -1693,13 +1688,25 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
             onPointerDown={dragWorkspaceDivider}
             role="separator"
           />
+          <SidePanelDock
+            onTogglePanel={toggleSidePanel}
+            openPanelIds={openSidePanelIds}
+            panels={dockPanels}
+            renderPanelContent={renderSidePanelContent}
+            shellRef={shellRef}
+            workspaceWidth={workspaceWidth}
+          />
 
           <section
             className="right-region"
             ref={rightRef}
             style={{ "--lower-height": `${lowerHeight}px` } as CSSProperties}
           >
-            <PanelWindow ariaLabel="Panel five" density="main">
+            <PanelWindow
+              ariaLabel="Panel five"
+              className="glow-main-panel slide-pager-host"
+              density="main"
+            >
               <MainPanelContent
                 context={session?.runtimeContext ?? {}}
                 emitInteractiveActions={emitRuntimeInteractiveActions}
@@ -1710,9 +1717,17 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
                 onInteractiveEvent={runRuntimeInteractiveEvent}
                 onInteractiveSaveContext={saveRuntimeInteractiveContext}
                 onInteractiveStateChange={changeRuntimeInteractiveState}
-                slide={resolvedSlide}
-                status={slideStatus}
+                slide={displayedSlide}
+                status={displayedSlideStatus}
               />
+              {displayedSlide && !runtimeInteractive ? (
+                <SlidePager
+                  activeIndex={slidePagerIndex}
+                  count={slideHistory.length}
+                  disabled={isTurnLocked}
+                  onSelect={selectHistorySlide}
+                />
+              ) : null}
             </PanelWindow>
             <div
               aria-label="Resize rows"
@@ -1720,7 +1735,11 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
               onPointerDown={dragLowerDivider}
               role="separator"
             />
-            <PanelWindow ariaLabel="Panel six" density="lower">
+            <PanelWindow
+              ariaLabel="Panel six"
+              className="glow-chat-panel"
+              density="lower"
+            >
               <ChatPanelContent
                 assistantName={tutorForm.assistantName}
                 avatarPath={runtimeAvatarPath || tutorForm.avatarPath}
@@ -1729,11 +1748,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
                 error={chatError}
                 isChatEnabled={runtimeChatEnabled}
                 isSending={isSendingMessage}
-                isTurnLocked={
-                  isSendingMessage ||
-                  isScriptAudioPlaying ||
-                  realtimeStatus === "streaming"
-                }
+                isTurnLocked={isTurnLocked}
                 messages={messages}
                 onChooseRuntimeButton={runRuntimeButton}
                 onSendMessage={sendChatMessage}
@@ -1749,19 +1764,6 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
             </PanelWindow>
           </section>
         </section>
-
-        <button
-          aria-label={
-            isInspectorOpen ? "Hide runtime inspector" : "Show runtime inspector"
-          }
-          aria-pressed={isInspectorOpen}
-          className="runtime-inspector-toggle"
-          onClick={() => setIsInspectorOpen((current) => !current)}
-          title={isInspectorOpen ? "Hide runtime inspector" : "Show runtime inspector"}
-          type="button"
-        >
-          <InspectorIcon />
-        </button>
 
         <aside
           aria-hidden={!isInspectorOpen}

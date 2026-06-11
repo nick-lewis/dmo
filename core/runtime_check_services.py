@@ -6,7 +6,7 @@ from .experience_services import get_session_current_event
 from .http_utils import session_payload
 from .models import TutoringSession
 from .realtime_services import classifier_has_positive_result
-from .runtime import apply_runtime_actions_to_state
+from .runtime import apply_client_side_panel_state, apply_runtime_actions_to_state
 from .runtime_execution import run_action_sequence, run_event_chain
 from .serializers import (
     conversation_choice_actions_for_ran_events,
@@ -116,6 +116,7 @@ def run_conversation_checks_for_session(user, session_id, client_ui_state):
                 )
 
             state = dict(session.runtime_state or {})
+            state = apply_client_side_panel_state(state, client_ui_state)
             runtime_context = dict(session.runtime_context or {})
 
             for group_payload in evaluated_classifier_groups:
@@ -291,6 +292,7 @@ def run_conversation_checks_for_session(user, session_id, client_ui_state):
             return JsonResponse({"detail": "Current event not found."}, status=404)
 
         state = dict(session.runtime_state or {})
+        state = apply_client_side_panel_state(state, client_ui_state)
         runtime_context = dict(session.runtime_context or {})
         check_results = []
 

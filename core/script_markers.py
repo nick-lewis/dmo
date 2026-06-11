@@ -11,6 +11,7 @@ SCRIPT_MARKER_PATTERN = re.compile(
         r"side_image|"
         r"interactive_clear|highlight|highlight_on|highlight_off|"
         r"overlay|overlay_off|agent_image_off|agent_image_on|"
+        r"panel_on|panel_off|"
         r"pause|chat_off|chat_on|add_note|play_sound)"
         r"(?::\s*([^\]]+))?\]"
     ),
@@ -535,6 +536,29 @@ def resolve_script_marker_action(marker, config, runtime_context):
         return {
             "selector": selector,
             "type": "highlight_off",
+        }
+
+    if marker_type == "panel_on":
+        panel_id = str(args[0] if args else "").strip()
+        if not panel_id:
+            return None
+        mode = str(args[1] if len(args) > 1 else "open").strip().lower() or "open"
+        if mode not in {"open", "available"}:
+            mode = "open"
+        return {
+            "mode": mode,
+            "panelId": panel_id,
+            "type": "side_panel",
+        }
+
+    if marker_type == "panel_off":
+        panel_id = str(args[0] if args else "").strip()
+        if not panel_id:
+            return None
+        return {
+            "mode": "off",
+            "panelId": panel_id,
+            "type": "side_panel",
         }
 
     if marker_type == "pause":

@@ -304,6 +304,7 @@ export function ScriptActionReadOnlyView({
           event.preventDefault();
           event.stopPropagation();
           setSelectedMarkerKey(markerKey);
+          onOpenMarker(sourceMarker, event);
         }}
         onContextMenu={(event) => {
           setSelectedMarkerKey(markerKey);
@@ -606,7 +607,23 @@ export function ScriptActionReadOnlyView({
                   {row.slideRef &&
                   preview?.status === "ready" &&
                   preview.imageUrl ? (
-                    <img alt={row.label} src={preview.imageUrl} />
+                    row.marker ? (
+                      <button
+                        aria-label={`Edit ${row.label}`}
+                        className="next-script-slide-preview-button"
+                        onClick={(event) => {
+                          const sourceMarker = sourceMarkerForView(row.marker!);
+                          setSelectedMarkerKey(viewMarkerEditKey(row.marker!));
+                          onOpenMarker(sourceMarker, event);
+                        }}
+                        title="Choose which slide this shows."
+                        type="button"
+                      >
+                        <img alt={row.label} src={preview.imageUrl} />
+                      </button>
+                    ) : (
+                      <img alt={row.label} src={preview.imageUrl} />
+                    )
                   ) : (
                     <span>
                       {!row.slideRef

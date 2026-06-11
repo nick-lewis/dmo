@@ -6,7 +6,7 @@ from .experience_services import get_session_current_event
 from .http_utils import auth_required_response, parse_json_body, session_payload
 from .models import TutoringSession
 from .realtime_services import parse_tool_arguments
-from .runtime import apply_runtime_actions_to_state
+from .runtime import apply_client_side_panel_state, apply_runtime_actions_to_state
 from .runtime_execution import parse_client_ui_state, run_action_sequence, run_event_chain
 from .serializers import (
     conversation_choice_actions_for_ran_events,
@@ -67,6 +67,7 @@ def run_session_chat_tool(request, session_id):
             return JsonResponse({"detail": "Chat tool is not available."}, status=400)
 
         state = dict(session.runtime_state or {})
+        state = apply_client_side_panel_state(state, client_ui_state)
         runtime_context = dict(session.runtime_context or {})
         saved_value = None
         saved_values = {}

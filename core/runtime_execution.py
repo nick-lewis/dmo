@@ -337,6 +337,23 @@ def run_action_sequence(
             )
             continue
 
+        if action_type == EventActionStep.ActionType.SIDE_PANEL:
+            panel_id = str(config.get("panelId", "")).strip()
+            mode = str(config.get("mode", "open")).strip() or "open"
+            if not panel_id or mode not in {"open", "available", "off"}:
+                continue
+            actions.append(
+                {
+                    "type": "side_panel",
+                    "eventId": str(event.id),
+                    "mode": mode,
+                    "panelId": panel_id,
+                    "stepId": step_id,
+                    **metadata,
+                }
+            )
+            continue
+
         if action_type == EventActionStep.ActionType.INTERACTIVE:
             action = build_interactive_action(
                 config=config,

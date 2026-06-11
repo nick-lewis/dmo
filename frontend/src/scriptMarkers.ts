@@ -1,4 +1,6 @@
+import { glowTargetBySelector } from "./glowTargets";
 import { getMainPanelAppMetadata } from "./mainPanelAppMetadata";
+import { getSidePanelMetadata } from "./sidePanelMetadata";
 
 export type ScriptEditorViewMode = "text" | "chips" | "slides" | "timeline";
 
@@ -45,14 +47,24 @@ export const scriptMarkerOptions = [
     title: "Play a timed sound effect while the script is spoken.",
   },
   {
-    label: "Highlight",
-    marker: "[highlight_on: .runtime-notes-toggle, rgba(59, 130, 246, 0.6)]",
-    title: "Insert a timed highlight at the cursor.",
+    label: "Glow",
+    marker: "[highlight_on: .glow-chat-input, rgba(59, 130, 246, 0.6)]",
+    title: "Make an interface target glow at this point in the script.",
   },
   {
-    label: "Clear highlight",
-    marker: "[highlight_off: .runtime-notes-toggle]",
-    title: "Clear a highlight at this point in the script.",
+    label: "Clear glow",
+    marker: "[highlight_off: .glow-chat-input]",
+    title: "Clear a glow at this point in the script.",
+  },
+  {
+    label: "Panel",
+    marker: "[panel_on: roadmap]",
+    title: "Show a side panel option at this point in the script.",
+  },
+  {
+    label: "Hide panel",
+    marker: "[panel_off: roadmap]",
+    title: "Remove a side panel option at this point in the script.",
   },
   {
     label: "App",
@@ -107,10 +119,12 @@ export const scriptMarkerGroups: Array<{
     ),
   },
   {
-    description: "Highlights and runtime notes.",
+    description: "Glows, side panels, and runtime notes.",
     label: "Interface",
     options: scriptMarkerOptions.filter((option) =>
-      ["Highlight", "Clear highlight", "Note"].includes(option.label),
+      ["Glow", "Clear glow", "Panel", "Hide panel", "Note"].includes(
+        option.label,
+      ),
     ),
   },
   {
@@ -132,9 +146,9 @@ export const scriptSoundOptions = [{ label: "Thud", path: "sounds/thud.mp3" }] a
 export const customSoundOptionValue = "__custom__";
 export const scriptMarkerDragDataType = "application/x-dlu-script-marker";
 export const scriptMarkerPattern =
-  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
+  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|panel_on|panel_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*[^\]]+)?\]/gi;
 export const scriptMarkerParsePattern =
-  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
+  /\[(show_image|side_image|slide|gslide|interactive|interactive_update|interactive_clear|highlight|highlight_on|highlight_off|overlay|overlay_off|agent_image_off|agent_image_on|panel_on|panel_off|pause|chat_off|chat_on|add_note|play_sound)(?::\s*([^\]]+))?\]/gi;
 
 export function countScriptWords(text: string) {
   const words = text.trim().match(/[A-Za-z0-9]+(?:[.'_-][A-Za-z0-9]+)*/g);
@@ -162,14 +176,16 @@ export function scriptMarkerLabel(type: string) {
     chat_off: "Chat off",
     chat_on: "Chat on",
     gslide: "Slide",
-    highlight: "Highlight",
-    highlight_off: "Clear highlight",
-    highlight_on: "Highlight",
+    highlight: "Glow",
+    highlight_off: "Clear glow",
+    highlight_on: "Glow",
     interactive: "App",
     interactive_clear: "Clear app",
     interactive_update: "Update app",
     overlay: "Overlay",
     overlay_off: "Clear overlay",
+    panel_off: "Hide panel",
+    panel_on: "Panel",
     pause: "Pause",
     play_sound: "Sound",
     show_image: "Image",
@@ -195,6 +211,8 @@ export function scriptMarkerIcon(type: string) {
     interactive_update: "A+",
     overlay: "O",
     overlay_off: "O-",
+    panel_off: "P-",
+    panel_on: "P+",
     pause: "P",
     play_sound: "AU",
     show_image: "I",
@@ -299,6 +317,20 @@ export function scriptMarkerDetail(type: string, args: string, argList: string[]
 
   if (type === "agent_image_off") return "hide main image";
   if (type === "agent_image_on") return "show main image";
+  if (type === "highlight" || type === "highlight_on" || type === "highlight_off") {
+    const target = glowTargetBySelector(argList[0] ?? "");
+    if (target) {
+      return type === "highlight_off" ? target.label : [target.label, argList[1]].filter(Boolean).join(", ");
+    }
+    return args;
+  }
+  if (type === "panel_on" || type === "panel_off") {
+    const panel = getSidePanelMetadata(argList[0] ?? "");
+    const panelLabel = panel?.label ?? argList[0] ?? "panel";
+    const mode = (argList[1] ?? "").toLowerCase();
+    if (type === "panel_off") return panelLabel;
+    return mode === "available" ? `${panelLabel} (available)` : panelLabel;
+  }
   if (type === "side_image") {
     const side = argList[0] || "left";
     const mode = (argList[1] || "show").toLowerCase();

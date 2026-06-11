@@ -745,6 +745,35 @@ class InteractiveRuntimeActionTests(TestCase):
         state = apply_runtime_actions_to_state({}, actions)
         self.assertFalse(state["uiRuntime"]["chatEnabled"])
 
+    def test_gslide_actions_accumulate_deduped_slide_history(self):
+        def gslide_action(slide_ref, page_id):
+            return {
+                "type": "gslide",
+                "cached": True,
+                "deckUrl": "https://docs.google.com/presentation/d/deck/edit",
+                "imageUrl": f"https://example.com/{page_id}.png",
+                "pageId": page_id,
+                "presentationId": "deck",
+                "slideRef": slide_ref,
+            }
+
+        state = apply_runtime_actions_to_state(
+            {},
+            [gslide_action("1", "p1"), gslide_action("2", "p2")],
+        )
+        state = apply_runtime_actions_to_state(
+            state,
+            # Re-showing slide 1 must not duplicate its history entry.
+            [gslide_action("1", "p1")],
+        )
+
+        history = state["uiRuntime"]["slideHistory"]
+        self.assertEqual(
+            [entry["pageId"] for entry in history],
+            ["p1", "p2"],
+        )
+        self.assertEqual(state["uiRuntime"]["slide"]["pageId"], "p1")
+
     def test_script_image_and_overlay_markers_emit_runtime_cues(self):
         event = ExperienceEvent.objects.create(
             experience=self.experience,

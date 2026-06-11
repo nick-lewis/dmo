@@ -14,6 +14,11 @@ export default defineConfig(({ command }) => {
     },
     server: {
       port: 5173,
+      // Docker Desktop mounts on Windows do not deliver file change events,
+      // so the containerized dev server opts into polling via this env var.
+      watch: process.env.VITE_WATCH_POLLING
+        ? { interval: 300, usePolling: true }
+        : undefined,
       proxy: {
         "/api": apiProxyTarget,
         "/accounts": apiProxyTarget,

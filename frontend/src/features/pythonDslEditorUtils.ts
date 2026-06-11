@@ -1,5 +1,64 @@
 const defaultIndent = "    ";
 
+export type DslSourceRange = { from: number; to: number };
+
+const scriptActionSourcePattern = /\bscript\s*\([^)]*\)/g;
+
+export function scriptActionRangesFromSource(source: string): DslSourceRange[] {
+  const ranges: DslSourceRange[] = [];
+  let offset = 0;
+
+  for (const line of source.split("\n")) {
+    if (!line.trimStart().startsWith("#")) {
+      for (const match of line.matchAll(scriptActionSourcePattern)) {
+        if (typeof match.index !== "number") continue;
+        ranges.push({
+          from: offset + match.index,
+          to: offset + match.index + match[0].length,
+        });
+      }
+    }
+    offset += line.length + 1;
+  }
+
+  return ranges;
+}
+
+// Maps each pre-change script action through the document change and reports
+// the indices whose text no longer lands on a script action. Ranges must be
+// in document order; mapPosition is the change-set position mapper.
+export function removedScriptActionIndices(
+  oldRanges: DslSourceRange[],
+  newRanges: DslSourceRange[],
+  mapPosition: (position: number, assoc: -1 | 1) => number,
+): number[] {
+  const removed: number[] = [];
+  let nextNewIndex = 0;
+
+  oldRanges.forEach((range, index) => {
+    const mappedFrom = mapPosition(range.from, 1);
+    const mappedTo = mapPosition(range.to, -1);
+    let claimed = false;
+
+    while (nextNewIndex < newRanges.length) {
+      const candidate = newRanges[nextNewIndex];
+      if (candidate.to <= mappedFrom) {
+        nextNewIndex += 1;
+        continue;
+      }
+      if (candidate.from < mappedTo && candidate.to > mappedFrom) {
+        claimed = true;
+        nextNewIndex += 1;
+      }
+      break;
+    }
+
+    if (!claimed) removed.push(index);
+  });
+
+  return removed;
+}
+
 export type PythonDslButtonStringArgument = {
   from: number;
   to: number;
