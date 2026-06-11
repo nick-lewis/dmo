@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 
+import { useNavigate } from "react-router-dom";
+
 import { apiFetch } from "../api";
 import { publicAsset } from "../assets";
 import { defaultChoiceIconBackground } from "../uiHelpers";
@@ -378,6 +380,7 @@ export function PanelStudyDesign() {
     shellStyle,
     workspaceWidth,
   } = useRuntimeLayout({ initiallyOpen: false });
+  const navigate = useNavigate();
   const [sceneId, setSceneId] = useState<SceneId>("conversation");
   const [dockState, setDockState] = useState<DesignDockState>(readStoredDockState);
   const [dockMenu, setDockMenu] = useState<DockMenuState | null>(null);
@@ -610,7 +613,7 @@ export function PanelStudyDesign() {
         <button
           aria-label="Back to editor"
           className="study-back-button"
-          onClick={() => window.location.assign("/")}
+          onClick={() => navigate("/")}
           title="Back to editor"
           type="button"
         >
@@ -619,7 +622,7 @@ export function PanelStudyDesign() {
         <div className="study-actions">
           <button
             className="header-action secondary"
-            onClick={() => window.location.assign("/")}
+            onClick={() => navigate("/")}
             type="button"
           >
             Experiences

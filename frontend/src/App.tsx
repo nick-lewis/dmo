@@ -1,6 +1,11 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
+import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
 
-import { routeExperience } from "./api";
+// Client-side routing: moving between pages keeps the app alive (no full
+// reloads), which is what lets session context, audio, and an ever-present
+// tutor survive navigation as the app grows into a multi-place world.
+// Django-served pages (e.g. /accounts/login/) are still reached with
+// window.location.assign — they are real page loads on purpose.
 
 const ExperienceEditor = lazy(() =>
   import("./features/ExperienceEditor").then((module) => ({
@@ -43,46 +48,74 @@ const VoicePersonalityLab = lazy(() =>
   })),
 );
 
-function App() {
-  const pathname = window.location.pathname;
-  const normalizedPath = pathname.replace(/\/+$/, "") || "/";
-  const experienceRoute = routeExperience(pathname);
-  let screen: ReactNode;
+function ExperienceRunRoute() {
+  const { experienceId = "" } = useParams();
+  return <PanelStudy initialExperienceId={experienceId} key={experienceId} />;
+}
 
-  if (normalizedPath === "/" || normalizedPath === "/experiences") {
-    screen = <ExperienceHome />;
-  } else if (normalizedPath === "/script-text-speed-lab") {
-    screen = <ScriptTextSpeedLab />;
-  } else if (normalizedPath === "/voice-personality-lab") {
-    screen = <VoicePersonalityLab />;
-  } else if (normalizedPath === "/run-design") {
-    screen = <PanelStudyDesign />;
-  } else if (experienceRoute.experienceId && experienceRoute.mode === "run") {
-    screen = <PanelStudy initialExperienceId={experienceRoute.experienceId} />;
-  } else if (experienceRoute.experienceId && experienceRoute.mode === "next") {
-    screen = <ExperienceEditorNext experienceId={experienceRoute.experienceId} />;
-  } else if (experienceRoute.experienceId && experienceRoute.mode === "mockups") {
-    screen = <ExperienceEditorMockups experienceId={experienceRoute.experienceId} />;
-  } else if (experienceRoute.experienceId) {
-    screen = <ExperienceEditor experienceId={experienceRoute.experienceId} />;
-  } else if (normalizedPath === "/surfaces/tutoring/panels") {
-    screen = <PanelStudy />;
-  } else {
-    screen = <ExperienceHome />;
-  }
+function ExperienceNextRoute() {
+  const { experienceId = "" } = useParams();
+  return <ExperienceEditorNext experienceId={experienceId} key={experienceId} />;
+}
 
+function ExperienceMockupsRoute() {
+  const { experienceId = "" } = useParams();
   return (
-    <Suspense
-      fallback={
-        <div
-          aria-label="Loading app"
-          className="app-route-loading"
-          role="status"
-        />
-      }
-    >
-      {screen}
-    </Suspense>
+    <ExperienceEditorMockups experienceId={experienceId} key={experienceId} />
+  );
+}
+
+function ExperienceEditRoute() {
+  const { experienceId = "" } = useParams();
+  return <ExperienceEditor experienceId={experienceId} key={experienceId} />;
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Suspense
+        fallback={
+          <div
+            aria-label="Loading app"
+            className="app-route-loading"
+            role="status"
+          />
+        }
+      >
+        <Routes>
+          <Route element={<ExperienceHome />} path="/" />
+          <Route element={<ExperienceHome />} path="/experiences" />
+          <Route element={<ScriptTextSpeedLab />} path="/script-text-speed-lab" />
+          <Route
+            element={<VoicePersonalityLab />}
+            path="/voice-personality-lab"
+          />
+          <Route element={<PanelStudyDesign />} path="/run-design" />
+          <Route
+            element={<ExperienceRunRoute />}
+            path="/experiences/:experienceId/run"
+          />
+          <Route
+            element={<ExperienceNextRoute />}
+            path="/experiences/:experienceId/next"
+          />
+          <Route
+            element={<ExperienceMockupsRoute />}
+            path="/experiences/:experienceId/mockups"
+          />
+          <Route
+            element={<ExperienceEditRoute />}
+            path="/experiences/:experienceId/edit"
+          />
+          <Route
+            element={<ExperienceEditRoute />}
+            path="/experiences/:experienceId"
+          />
+          <Route element={<PanelStudy />} path="/surfaces/tutoring/panels" />
+          <Route element={<ExperienceHome />} path="*" />
+        </Routes>
+      </Suspense>
+    </BrowserRouter>
   );
 }
 

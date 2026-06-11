@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   apiFetch,
@@ -27,6 +28,7 @@ export function useExperienceRunActions({
 }) {
   const [runningEventId, setRunningEventId] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const navigate = useNavigate();
 
   async function runExperience() {
     if (!experience) return;
@@ -52,7 +54,7 @@ export function useExperienceRunActions({
     }
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceRunPath(experience.id));
+    navigate(experienceRunPath(experience.id));
   }
 
   async function runSelectedEvent(checkpointId = "") {
@@ -85,14 +87,14 @@ export function useExperienceRunActions({
     }
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceRunPath(experience.id));
+    navigate(experienceRunPath(experience.id));
   }
 
   async function returnToExperiences() {
     const didSave = await flushEditorAutosave();
     if (!didSave) return;
 
-    window.location.assign("/");
+    navigate("/");
   }
 
   async function signOut() {

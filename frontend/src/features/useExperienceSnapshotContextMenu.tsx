@@ -176,6 +176,8 @@ export function useExperienceSnapshotContextMenu({
         },
       );
       writeSelectedExperienceId(payload.experience.id);
+      // Deliberate full reload: restoring often lands on the URL we are
+      // already on, and the page must re-fetch the restored experience.
       window.location.assign(restorePath(payload.experience.id));
     } catch (restoreError) {
       setError(

@@ -21,7 +21,8 @@
     "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.17.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.4",

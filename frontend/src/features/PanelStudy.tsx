@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   type RealtimeModelId,
   type RealtimeStatus,
@@ -123,6 +124,7 @@ function localMessageId(prefix: string) {
 
 
 export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?: string }) {
+  const navigate = useNavigate();
   const initialSlideSettings = useRef(readSlideSettings());
   const {
     dragLowerDivider,
@@ -1642,7 +1644,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
           disabled={!selectedExperience}
           onClick={() => {
             if (selectedExperience) {
-              window.location.assign(experienceNextEditPath(selectedExperience.id));
+              navigate(experienceNextEditPath(selectedExperience.id));
             }
           }}
           title="Back to editor"
@@ -1661,7 +1663,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
           </button>
           <button
             className="header-action secondary"
-            onClick={() => window.location.assign("/")}
+            onClick={() => navigate("/")}
             type="button"
           >
             Experiences

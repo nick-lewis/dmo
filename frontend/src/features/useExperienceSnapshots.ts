@@ -245,6 +245,8 @@ export function useExperienceSnapshots({
         body: JSON.stringify({}),
       });
       writeSelectedExperienceId(payload.experience.id);
+      // Deliberate full reload: restoring can land on the URL we are already
+      // on, and the page must re-fetch the restored experience.
       window.location.assign(experienceEditPath(payload.experience.id));
     } catch (snapshotRestoreError) {
       setSnapshotError(

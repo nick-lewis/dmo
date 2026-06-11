@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   apiFetch,
@@ -22,6 +23,7 @@ export function ExperienceHome() {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const autosaveTimers = useRef<Record<string, number>>({});
   const autosaveVersions = useRef<Record<string, number>>({});
+  const navigate = useNavigate();
 
   function draftFromExperience(experience: Experience): ExperienceForm {
     return {
@@ -211,7 +213,7 @@ export function ExperienceHome() {
     }
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceRunPath(experience.id));
+    navigate(experienceRunPath(experience.id));
   }
 
   async function editExperience(experience: Experience) {
@@ -219,7 +221,7 @@ export function ExperienceHome() {
     if (!didSave) return;
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceEditPath(experience.id));
+    navigate(experienceEditPath(experience.id));
   }
 
   async function editExperienceNext(experience: Experience) {
@@ -227,7 +229,7 @@ export function ExperienceHome() {
     if (!didSave) return;
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceNextEditPath(experience.id));
+    navigate(experienceNextEditPath(experience.id));
   }
 
   async function deleteExperience(experience: Experience) {
@@ -328,14 +330,14 @@ export function ExperienceHome() {
           {user ? <span className="study-user">{user.displayName}</span> : null}
           <button
             className="header-action secondary"
-            onClick={() => window.location.assign("/voice-personality-lab")}
+            onClick={() => navigate("/voice-personality-lab")}
             type="button"
           >
             Voice lab
           </button>
           <button
             className="header-action secondary"
-            onClick={() => window.location.assign("/run-design")}
+            onClick={() => navigate("/run-design")}
             type="button"
           >
             Design lab

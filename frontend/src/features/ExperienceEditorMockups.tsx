@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   apiFetch,
@@ -553,6 +554,7 @@ export function ExperienceEditorMockups({
   const [selectedEventId, setSelectedEventId] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [user, setUser] = useState<ApiUser | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let isCancelled = false;
@@ -607,21 +609,21 @@ export function ExperienceEditorMockups({
     events.find((event) => event.id === selectedEventId) ?? events[0] ?? null;
 
   function returnToExperiences() {
-    window.location.assign("/experiences");
+    navigate("/experiences");
   }
 
   function openNewEditor() {
     if (!experience) return;
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceNextEditPath(experience.id));
+    navigate(experienceNextEditPath(experience.id));
   }
 
   function openCurrentEditor() {
     if (!experience) return;
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceEditPath(experience.id));
+    navigate(experienceEditPath(experience.id));
   }
 
   async function runExperience() {
@@ -642,7 +644,7 @@ export function ExperienceEditorMockups({
     }
 
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceRunPath(experience.id));
+    navigate(experienceRunPath(experience.id));
   }
 
   async function signOut() {

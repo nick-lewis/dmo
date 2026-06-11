@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   getMainPanelAppDefinition,
 } from "../mainPanelApps";
@@ -247,6 +248,7 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
     isReady: status === "ready",
     selectedEventId,
   });
+  const navigate = useNavigate();
   const snapshotContextMenu = useExperienceSnapshotContextMenu({
     experience,
     flushEditorAutosave,
@@ -598,7 +600,7 @@ export function ExperienceEditor({ experienceId }: { experienceId: string }) {
     const didSave = await flushEditorAutosave();
     if (!didSave) return;
 
-    window.location.assign(experienceNextEditPath(experience.id));
+    navigate(experienceNextEditPath(experience.id));
   }
 
   return (

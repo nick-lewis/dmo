@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   apiFetch,
@@ -624,6 +625,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       updateActiveScriptMarkedText(text, false);
     },
   });
+  const navigate = useNavigate();
   const snapshotContextMenu = useExperienceSnapshotContextMenu({
     actions: [
       {
@@ -2448,14 +2450,14 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     const didSave = await flushNextEditorAutosave();
     if (!didSave) return;
 
-    window.location.assign("/experiences");
+    navigate("/experiences");
   }
 
   async function openDesignLab() {
     const didSave = await flushNextEditorAutosave();
     if (!didSave) return;
 
-    window.location.assign("/run-design");
+    navigate("/run-design");
   }
 
   async function runEvent(eventId: string) {
@@ -2499,7 +2501,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       total: preparedAudioTotal,
     });
     writeSelectedExperienceId(experience.id);
-    window.location.assign(experienceRunPath(experience.id));
+    navigate(experienceRunPath(experience.id));
   }
 
   async function createEvent() {
