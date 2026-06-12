@@ -1,4 +1,5 @@
 import {
+  type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
   useEffect,
   useRef,
@@ -7,6 +8,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 
 import { apiFetch, experienceNextEditPath } from "../api";
+import { publicAsset } from "../assets";
 import { ArrowLeftIcon } from "../components/Icons";
 import type { SidePanelOverride } from "../sidePanelMetadata";
 import {
@@ -14,7 +16,9 @@ import {
   sidePanelMetadataDefinitions,
 } from "../sidePanelMetadata";
 import type { Experience } from "../types";
+import { ImageLibraryPicker } from "./ImageLibraryPicker";
 import { RoadmapBoard } from "./RoadmapBoard";
+import { useScriptImageLibrary } from "./useScriptImageLibrary";
 
 // The panel editor: shows a panel alone, tied to one experience, for
 // configuring how it behaves there. For the roadmap that means choosing
@@ -38,7 +42,14 @@ export function PanelEditorPage() {
   );
   const [error, setError] = useState("");
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
+  const [selectedPanelId, setSelectedPanelId] = useState("roadmap");
+  const [isIconPickerOpen, setIsIconPickerOpen] = useState(false);
   const nodeMenuRef = useRef<HTMLDivElement | null>(null);
+  const iconFileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageLibrary = useScriptImageLibrary({
+    experienceId,
+    setError,
+  });
 
   useEffect(() => {
     let isCancelled = false;
@@ -89,7 +100,10 @@ export function PanelEditorPage() {
     };
   }, [nodeMenu]);
 
-  const roadmapMetadata = getSidePanelMetadata("roadmap");
+  const selectedMetadata = getSidePanelMetadata(selectedPanelId);
+  const selectedOverride = experience?.sidePanels?.find(
+    (override) => override.panelId === selectedPanelId,
+  );
   const roadmapOverride = experience?.sidePanels?.find(
     (override) => override.panelId === "roadmap",
   );
@@ -157,6 +171,21 @@ export function PanelEditorPage() {
     await savePanelOverride("roadmap", { nodeEvents: nextEvents });
   }
 
+  async function uploadPanelIcon(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const imagePath = await imageLibrary.uploadScriptImageFile(
+      file,
+      "Could not upload the icon image.",
+    );
+    if (imagePath) {
+      await savePanelOverride(selectedPanelId, { iconPath: imagePath });
+      setIsIconPickerOpen(false);
+    }
+  }
+
   function openNodeMenu(nodeId: string, event: ReactMouseEvent<HTMLElement>) {
     setNodeMenu({
       nodeId,
@@ -206,21 +235,35 @@ export function PanelEditorPage() {
         {error ? <div className="experience-state error">{error}</div> : null}
 
         {status === "ready" && experience ? (
-          <>
+          <div className="panel-editor-columns">
             <div className="panel-editor-list">
               {sidePanelMetadataDefinitions.map((panel) => {
                 const override = experience.sidePanels?.find(
                   (candidate) => candidate.panelId === panel.id,
                 );
                 const isInExperience = override?.enabled === true;
+                const isSelected = panel.id === selectedPanelId;
                 return (
                   <div
-                    className={`panel-editor-list-row${
-                      isInExperience ? " is-on" : ""
-                    }`}
+                    className={[
+                      "panel-editor-list-row",
+                      isInExperience ? "is-on" : "",
+                      isSelected ? "is-selected" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                     key={panel.id}
+                    onClick={() => setSelectedPanelId(panel.id)}
+                    role="button"
+                    tabIndex={0}
                   >
-                    <span aria-hidden="true">{panel.glyph}</span>
+                    <span aria-hidden="true">
+                      {override?.iconPath ? (
+                        <img alt="" src={publicAsset(override.iconPath)} />
+                      ) : (
+                        panel.glyph
+                      )}
+                    </span>
                     <div className="panel-editor-list-name">
                       <strong>{override?.title || panel.label}</strong>
                       {panel.description ? (
@@ -228,11 +271,12 @@ export function PanelEditorPage() {
                       ) : null}
                     </div>
                     <button
-                      onClick={() =>
+                      onClick={(event) => {
+                        event.stopPropagation();
                         void savePanelOverride(panel.id, {
                           enabled: !isInExperience,
-                        })
-                      }
+                        });
+                      }}
                       type="button"
                     >
                       {isInExperience ? "✓ In experience" : "Add to experience"}
@@ -242,44 +286,138 @@ export function PanelEditorPage() {
               })}
             </div>
 
-            {roadmapOverride?.enabled === true ? (
-              <>
-                <p className="panel-editor-hint">
-                  Right-click a challenge to choose which event it triggers in
-                  this experience. Linked challenges show their event below
-                  the title. Turn the panel on for students with{" "}
-                  <code>panel(&quot;roadmap&quot;)</code> or{" "}
-                  <code>[panel_on: roadmap]</code>.
-                </p>
-                <div className="panel-editor-window">
-                  <header>
-                    <span aria-hidden="true">
-                      {roadmapMetadata?.glyph ?? "🧭"}
-                    </span>
-                    <strong>
-                      {roadmapOverride?.title ||
-                        roadmapMetadata?.label ||
-                        "Roadmap"}
-                    </strong>
-                  </header>
-                  <div className="panel-editor-window-body">
-                    <RoadmapBoard
-                      activeId=""
-                      completedIds={new Set()}
-                      editor={{
-                        nodeBadges,
-                        onNodeContextMenu: openNodeMenu,
+            <div className="panel-editor-detail">
+              {selectedOverride?.enabled === true ? (
+                <>
+                  <div className="panel-editor-icon-row">
+                    <span>Icon</span>
+                    <button
+                      aria-label="Choose panel icon"
+                      className="panel-editor-icon-button"
+                      onClick={() => {
+                        const opening = !isIconPickerOpen;
+                        setIsIconPickerOpen(opening);
+                        if (opening) void imageLibrary.loadScriptImages();
                       }}
-                    />
+                      title="Choose from the image library"
+                      type="button"
+                    >
+                      {selectedOverride.iconPath ? (
+                        <img
+                          alt=""
+                          src={publicAsset(selectedOverride.iconPath)}
+                        />
+                      ) : (
+                        <span aria-hidden="true">
+                          {selectedMetadata?.glyph ?? "🧭"}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => iconFileInputRef.current?.click()}
+                      type="button"
+                    >
+                      Upload image…
+                    </button>
+                    {selectedOverride.iconPath ? (
+                      <button
+                        onClick={() =>
+                          void savePanelOverride(selectedPanelId, {
+                            iconPath: "",
+                          })
+                        }
+                        type="button"
+                      >
+                        Use default glyph
+                      </button>
+                    ) : null}
                   </div>
-                </div>
-              </>
-            ) : (
-              <p className="panel-editor-hint">
-                Add a panel to this experience to configure it here.
-              </p>
-            )}
-          </>
+                  {isIconPickerOpen ? (
+                    <ImageLibraryPicker
+                      ariaLabel={`Icon options for ${selectedPanelId}`}
+                      classNames={{
+                        deleteButton: "next-script-image-delete-button",
+                        empty: "next-script-image-picker-empty",
+                        option: "next-script-image-option",
+                        optionMain: "next-script-image-option-main",
+                        picker: "next-script-image-picker",
+                      }}
+                      deletingPath={imageLibrary.deletingScriptImagePath}
+                      emptyLabel="No images yet — upload one above."
+                      isLoading={imageLibrary.isLoadingScriptImages}
+                      onDelete={(path) =>
+                        void imageLibrary.deleteScriptImageFile(path)
+                      }
+                      onSelect={(path) => {
+                        void savePanelOverride(selectedPanelId, {
+                          iconPath: path,
+                        });
+                        setIsIconPickerOpen(false);
+                      }}
+                      options={imageLibrary.scriptImageOptions}
+                      selectedPath={selectedOverride.iconPath ?? ""}
+                    />
+                  ) : null}
+                  <input
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    hidden
+                    onChange={(event) => void uploadPanelIcon(event)}
+                    ref={iconFileInputRef}
+                    type="file"
+                  />
+
+                  {selectedPanelId === "roadmap" ? (
+                    <>
+                      <p className="panel-editor-hint">
+                        Right-click a challenge to choose which event it
+                        triggers in this experience. Linked challenges show
+                        their event below the title. Turn the panel on for
+                        students with <code>panel(&quot;roadmap&quot;)</code>{" "}
+                        or <code>[panel_on: roadmap]</code>.
+                      </p>
+                      <div className="panel-editor-window">
+                        <header>
+                          <span aria-hidden="true">
+                            {selectedOverride.iconPath ? (
+                              <img
+                                alt=""
+                                src={publicAsset(selectedOverride.iconPath)}
+                              />
+                            ) : (
+                              selectedMetadata?.glyph ?? "🧭"
+                            )}
+                          </span>
+                          <strong>
+                            {selectedOverride.title ||
+                              selectedMetadata?.label ||
+                              "Roadmap"}
+                          </strong>
+                        </header>
+                        <div className="panel-editor-window-body">
+                          <RoadmapBoard
+                            activeId=""
+                            completedIds={new Set()}
+                            editor={{
+                              nodeBadges,
+                              onNodeContextMenu: openNodeMenu,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="panel-editor-hint">
+                      This panel has nothing else to configure yet.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="panel-editor-hint">
+                  Add this panel to the experience to configure it here.
+                </p>
+              )}
+            </div>
+          </div>
         ) : null}
       </section>
 
