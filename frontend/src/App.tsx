@@ -129,6 +129,7 @@ function App() {
             element={<PanelEditorPage />}
             path="/experiences/:experienceId/panels"
           />
+          <Route element={<PanelEditorPage />} path="/panels" />
           <Route
             element={<ExperienceEditRoute />}
             path="/experiences/:experienceId/edit"

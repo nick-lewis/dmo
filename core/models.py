@@ -132,6 +132,37 @@ class ExperienceEvent(models.Model):
         return f"{self.experience}: {self.title}"
 
 
+class SidePanelSetting(models.Model):
+    """Per-user global defaults for a registered side panel (icon, title).
+
+    Per-experience overrides in Experience.side_panels win over these;
+    these win over the registry's built-in glyph/label.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="side_panel_settings",
+    )
+    panel_id = models.CharField(max_length=60)
+    icon_path = models.CharField(max_length=220, blank=True, default="")
+    title = models.CharField(max_length=80, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "panel_id"],
+                name="unique_side_panel_setting_per_user",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user}: {self.panel_id}"
+
+
 class EventActionStep(models.Model):
     class ActionType(models.TextChoices):
         SCRIPT = "script", "Script"

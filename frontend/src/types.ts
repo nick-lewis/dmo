@@ -267,9 +267,16 @@ export type EventCheckpointsPayload = {
   checkpoints: EventCheckpoint[];
 };
 
+export type SidePanelSettingEntry = {
+  iconPath: string;
+  panelId: string;
+  title: string;
+};
+
 export type ExperiencesPayload = {
   currentExperienceId: string;
   experiences: Experience[];
+  sidePanelSettings?: SidePanelSettingEntry[];
 };
 
 export type ExperienceForm = {

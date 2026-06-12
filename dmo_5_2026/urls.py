@@ -24,6 +24,7 @@ from core.experience_lifecycle_views import (
     experience_validation,
     experiences,
     script_images,
+    side_panel_settings,
     update_experience,
     upload_tutor_avatar,
 )
@@ -99,6 +100,11 @@ urlpatterns = [
     path("api/auth/logout/", logout_user, name="logout-user"),
     path("api/main-panel-apps/", main_panel_apps, name="main-panel-apps"),
     path("api/experiences/", experiences, name="experiences"),
+    path(
+        "api/side-panel-settings/",
+        side_panel_settings,
+        name="side-panel-settings",
+    ),
     path(
         "api/experiences/import/",
         import_experience,

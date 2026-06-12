@@ -8,6 +8,7 @@ import {
   experienceRunPath,
 } from "../api";
 import { PlusIcon, TrashIcon } from "../components/Icons";
+import { HeaderNavActions } from "./HeaderNavActions";
 import { readSelectedExperienceId, writeSelectedExperienceId } from "../persistence";
 import type { ApiUser, Experience, ExperienceForm, ExperiencesPayload, SessionPayload } from "../types";
 
@@ -328,20 +329,7 @@ export function ExperienceHome() {
         <p className="study-kicker">dLU</p>
         <div className="study-actions">
           {user ? <span className="study-user">{user.displayName}</span> : null}
-          <button
-            className="header-action secondary"
-            onClick={() => navigate("/voice-personality-lab")}
-            type="button"
-          >
-            Voice lab
-          </button>
-          <button
-            className="header-action secondary"
-            onClick={() => navigate("/run-design")}
-            type="button"
-          >
-            Design lab
-          </button>
+          <HeaderNavActions currentPage="experiences" />
           <button
             className="header-action secondary"
             disabled={isSigningOut}

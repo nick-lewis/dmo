@@ -78,6 +78,7 @@ import type {
   RuntimeSideImage,
   RuntimeRoadmapState,
   RuntimeSidePanelState,
+  SidePanelSettingEntry,
   RuntimeUiState,
   RuntimeUiTrigger,
   SessionPayload,
@@ -248,6 +249,9 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     activeId: "",
     completedIds: [],
   });
+  const [sidePanelSettings, setSidePanelSettings] = useState<
+    SidePanelSettingEntry[]
+  >([]);
   const [runtimeOverlays, setRuntimeOverlays] = useState<
     Record<string, RuntimeOverlay>
   >({});
@@ -1075,6 +1079,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
 
         setUser(me.user);
         setExperiences(experiencePayload.experiences);
+        setSidePanelSettings(experiencePayload.sidePanelSettings ?? []);
         applySelectedExperience(chosenExperience);
         setSession(payload.session);
         setMessages(payload.messages);
@@ -1555,9 +1560,10 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     }
   }
 
-  const dockPanels = resolveSidePanels(selectedExperience?.sidePanels).filter(
-    (panel) => runtimeSidePanels[panel.id]?.available,
-  );
+  const dockPanels = resolveSidePanels(
+    selectedExperience?.sidePanels,
+    sidePanelSettings,
+  ).filter((panel) => runtimeSidePanels[panel.id]?.available);
   const openSidePanelIds = dockPanels
     .filter((panel) => runtimeSidePanels[panel.id]?.open)
     .map((panel) => panel.id);

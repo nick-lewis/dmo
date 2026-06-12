@@ -20,6 +20,7 @@ import {
   sidePanelMetadataDefinitions,
 } from "../sidePanelMetadata";
 import { ChatPanelContent } from "./ChatPanelContent";
+import { HeaderNavActions } from "./HeaderNavActions";
 import { ImageLibraryPicker } from "./ImageLibraryPicker";
 import { MainPanelContent } from "./MainPanelContent";
 import { PanelWindow } from "./PanelWindow";
@@ -641,13 +642,7 @@ export function PanelStudyDesign() {
           <ArrowLeftIcon />
         </button>
         <div className="study-actions">
-          <button
-            className="header-action secondary"
-            onClick={() => navigate("/")}
-            type="button"
-          >
-            Experiences
-          </button>
+          <HeaderNavActions currentPage="design-lab" />
         </div>
       </header>
 

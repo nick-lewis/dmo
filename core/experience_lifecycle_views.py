@@ -18,7 +18,7 @@ from .experience_services import (
     update_experience_from_data,
 )
 from .http_utils import auth_required_response, parse_json_body
-from .models import Experience
+from .models import Experience, SidePanelSetting
 from .serializers import experience_export_payload, serialize_experience
 from .validation import experience_validation_summary
 
@@ -93,6 +93,50 @@ def uploaded_script_image_name_from_path(image_path):
     return relative_name
 
 
+def user_side_panel_settings(user):
+    return [
+        {
+            "iconPath": setting.icon_path,
+            "panelId": setting.panel_id,
+            "title": setting.title,
+        }
+        for setting in SidePanelSetting.objects.filter(user=user).order_by(
+            "panel_id"
+        )
+    ]
+
+
+@require_http_methods(["GET", "POST"])
+def side_panel_settings(request):
+    """Per-user global panel defaults (icon/title); per-experience overrides
+    in Experience.sidePanels win over these."""
+    auth_response = auth_required_response(request)
+    if auth_response:
+        return auth_response
+
+    if request.method == "POST":
+        data = parse_json_body(request)
+        if data is None:
+            return JsonResponse({"detail": "Invalid JSON."}, status=400)
+        panel_id = str(data.get("panelId", "") or "").strip()
+        if not panel_id or len(panel_id) > 60:
+            return JsonResponse({"detail": "Panel id is required."}, status=400)
+        icon_path = str(data.get("iconPath", "") or "").strip()
+        if len(icon_path) > 220:
+            return JsonResponse({"detail": "Icon path is too long."}, status=400)
+        title = str(data.get("title", "") or "").strip()
+        if len(title) > 80:
+            return JsonResponse({"detail": "Title is too long."}, status=400)
+
+        SidePanelSetting.objects.update_or_create(
+            user=request.user,
+            panel_id=panel_id,
+            defaults={"icon_path": icon_path, "title": title},
+        )
+
+    return JsonResponse({"settings": user_side_panel_settings(request.user)})
+
+
 @require_http_methods(["GET", "POST"])
 def experiences(request):
     auth_response = auth_required_response(request)
@@ -109,6 +153,7 @@ def experiences(request):
                     serialize_experience(experience)
                     for experience in user_experiences
                 ],
+                "sidePanelSettings": user_side_panel_settings(request.user),
             }
         )
 

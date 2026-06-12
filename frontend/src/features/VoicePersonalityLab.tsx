@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 import { apiFetch } from "../api";
 import { MicIcon, StopIcon, TrashIcon } from "../components/Icons";
+import { HeaderNavActions } from "./HeaderNavActions";
 import {
   type RealtimeModelId,
   type RealtimeVoiceId,
@@ -94,7 +94,6 @@ function nextSelectedGroupId(
 
 
 export function VoicePersonalityLab() {
-  const navigate = useNavigate();
   const [user, setUser] = useState<ApiUser | null>(null);
   const [payload, setPayload] = useState<VoicePersonalityLabPayload | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -315,13 +314,7 @@ export function VoicePersonalityLab() {
         <p className="study-kicker">dLU</p>
         <div className="study-actions">
           {user ? <span className="study-user">{user.displayName}</span> : null}
-          <button
-            className="header-action secondary"
-            onClick={() => navigate("/experiences")}
-            type="button"
-          >
-            Experiences
-          </button>
+          <HeaderNavActions currentPage="voice-lab" />
         </div>
       </header>
 

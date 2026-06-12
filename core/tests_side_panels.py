@@ -332,6 +332,40 @@ class SidePanelRuntimeTests(TestCase):
             ],
         )
 
+    def test_side_panel_settings_upsert_and_list(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/api/side-panel-settings/",
+            {"panelId": "roadmap", "iconPath": "media/script-images/x.png"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["settings"],
+            [
+                {
+                    "iconPath": "media/script-images/x.png",
+                    "panelId": "roadmap",
+                    "title": "",
+                }
+            ],
+        )
+
+        # Upsert replaces rather than duplicates.
+        response = self.client.post(
+            "/api/side-panel-settings/",
+            {"panelId": "roadmap", "iconPath": "", "title": "Map"},
+            content_type="application/json",
+        )
+        settings = response.json()["settings"]
+        self.assertEqual(len(settings), 1)
+        self.assertEqual(settings[0]["title"], "Map")
+
+        experiences_payload = self.client.get("/api/experiences/").json()
+        self.assertEqual(
+            experiences_payload["sidePanelSettings"], settings
+        )
+
     def test_roadmap_complete_action_updates_session_roadmap_state(self):
         state = apply_runtime_actions_to_state(
             {

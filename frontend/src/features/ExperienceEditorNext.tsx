@@ -103,6 +103,7 @@ import {
   viewMarkerEditKey,
   type ScriptActionViewMarker,
 } from "./scriptActionProjection";
+import { HeaderNavActions } from "./HeaderNavActions";
 import { NextEditorOverviewHeader } from "./NextEditorOverviewHeader";
 import { clampFloatingMenuPosition } from "./floatingMenuPosition";
 import { useFloatingMenuDrag } from "./useFloatingMenuDrag";
@@ -2469,26 +2470,6 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     );
   }
 
-  async function returnToExperiences() {
-    const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
-
-    navigate("/experiences");
-  }
-
-  async function openDesignLab() {
-    const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
-
-    navigate("/run-design");
-  }
-
-  async function openPanelEditor() {
-    const didSave = await flushNextEditorAutosave();
-    if (!didSave) return;
-
-    navigate(`/experiences/${encodeURIComponent(experienceId)}/panels`);
-  }
 
   async function runEvent(eventId: string) {
     if (!experience || runningEventId) return;
@@ -3174,27 +3155,10 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       ) : null}
       <header className="study-header">
         <div className="study-actions">
-          <button
-            className="header-action secondary"
-            onClick={() => void returnToExperiences()}
-            type="button"
-          >
-            Experiences
-          </button>
-          <button
-            className="header-action secondary"
-            onClick={() => void openPanelEditor()}
-            type="button"
-          >
-            Panels
-          </button>
-          <button
-            className="header-action secondary"
-            onClick={() => void openDesignLab()}
-            type="button"
-          >
-            Design lab
-          </button>
+          <HeaderNavActions
+            beforeNavigate={flushNextEditorAutosave}
+            experienceId={experienceId}
+          />
         </div>
       </header>
 

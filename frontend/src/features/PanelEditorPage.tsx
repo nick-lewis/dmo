@@ -15,17 +15,22 @@ import {
   getSidePanelMetadata,
   sidePanelMetadataDefinitions,
 } from "../sidePanelMetadata";
-import type { Experience } from "../types";
+import type {
+  Experience,
+  ExperiencesPayload,
+  SidePanelSettingEntry,
+} from "../types";
+import { HeaderNavActions } from "./HeaderNavActions";
 import { ImageLibraryPicker } from "./ImageLibraryPicker";
 import { RoadmapBoard } from "./RoadmapBoard";
 import { useScriptImageLibrary } from "./useScriptImageLibrary";
 
-// The panel editor: shows a panel alone, tied to one experience, for
-// configuring how it behaves there. For the roadmap that means choosing
-// which experience event each challenge triggers — right-click (or click) a
-// challenge and pick from the experience's events. Links are stored in the
-// per-experience side panel overrides (Experience.sidePanels), the same
-// place as icon/title overrides.
+// The panel editor has two modes. Opened from an experience
+// (/experiences/:id/panels) it configures panels FOR that experience:
+// which panels are in it, their icon override, and which event each roadmap
+// challenge triggers (right-click a challenge). Opened globally (/panels)
+// it edits panel-wide defaults (icon) that apply wherever an experience
+// does not override them.
 
 type NodeMenuState = {
   nodeId: string;
@@ -35,8 +40,15 @@ type NodeMenuState = {
 
 export function PanelEditorPage() {
   const { experienceId = "" } = useParams();
+  const isGlobal = !experienceId;
   const navigate = useNavigate();
   const [experience, setExperience] = useState<Experience | null>(null);
+  const [globalSettings, setGlobalSettings] = useState<
+    SidePanelSettingEntry[]
+  >([]);
+  // The shared image library API routes through an experience for its
+  // ownership check; global mode borrows the first experience.
+  const [libraryExperienceId, setLibraryExperienceId] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -47,21 +59,35 @@ export function PanelEditorPage() {
   const nodeMenuRef = useRef<HTMLDivElement | null>(null);
   const iconFileInputRef = useRef<HTMLInputElement | null>(null);
   const imageLibrary = useScriptImageLibrary({
-    experienceId,
+    experienceId: experienceId || libraryExperienceId,
     setError,
   });
 
   useEffect(() => {
     let isCancelled = false;
 
-    async function loadExperience() {
+    async function loadEditor() {
       setStatus("loading");
       try {
-        const payload = await apiFetch<{ experience: Experience }>(
-          `/api/experiences/${encodeURIComponent(experienceId)}/`,
-        );
-        if (isCancelled) return;
-        setExperience(payload.experience);
+        if (experienceId) {
+          const payload = await apiFetch<{ experience: Experience }>(
+            `/api/experiences/${encodeURIComponent(experienceId)}/`,
+          );
+          if (isCancelled) return;
+          setExperience(payload.experience);
+        } else {
+          const [settingsPayload, experiencesPayload] = await Promise.all([
+            apiFetch<{ settings: SidePanelSettingEntry[] }>(
+              "/api/side-panel-settings/",
+            ),
+            apiFetch<ExperiencesPayload>("/api/experiences/"),
+          ]);
+          if (isCancelled) return;
+          setGlobalSettings(settingsPayload.settings);
+          setLibraryExperienceId(
+            experiencesPayload.experiences[0]?.id ?? "",
+          );
+        }
         setStatus("ready");
       } catch (loadError) {
         if (isCancelled) return;
@@ -69,12 +95,12 @@ export function PanelEditorPage() {
         setError(
           loadError instanceof Error
             ? loadError.message
-            : "Could not load the experience.",
+            : "Could not load the panel editor.",
         );
       }
     }
 
-    void loadExperience();
+    void loadEditor();
     return () => {
       isCancelled = true;
     };
@@ -104,6 +130,12 @@ export function PanelEditorPage() {
   const selectedOverride = experience?.sidePanels?.find(
     (override) => override.panelId === selectedPanelId,
   );
+  const selectedGlobalSetting = globalSettings.find(
+    (setting) => setting.panelId === selectedPanelId,
+  );
+  const selectedIconPath = isGlobal
+    ? selectedGlobalSetting?.iconPath ?? ""
+    : selectedOverride?.iconPath ?? "";
   const roadmapOverride = experience?.sidePanels?.find(
     (override) => override.panelId === "roadmap",
   );
@@ -171,6 +203,44 @@ export function PanelEditorPage() {
     await savePanelOverride("roadmap", { nodeEvents: nextEvents });
   }
 
+  async function saveGlobalSetting(
+    panelId: string,
+    patch: Partial<SidePanelSettingEntry>,
+  ) {
+    const existing = globalSettings.find(
+      (setting) => setting.panelId === panelId,
+    );
+    try {
+      const payload = await apiFetch<{ settings: SidePanelSettingEntry[] }>(
+        "/api/side-panel-settings/",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            iconPath: existing?.iconPath ?? "",
+            panelId,
+            title: existing?.title ?? "",
+            ...patch,
+          }),
+        },
+      );
+      setGlobalSettings(payload.settings);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save the panel defaults.",
+      );
+    }
+  }
+
+  async function savePanelIcon(iconPath: string) {
+    if (isGlobal) {
+      await saveGlobalSetting(selectedPanelId, { iconPath });
+    } else {
+      await savePanelOverride(selectedPanelId, { iconPath });
+    }
+  }
+
   async function uploadPanelIcon(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -181,7 +251,7 @@ export function PanelEditorPage() {
       "Could not upload the icon image.",
     );
     if (imagePath) {
-      await savePanelOverride(selectedPanelId, { iconPath: imagePath });
+      await savePanelIcon(imagePath);
       setIsIconPickerOpen(false);
     }
   }
@@ -202,31 +272,31 @@ export function PanelEditorPage() {
     >
       <header className="study-header">
         <button
-          aria-label="Back to editor"
+          aria-label={isGlobal ? "Back to experiences" : "Back to editor"}
           className="study-back-button"
           onClick={() =>
-            navigate(experienceNextEditPath(experienceId))
+            navigate(
+              isGlobal ? "/experiences" : experienceNextEditPath(experienceId),
+            )
           }
-          title="Back to editor"
+          title={isGlobal ? "Back to experiences" : "Back to editor"}
           type="button"
         >
           <ArrowLeftIcon />
         </button>
         <div className="study-actions">
-          <button
-            className="header-action secondary"
-            onClick={() => navigate("/experiences")}
-            type="button"
-          >
-            Experiences
-          </button>
+          <HeaderNavActions currentPage="panels" experienceId={experienceId} />
         </div>
       </header>
 
       <section className="panel-editor">
         <div className="panel-editor-title">
           <h1>Panel editor</h1>
-          {experience ? <p>{experience.title}</p> : null}
+          {isGlobal ? (
+            <p>Global defaults — apply wherever an experience does not override them</p>
+          ) : experience ? (
+            <p>{experience.title}</p>
+          ) : null}
         </div>
 
         {status === "loading" ? (
@@ -234,20 +304,26 @@ export function PanelEditorPage() {
         ) : null}
         {error ? <div className="experience-state error">{error}</div> : null}
 
-        {status === "ready" && experience ? (
+        {status === "ready" && (experience || isGlobal) ? (
           <div className="panel-editor-columns">
             <div className="panel-editor-list">
               {sidePanelMetadataDefinitions.map((panel) => {
-                const override = experience.sidePanels?.find(
+                const override = experience?.sidePanels?.find(
                   (candidate) => candidate.panelId === panel.id,
                 );
+                const globalSetting = globalSettings.find(
+                  (setting) => setting.panelId === panel.id,
+                );
+                const rowIconPath = isGlobal
+                  ? globalSetting?.iconPath ?? ""
+                  : override?.iconPath ?? "";
                 const isInExperience = override?.enabled === true;
                 const isSelected = panel.id === selectedPanelId;
                 return (
                   <div
                     className={[
                       "panel-editor-list-row",
-                      isInExperience ? "is-on" : "",
+                      !isGlobal && isInExperience ? "is-on" : "",
                       isSelected ? "is-selected" : "",
                     ]
                       .filter(Boolean)
@@ -258,36 +334,44 @@ export function PanelEditorPage() {
                     tabIndex={0}
                   >
                     <span aria-hidden="true">
-                      {override?.iconPath ? (
-                        <img alt="" src={publicAsset(override.iconPath)} />
+                      {rowIconPath ? (
+                        <img alt="" src={publicAsset(rowIconPath)} />
                       ) : (
                         panel.glyph
                       )}
                     </span>
                     <div className="panel-editor-list-name">
-                      <strong>{override?.title || panel.label}</strong>
+                      <strong>
+                        {(isGlobal
+                          ? globalSetting?.title
+                          : override?.title) || panel.label}
+                      </strong>
                       {panel.description ? (
                         <small>{panel.description}</small>
                       ) : null}
                     </div>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void savePanelOverride(panel.id, {
-                          enabled: !isInExperience,
-                        });
-                      }}
-                      type="button"
-                    >
-                      {isInExperience ? "✓ In experience" : "Add to experience"}
-                    </button>
+                    {isGlobal ? null : (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void savePanelOverride(panel.id, {
+                            enabled: !isInExperience,
+                          });
+                        }}
+                        type="button"
+                      >
+                        {isInExperience
+                          ? "✓ In experience"
+                          : "Add to experience"}
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </div>
 
             <div className="panel-editor-detail">
-              {selectedOverride?.enabled === true ? (
+              {isGlobal || selectedOverride?.enabled === true ? (
                 <>
                   <div className="panel-editor-icon-row">
                     <span>Icon</span>
@@ -302,11 +386,8 @@ export function PanelEditorPage() {
                       title="Choose from the image library"
                       type="button"
                     >
-                      {selectedOverride.iconPath ? (
-                        <img
-                          alt=""
-                          src={publicAsset(selectedOverride.iconPath)}
-                        />
+                      {selectedIconPath ? (
+                        <img alt="" src={publicAsset(selectedIconPath)} />
                       ) : (
                         <span aria-hidden="true">
                           {selectedMetadata?.glyph ?? "🧭"}
@@ -319,13 +400,9 @@ export function PanelEditorPage() {
                     >
                       Upload image…
                     </button>
-                    {selectedOverride.iconPath ? (
+                    {selectedIconPath ? (
                       <button
-                        onClick={() =>
-                          void savePanelOverride(selectedPanelId, {
-                            iconPath: "",
-                          })
-                        }
+                        onClick={() => void savePanelIcon("")}
                         type="button"
                       >
                         Use default glyph
@@ -349,13 +426,11 @@ export function PanelEditorPage() {
                         void imageLibrary.deleteScriptImageFile(path)
                       }
                       onSelect={(path) => {
-                        void savePanelOverride(selectedPanelId, {
-                          iconPath: path,
-                        });
+                        void savePanelIcon(path);
                         setIsIconPickerOpen(false);
                       }}
                       options={imageLibrary.scriptImageOptions}
-                      selectedPath={selectedOverride.iconPath ?? ""}
+                      selectedPath={selectedIconPath}
                     />
                   ) : null}
                   <input
@@ -366,7 +441,14 @@ export function PanelEditorPage() {
                     type="file"
                   />
 
-                  {selectedPanelId === "roadmap" ? (
+                  {isGlobal ? (
+                    <p className="panel-editor-hint">
+                      This icon is the panel&apos;s default everywhere; an
+                      experience can still override it. To add the panel to
+                      an experience or wire its challenges to events, open
+                      Panels from inside that experience.
+                    </p>
+                  ) : selectedPanelId === "roadmap" ? (
                     <>
                       <p className="panel-editor-hint">
                         Right-click a challenge to choose which event it
@@ -378,17 +460,17 @@ export function PanelEditorPage() {
                       <div className="panel-editor-window">
                         <header>
                           <span aria-hidden="true">
-                            {selectedOverride.iconPath ? (
+                            {selectedIconPath ? (
                               <img
                                 alt=""
-                                src={publicAsset(selectedOverride.iconPath)}
+                                src={publicAsset(selectedIconPath)}
                               />
                             ) : (
                               selectedMetadata?.glyph ?? "🧭"
                             )}
                           </span>
                           <strong>
-                            {selectedOverride.title ||
+                            {selectedOverride?.title ||
                               selectedMetadata?.label ||
                               "Roadmap"}
                           </strong>

@@ -44,29 +44,48 @@ export function getSidePanelMetadata(panelId: string) {
   );
 }
 
+export type SidePanelGlobalSetting = {
+  iconPath: string;
+  panelId: string;
+  title: string;
+};
+
 export function resolveSidePanels(
   overrides: SidePanelOverride[] | undefined,
+  globalSettings: SidePanelGlobalSetting[] = [],
 ): ResolvedSidePanel[] {
   const overrideByPanelId = new Map(
     (overrides ?? [])
       .filter((override) => override && typeof override.panelId === "string")
       .map((override) => [override.panelId, override]),
   );
+  const settingByPanelId = new Map(
+    globalSettings
+      .filter((setting) => setting && typeof setting.panelId === "string")
+      .map((setting) => [setting.panelId, setting]),
+  );
 
   // Only panels added to the experience (in the panel editor) resolve;
-  // runtime actions then control when they become available/open.
+  // runtime actions then control when they become available/open. Icon and
+  // title fall back: experience override -> user global setting -> registry.
   return sidePanelMetadataDefinitions.flatMap((panel) => {
     const override = overrideByPanelId.get(panel.id);
     if (override?.enabled !== true) return [];
+    const setting = settingByPanelId.get(panel.id);
     return [
       {
         flush: panel.flush === true,
         glyph: panel.glyph,
-        iconPath: (override.iconPath ?? "").trim(),
+        iconPath:
+          (override.iconPath ?? "").trim() ||
+          (setting?.iconPath ?? "").trim(),
         id: panel.id,
         nodeEvents: override.nodeEvents ?? {},
         sizing: panel.sizing === "hug" ? ("hug" as const) : ("fill" as const),
-        title: (override.title ?? "").trim() || panel.label,
+        title:
+          (override.title ?? "").trim() ||
+          (setting?.title ?? "").trim() ||
+          panel.label,
       },
     ];
   });

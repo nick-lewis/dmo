@@ -13199,6 +13199,14 @@ button {
   font-size: 0.8rem;
 }
 
+/* Same constraint the real dock header applies to panel icons. */
+.panel-editor-window header img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
 .panel-editor-window-body {
   overflow: auto;
   scrollbar-width: none;
