@@ -38,6 +38,11 @@ const PanelStudy = lazy(() =>
     default: module.PanelStudy,
   })),
 );
+const PanelEditorPage = lazy(() =>
+  import("./features/PanelEditorPage").then((module) => ({
+    default: module.PanelEditorPage,
+  })),
+);
 const PanelStudyDesign = lazy(() =>
   import("./features/PanelStudyDesign").then((module) => ({
     default: module.PanelStudyDesign,
@@ -119,6 +124,10 @@ function App() {
           <Route
             element={<ExperienceMockupsRoute />}
             path="/experiences/:experienceId/mockups"
+          />
+          <Route
+            element={<PanelEditorPage />}
+            path="/experiences/:experienceId/panels"
           />
           <Route
             element={<ExperienceEditRoute />}

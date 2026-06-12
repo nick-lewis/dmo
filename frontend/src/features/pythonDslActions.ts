@@ -27,6 +27,10 @@ export type PythonDslPanelAction = {
   panelId: string;
 };
 
+export type PythonDslRoadmapCompleteAction = {
+  nodeId: string;
+};
+
 export type PythonDslGlowOnAction = {
   color: string;
   selector: string;
@@ -41,6 +45,7 @@ export type PythonDslStepAction =
   | ({ actionType: "goto_event" } & PythonDslGotoAction)
   | ({ actionType: "highlight_off" } & PythonDslGlowOffAction)
   | ({ actionType: "highlight_on" } & PythonDslGlowOnAction)
+  | ({ actionType: "roadmap_complete" } & PythonDslRoadmapCompleteAction)
   | ({ actionType: "script" } & PythonDslScriptAction)
   | ({ actionType: "set_context" } & PythonDslContextAction)
   | ({ actionType: "side_panel" } & PythonDslPanelAction);
@@ -320,6 +325,18 @@ function parsePanelActionFromArgs(args: string): PythonDslPanelAction | null {
   return { mode: mode as PythonDslPanelAction["mode"], panelId };
 }
 
+function parseRoadmapCompleteActionFromArgs(
+  args: string,
+): PythonDslRoadmapCompleteAction | null {
+  const { namedArgs, positionalArgs } = parseDslNamedAndPositionalArgs(args);
+  const nodeId = String(
+    parseDslValue(
+      namedArgs.get("node") ?? namedArgs.get("id") ?? positionalArgs[0],
+    ),
+  ).trim();
+  return nodeId ? { nodeId } : null;
+}
+
 function parseGlowTargetFromArgs(args: string) {
   const { namedArgs, positionalArgs } = parseDslNamedAndPositionalArgs(args);
   const targetId = String(
@@ -368,6 +385,7 @@ export function parsePythonDslStepActions(source: string): PythonDslStepAction[]
   const setContextCallPattern = /^set_context\s*\((.*)\)\s*$/;
   const gotoCallPattern = /^(?:goto_event|goto)\s*\((.*)\)\s*$/;
   const panelCallPattern = /^panel\s*\((.*)\)\s*$/;
+  const roadmapCompleteCallPattern = /^roadmap_complete\s*\((.*)\)\s*$/;
   const glowOffCallPattern = /^glow_off\s*\((.*)\)\s*$/;
   const glowCallPattern = /^glow\s*\((.*)\)\s*$/;
 
@@ -407,6 +425,14 @@ export function parsePythonDslStepActions(source: string): PythonDslStepAction[]
       if (panelMatch) {
         const action = parsePanelActionFromArgs(panelMatch[1] ?? "");
         return action ? [{ actionType: "side_panel", ...action }] : [];
+      }
+
+      const roadmapCompleteMatch = roadmapCompleteCallPattern.exec(trimmed);
+      if (roadmapCompleteMatch) {
+        const action = parseRoadmapCompleteActionFromArgs(
+          roadmapCompleteMatch[1] ?? "",
+        );
+        return action ? [{ actionType: "roadmap_complete", ...action }] : [];
       }
 
       const glowOffMatch = glowOffCallPattern.exec(trimmed);
@@ -463,7 +489,8 @@ export function pythonDslSourceFromEventSteps(steps: EventActionStep[]) {
       (step) =>
         ((step.actionType === "set_context" ||
           step.actionType === "goto_event" ||
-          step.actionType === "side_panel") &&
+          step.actionType === "side_panel" ||
+          step.actionType === "roadmap_complete") &&
           step.config.source !== "next-conversation-dsl") ||
         ((step.actionType === "highlight_on" ||
           step.actionType === "highlight_off") &&
@@ -499,6 +526,13 @@ export function pythonDslSourceFromEventSteps(steps: EventActionStep[]) {
           mode === "open"
             ? `panel(${panelId})`
             : `panel(${panelId}, mode=${JSON.stringify(mode)})`;
+        return step.enabled ? source : `# ${source}`;
+      }
+
+      if (step.actionType === "roadmap_complete") {
+        const source = `roadmap_complete(${JSON.stringify(
+          String(step.config.nodeId ?? ""),
+        )})`;
         return step.enabled ? source : `# ${source}`;
       }
 

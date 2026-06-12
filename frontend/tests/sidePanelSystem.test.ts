@@ -11,6 +11,11 @@ import {
   parsePythonDslStepActions,
   pythonDslSourceFromEventSteps,
 } from "../src/features/pythonDslActions";
+import {
+  roadmapMainNodes,
+  roadmapNodeStatus,
+  roadmapStateFromValue,
+} from "../src/roadmapDefinition";
 import { runtimeSidePanelsFromRecord } from "../src/runtimeUtils";
 import { resolveSidePanels } from "../src/sidePanelMetadata";
 import type { EventActionStep } from "../src/types";
@@ -187,4 +192,51 @@ test("round trip: parsed DSL re-projects to the same source", () => {
     throw new Error("unexpected action");
   });
   assert.equal(pythonDslSourceFromEventSteps(steps), original);
+});
+
+test("roadmap_complete DSL lines parse and project back to source", () => {
+  assert.deepEqual(parsePythonDslStepActions('roadmap_complete("predict")'), [
+    { actionType: "roadmap_complete", nodeId: "predict" },
+  ]);
+  assert.deepEqual(parsePythonDslStepActions("roadmap_complete()"), []);
+
+  const step = stepFixture(
+    "roadmap_complete",
+    { nodeId: "predict", source: "next-on-entry-dsl" },
+    0,
+  );
+  assert.equal(
+    pythonDslSourceFromEventSteps([step]),
+    'roadmap_complete("predict")',
+  );
+});
+
+test("roadmap node status derives locked/available/active/done", () => {
+  const completed = new Set(["predict"]);
+  const byId = new Map(roadmapMainNodes.map((node) => [node.id, node]));
+  const knobs = byId.get("knobs");
+  const loss = byId.get("loss");
+  const predict = byId.get("predict");
+  assert.ok(knobs && loss && predict);
+
+  assert.equal(roadmapNodeStatus(predict, completed, true, ""), "done");
+  assert.equal(roadmapNodeStatus(knobs, completed, true, ""), "available");
+  assert.equal(roadmapNodeStatus(knobs, completed, true, "knobs"), "active");
+  assert.equal(roadmapNodeStatus(loss, completed, true, ""), "locked");
+  // A closed gate locks everything that is not already done.
+  assert.equal(roadmapNodeStatus(knobs, completed, false, ""), "locked");
+});
+
+test("roadmapStateFromValue tolerates malformed session state", () => {
+  assert.deepEqual(roadmapStateFromValue(undefined), {
+    activeId: "",
+    completedIds: [],
+  });
+  assert.deepEqual(
+    roadmapStateFromValue({
+      activeId: "knobs",
+      completedIds: ["predict", 7, ""],
+    }),
+    { activeId: "knobs", completedIds: ["predict"] },
+  );
 });

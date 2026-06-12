@@ -4,6 +4,7 @@ from django.test import SimpleTestCase, TestCase
 from .models import EventActionStep, Experience, ExperienceEvent, TutoringSession
 from .runtime import (
     apply_client_side_panel_state,
+    apply_client_ui_state,
     apply_runtime_actions_to_state,
 )
 from .runtime_execution import run_action_sequence
@@ -90,7 +91,33 @@ class SidePanelValidationTests(SimpleTestCase):
         self.assertEqual(error, "")
         self.assertEqual(
             overrides,
-            [{"iconPath": "icons/map.png", "panelId": "roadmap", "title": "Lou's Map"}],
+            [
+                {
+                    "iconPath": "icons/map.png",
+                    "nodeEvents": {},
+                    "panelId": "roadmap",
+                    "title": "Lou's Map",
+                }
+            ],
+        )
+
+    def test_validate_side_panels_keeps_node_event_links(self):
+        overrides, error = validate_side_panels(
+            [
+                {
+                    "panelId": "roadmap",
+                    "nodeEvents": {
+                        "predict": " intro-event ",
+                        "dropped": "",
+                        "": "ignored",
+                    },
+                }
+            ]
+        )
+        self.assertEqual(error, "")
+        self.assertEqual(
+            overrides[0]["nodeEvents"],
+            {"predict": "intro-event"},
         )
 
     def test_validate_side_panels_rejects_bad_shapes(self):
@@ -286,5 +313,59 @@ class SidePanelRuntimeTests(TestCase):
         payload = serialize_experience(self.experience)
         self.assertEqual(
             payload["sidePanels"],
-            [{"iconPath": "", "panelId": "roadmap", "title": "Map"}],
+            [
+                {
+                    "iconPath": "",
+                    "nodeEvents": {},
+                    "panelId": "roadmap",
+                    "title": "Map",
+                }
+            ],
+        )
+
+    def test_roadmap_complete_action_updates_session_roadmap_state(self):
+        state = apply_runtime_actions_to_state(
+            {
+                "uiRuntime": {
+                    "roadmap": {"activeId": "predict", "completedIds": []}
+                }
+            },
+            [{"type": "roadmap_complete", "nodeId": "predict"}],
+        )
+        roadmap = state["uiRuntime"]["roadmap"]
+        self.assertEqual(roadmap["completedIds"], ["predict"])
+        self.assertEqual(roadmap["activeId"], "")
+
+        # Completing again does not duplicate.
+        state = apply_runtime_actions_to_state(
+            state,
+            [{"type": "roadmap_complete", "nodeId": "predict"}],
+        )
+        self.assertEqual(
+            state["uiRuntime"]["roadmap"]["completedIds"], ["predict"]
+        )
+
+    def test_client_roadmap_selection_merges_but_cannot_complete(self):
+        state = {
+            "uiRuntime": {
+                "roadmap": {"activeId": "", "completedIds": ["predict"]}
+            }
+        }
+        merged = apply_client_ui_state(
+            state, {"roadmap": {"activeId": "knobs"}}
+        )
+        self.assertEqual(merged["uiRuntime"]["roadmap"]["activeId"], "knobs")
+
+        # Selecting an already-completed node is ignored.
+        merged = apply_client_ui_state(
+            merged, {"roadmap": {"activeId": "predict"}}
+        )
+        self.assertEqual(merged["uiRuntime"]["roadmap"]["activeId"], "knobs")
+
+        # Clients cannot rewrite completion.
+        merged = apply_client_ui_state(
+            merged, {"roadmap": {"completedIds": []}}
+        )
+        self.assertEqual(
+            merged["uiRuntime"]["roadmap"]["completedIds"], ["predict"]
         )

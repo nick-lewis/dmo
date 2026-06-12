@@ -5,7 +5,7 @@ from django.views.decorators.http import require_POST
 from .http_utils import auth_required_response, parse_json_body, session_payload
 from .models import TutoringSession
 from .runtime import (
-    apply_client_side_panel_state,
+    apply_client_ui_state,
     apply_runtime_actions_to_state,
     set_runtime_current_event,
 )
@@ -63,7 +63,7 @@ def run_session_event(request, session_id):
             return JsonResponse({"detail": "Event not found."}, status=404)
 
         state = dict(session.runtime_state or {})
-        state = apply_client_side_panel_state(state, client_ui_state)
+        state = apply_client_ui_state(state, client_ui_state)
         event_runs = dict(state.get("eventRuns") or {})
         run_key = str(event.id)
         if event_runs.get(run_key, {}).get("status") == "complete":

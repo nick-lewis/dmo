@@ -3,6 +3,8 @@
     "id": "roadmap",
     "label": "LU's Roadmap",
     "glyph": "🧭",
-    "description": "Shows the learner where they are in the experience."
+    "description": "Shows the learner where they are in the experience.",
+    "flush": true,
+    "sizing": "hug"
   }
 ]

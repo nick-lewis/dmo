@@ -53,6 +53,7 @@ import {
   runtimeSlideHistoryFromValue,
   slideHistoryKey,
 } from "../runtimeUtils";
+import { roadmapStateFromValue } from "../roadmapDefinition";
 import { resolveSidePanels } from "../sidePanelMetadata";
 import { getSidePanelDefinition } from "../sidePanels";
 import type {
@@ -75,6 +76,7 @@ import type {
   RuntimeNote,
   RuntimeOverlay,
   RuntimeSideImage,
+  RuntimeRoadmapState,
   RuntimeSidePanelState,
   RuntimeUiState,
   RuntimeUiTrigger,
@@ -242,6 +244,10 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
   const [runtimeSidePanels, setRuntimeSidePanels] = useState<
     Record<string, RuntimeSidePanelState>
   >({});
+  const [runtimeRoadmap, setRuntimeRoadmap] = useState<RuntimeRoadmapState>({
+    activeId: "",
+    completedIds: [],
+  });
   const [runtimeOverlays, setRuntimeOverlays] = useState<
     Record<string, RuntimeOverlay>
   >({});
@@ -340,6 +346,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       notes: runtimeNotes,
       notesVisible,
       overlays: runtimeOverlays,
+      roadmap: { activeId: runtimeRoadmap.activeId },
       sidePanels: runtimeSidePanels,
       ...overrides,
     };
@@ -478,6 +485,18 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
         setViewedSlideIndex(null);
         setRuntimeInteractive(null);
         setRuntimeInteractiveState({});
+      }
+
+      if (action.type === "roadmap_complete") {
+        const nodeId = typeof action.nodeId === "string" ? action.nodeId : "";
+        if (nodeId) {
+          setRuntimeRoadmap((current) => ({
+            activeId: current.activeId === nodeId ? "" : current.activeId,
+            completedIds: current.completedIds.includes(nodeId)
+              ? current.completedIds
+              : [...current.completedIds, nodeId],
+          }));
+        }
       }
 
       if (action.type === "interactive") {
@@ -840,6 +859,7 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     setRuntimeHighlights(nextHighlights);
     setRuntimeSideImages(runtimeSideImagesFromRecord(imagesValue));
     setRuntimeSidePanels(runtimeSidePanelsFromRecord(uiRuntime.sidePanels));
+    setRuntimeRoadmap(roadmapStateFromValue(uiRuntime.roadmap));
     setRuntimeNotes(runtimeNotesFromValue(notesValue));
     setRuntimeOverlays(runtimeOverlaysFromRecord(overlaysValue));
     setRuntimeTriggers(nextTriggers);
@@ -1550,6 +1570,34 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
     );
   }
 
+  function roadmapNodeEventSlug(nodeId: string) {
+    const roadmapPanel = dockPanels.find((panel) => panel.id === "roadmap");
+    const slug = roadmapPanel?.nodeEvents?.[nodeId];
+    return typeof slug === "string" ? slug : "";
+  }
+
+  // The student picks their current challenge; the selection rides along in
+  // uiState (persisted server-side) and runs the challenge's linked event.
+  function selectRoadmapNode(nodeId: string) {
+    setRuntimeRoadmap((current) => ({ ...current, activeId: nodeId }));
+    const eventSlug = roadmapNodeEventSlug(nodeId);
+    if (eventSlug) {
+      void runSessionEventBySlug(
+        eventSlug,
+        currentRuntimeUiState({ roadmap: { activeId: nodeId } }),
+      );
+    }
+  }
+
+  // Replaying a completed challenge re-runs its event without touching
+  // progress (the board has already confirmed with the student).
+  function replayRoadmapNode(nodeId: string) {
+    const eventSlug = roadmapNodeEventSlug(nodeId);
+    if (eventSlug) {
+      void runSessionEventBySlug(eventSlug, currentRuntimeUiState());
+    }
+  }
+
   function renderSidePanelContent(panelId: string) {
     const definition = getSidePanelDefinition(panelId);
     if (!definition) return null;
@@ -1558,6 +1606,9 @@ export function PanelStudy({ initialExperienceId = "" }: { initialExperienceId?:
       <PanelComponent
         host={{
           experienceId: selectedExperience?.id ?? "",
+          onRoadmapReplay: replayRoadmapNode,
+          onRoadmapSelect: selectRoadmapNode,
+          roadmap: runtimeRoadmap,
           runtimeContext: session?.runtimeContext ?? {},
           sessionId: session?.id ?? "",
         }}

@@ -343,6 +343,8 @@ def apply_runtime_actions_to_state(
         if isinstance(side_panels_value, dict)
         else {}
     )
+    roadmap_value = ui_runtime.get("roadmap")
+    roadmap = dict(roadmap_value) if isinstance(roadmap_value, dict) else {}
     slide = ui_runtime.get("slide")
     slide_error = str(ui_runtime.get("slideError", "") or "")
     slide_history_value = ui_runtime.get("slideHistory")
@@ -451,6 +453,24 @@ def apply_runtime_actions_to_state(
 
         if action_type == "chat_availability":
             chat_enabled = bool(action.get("enabled", True))
+            continue
+
+        if action_type == "roadmap_complete":
+            node_id = str(action.get("nodeId", "") or "").strip()
+            if not node_id:
+                continue
+            completed = [
+                str(item)
+                for item in (roadmap.get("completedIds") or [])
+                if isinstance(item, str) and item
+            ]
+            if node_id not in completed:
+                completed.append(node_id)
+            roadmap["completedIds"] = completed
+            # Completion always clears the selection; the student picks the
+            # next challenge themselves.
+            if str(roadmap.get("activeId", "") or "") == node_id:
+                roadmap["activeId"] = ""
             continue
 
         if action_type == "side_panel":
@@ -623,6 +643,7 @@ def apply_runtime_actions_to_state(
     ui_runtime["sidePanels"] = side_panels
     ui_runtime["notes"] = notes[-80:]
     ui_runtime["overlays"] = overlays
+    ui_runtime["roadmap"] = roadmap
     ui_runtime["slide"] = slide
     ui_runtime["slideError"] = slide_error
     ui_runtime["slideHistory"] = slide_history
@@ -666,6 +687,45 @@ def apply_client_side_panel_state(state, client_ui_state):
         ui_runtime["sidePanels"] = side_panels
         state["uiRuntime"] = ui_runtime
     return state
+
+
+def apply_client_roadmap_state(state, client_ui_state):
+    """Merge the student's selected roadmap challenge into persisted state.
+
+    Clients may only point activeId at a node that is not already
+    completed (or clear it); completion itself is runtime-action-only.
+    """
+    if not isinstance(state, dict) or not isinstance(client_ui_state, dict):
+        return state
+
+    client_roadmap = client_ui_state.get("roadmap")
+    if not isinstance(client_roadmap, dict):
+        return state
+    active_value = client_roadmap.get("activeId")
+    if not isinstance(active_value, str):
+        return state
+
+    active_id = active_value.strip()[:60]
+    ui_runtime = dict(state.get("uiRuntime") or {})
+    roadmap_value = ui_runtime.get("roadmap")
+    roadmap = dict(roadmap_value) if isinstance(roadmap_value, dict) else {}
+    completed = roadmap.get("completedIds") or []
+    if active_id and active_id in completed:
+        return state
+    if str(roadmap.get("activeId", "") or "") == active_id:
+        return state
+
+    roadmap["activeId"] = active_id
+    roadmap.setdefault("completedIds", list(completed))
+    ui_runtime["roadmap"] = roadmap
+    state["uiRuntime"] = ui_runtime
+    return state
+
+
+def apply_client_ui_state(state, client_ui_state):
+    """All merges of student-controlled UI state into the session."""
+    state = apply_client_side_panel_state(state, client_ui_state)
+    return apply_client_roadmap_state(state, client_ui_state)
 
 
 def set_runtime_current_event(state, event):

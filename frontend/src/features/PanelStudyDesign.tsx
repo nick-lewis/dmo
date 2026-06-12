@@ -2,7 +2,6 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useRef,
@@ -24,6 +23,7 @@ import { ChatPanelContent } from "./ChatPanelContent";
 import { ImageLibraryPicker } from "./ImageLibraryPicker";
 import { MainPanelContent } from "./MainPanelContent";
 import { PanelWindow } from "./PanelWindow";
+import { RoadmapBoard } from "./RoadmapBoard";
 import { SidePanelDock, type SidePanelDockPanel } from "./SidePanelDock";
 import { SlidePager } from "./SlidePager";
 import { useRuntimeLayout } from "./useRuntimeLayout";
@@ -129,290 +129,6 @@ type DockMenuState = {
   x: number;
   y: number;
 };
-
-// --- LU's Roadmap: the circuit-core upgrade board -----------------------------
-// Chosen design (2026-06-11): a horizontal circuit board — abilities are chips
-// installed on LU's own board, traces energize as power flows left to right.
-// The board fills the panel edge to edge (it IS the panel, not a box in it),
-// pans by dragging anywhere, and hides its scrollbar. Beside the main board
-// sits a SEPARATE gray world ("LU's traumatic past"), not wired to the main
-// graph; it wakes only once the main board is mastered.
-
-type UpgradeNode = {
-  id: string;
-  requires: string[];
-  title: string;
-};
-
-// Challenge names follow a realistic deep-learning course arc, phrased as
-// what the model can do at each step (linear regression → classification →
-// loss/training → MNIST and CNNs → language modeling → fine-tuning LU).
-const upgradeMainNodes: UpgradeNode[] = [
-  { id: "predict", requires: [], title: "Predict one value" },
-  { id: "knobs", requires: ["predict"], title: "Predict yes or no" },
-  { id: "loss", requires: ["knobs"], title: "Learn from mistakes" },
-  {
-    id: "nudge",
-    requires: ["loss"],
-    title: "Recognize handwritten digits",
-  },
-  { id: "patterns", requires: ["loss"], title: "Spot patterns in images" },
-  {
-    id: "loop",
-    requires: ["nudge", "patterns"],
-    title: "Predict the next word",
-  },
-  { id: "smarter", requires: ["loop"], title: "Teach LU something new" },
-];
-
-// The dark world is deliberately NOT wired into the main board's edges; its
-// gate is finishing the main board, checked separately.
-const upgradeDarkGateId = "smarter";
-
-const upgradeDarkNodes: UpgradeNode[] = [
-  { id: "dataset", requires: [], title: "The first dataset" },
-  { id: "forgot", requires: ["dataset"], title: "What LU forgot" },
-  { id: "deleted", requires: ["dataset"], title: "The deleted weights" },
-  { id: "why", requires: ["forgot", "deleted"], title: "Why LU teaches" },
-];
-
-const upgradeMainTiers: string[][] = [
-  ["predict"],
-  ["knobs"],
-  ["loss"],
-  ["nudge", "patterns"],
-  ["loop"],
-  ["smarter"],
-];
-
-const upgradeDarkTiers: string[][] = [
-  ["dataset"],
-  ["forgot", "deleted"],
-  ["why"],
-];
-
-// Four states: locked → available (reachable, numbered) → active (the
-// challenge the learner selected and is working on) → done.
-type UpgradeNodeState = "active" | "available" | "done" | "locked";
-
-function upgradeNodeState(
-  node: UpgradeNode,
-  doneIds: ReadonlySet<string>,
-  gateOpen: boolean,
-  activeId: string | null,
-): UpgradeNodeState {
-  if (doneIds.has(node.id)) return "done";
-  if (!gateOpen) return "locked";
-  if (!node.requires.every((id) => doneIds.has(id))) return "locked";
-  return node.id === activeId ? "active" : "available";
-}
-
-// Sized for readability at high resolutions, but tight enough that a sliver
-// of the gray world peeks into view on a freshly opened panel — noticeable,
-// not exposed. Theme: matcha (chosen 2026-06-11 from a ten-green
-// exploration).
-// margin must cover at least half a node title's max width (58px+) or the
-// first chip's label clips off the board's left edge.
-const upgradeBoardLayout = {
-  cross: 290,
-  crossMargin: 80,
-  margin: 66,
-  tierGap: 112,
-};
-
-
-function upgradeBoardGeometry(tiers: string[][]) {
-  const layout = upgradeBoardLayout;
-  const cross = layout.cross;
-  const along = layout.margin * 2 + (tiers.length - 1) * layout.tierGap;
-  const positions: Record<string, { x: number; y: number }> = {};
-
-  tiers.forEach((tier, tierIndex) => {
-    const x = layout.margin + tierIndex * layout.tierGap;
-    tier.forEach((nodeId, nodeIndex) => {
-      const span = cross - layout.crossMargin * 2;
-      const y =
-        tier.length === 1
-          ? cross / 2
-          : layout.crossMargin + (span * nodeIndex) / (tier.length - 1);
-      positions[nodeId] = { x, y };
-    });
-  });
-
-  return { height: cross, positions, width: along };
-}
-
-// Right-angle PCB trace between two chips.
-function upgradeEdgePath(
-  positions: Record<string, { x: number; y: number }>,
-  fromId: string,
-  toId: string,
-) {
-  const from = positions[fromId];
-  const to = positions[toId];
-  if (!from || !to) return "";
-  const midX = (from.x + to.x) / 2;
-  return `M ${from.x} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${to.x} ${to.y}`;
-}
-
-function UpgradeWorld({
-  activeId,
-  doneIds,
-  isDark,
-  nodes,
-  onChipClick,
-  tiers,
-  title,
-}: {
-  activeId: string | null;
-  doneIds: ReadonlySet<string>;
-  isDark: boolean;
-  nodes: UpgradeNode[];
-  onChipClick: (nodeId: string, state: UpgradeNodeState) => void;
-  tiers: string[][];
-  title: string;
-}) {
-  const gateOpen = !isDark || doneIds.has(upgradeDarkGateId);
-  const geometry = upgradeBoardGeometry(tiers);
-  const edges = nodes.flatMap((node) =>
-    node.requires.map((fromId) => ({ fromId, toId: node.id })),
-  );
-
-  return (
-    <section
-      className={["design-upgrade-world", isDark ? "is-dark" : ""]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      {isDark ? (
-        <span aria-hidden="true" className="design-upgrade-dark-caption">
-          {gateOpen ? title : `??? · ${title}`}
-        </span>
-      ) : null}
-      <div
-        className="design-upgrade-board"
-        style={{ height: geometry.height, width: geometry.width }}
-      >
-        <svg
-          aria-hidden="true"
-          className="design-upgrade-edges"
-          viewBox={`0 0 ${geometry.width} ${geometry.height}`}
-        >
-          {edges.map((edge) => (
-            <path
-              className={[
-                "design-upgrade-edge",
-                gateOpen && doneIds.has(edge.fromId) ? "is-lit" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              d={upgradeEdgePath(geometry.positions, edge.fromId, edge.toId)}
-              key={`${edge.fromId}-${edge.toId}`}
-            />
-          ))}
-        </svg>
-        {nodes.map((node, nodeIndex) => {
-          const position = geometry.positions[node.id];
-          if (!position) return null;
-          const state = upgradeNodeState(node, doneIds, gateOpen, activeId);
-          const masked = isDark && !gateOpen;
-          const glyph =
-            state === "done"
-              ? "✓"
-              : state === "available" || state === "active"
-                ? isDark
-                  ? "✦"
-                  : String(nodeIndex + 1)
-                : masked
-                  ? "⛓"
-                  : null;
-          return (
-            <button
-              aria-label={`${masked ? "Hidden upgrade" : node.title} (${state})`}
-              className="design-upgrade-node"
-              data-state={state}
-              disabled={state === "locked" || state === "done"}
-              key={node.id}
-              onClick={() => onChipClick(node.id, state)}
-              style={{ left: position.x, top: position.y }}
-              type="button"
-            >
-              <span aria-hidden="true" className="design-upgrade-node-face">
-                {glyph ?? (
-                  <img
-                    alt=""
-                    className="design-upgrade-lock"
-                    src={publicAsset("test-images/green-lock.png")}
-                  />
-                )}
-              </span>
-              <span className="design-upgrade-node-title">
-                {masked ? "? ? ?" : node.title}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-// Drag anywhere on the board to pan the panel window (its scrollbar is
-// hidden); clicks on upgrade chips still land as long as the pointer does
-// not move far.
-function startUpgradeBoardPan(event: ReactPointerEvent<HTMLDivElement>) {
-  const scroller = event.currentTarget.closest(".side-dock-window-body");
-  if (!(scroller instanceof HTMLElement)) return;
-
-  const startX = event.clientX;
-  const startY = event.clientY;
-  const startLeft = scroller.scrollLeft;
-  const startTop = scroller.scrollTop;
-
-  function onMove(moveEvent: PointerEvent) {
-    scroller.scrollLeft = startLeft - (moveEvent.clientX - startX);
-    scroller.scrollTop = startTop - (moveEvent.clientY - startY);
-  }
-  function onUp() {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-  }
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-}
-
-function RoadmapUpgradePreview({
-  activeId,
-  doneIds,
-  onChipClick,
-}: {
-  activeId: string | null;
-  doneIds: ReadonlySet<string>;
-  onChipClick: (nodeId: string, state: UpgradeNodeState) => void;
-}) {
-  return (
-    <div className="design-upgrade" onPointerDown={startUpgradeBoardPan}>
-      <UpgradeWorld
-        activeId={activeId}
-        doneIds={doneIds}
-        isDark={false}
-        nodes={upgradeMainNodes}
-        onChipClick={onChipClick}
-        tiers={upgradeMainTiers}
-        title="LU's upgrades"
-      />
-      <UpgradeWorld
-        activeId={activeId}
-        doneIds={doneIds}
-        isDark
-        nodes={upgradeDarkNodes}
-        onChipClick={onChipClick}
-        tiers={upgradeDarkTiers}
-        title="LU's traumatic past"
-      />
-    </div>
-  );
-}
 
 type Scene = {
   id: SceneId;
@@ -674,19 +390,16 @@ export function PanelStudyDesign() {
     [roadmapDoneIds],
   );
 
-  // Click a lit chip to select it as the current challenge; click the
-  // selected chip again to complete it.
-  function clickRoadmapChip(nodeId: string, state: UpgradeNodeState) {
-    if (state === "available") {
-      setRoadmapActiveId(nodeId);
-      return;
-    }
-    if (state === "active") {
-      setRoadmapDoneIds((current) =>
-        current.includes(nodeId) ? current : [...current, nodeId],
-      );
-      setRoadmapActiveId(null);
-    }
+  // Lab stand-ins for real runtime behavior: selecting a challenge is the
+  // student's click; completing happens via the toolbar button (in the real
+  // player only a roadmap_complete() action can do that).
+  function completeSelectedRoadmapChip() {
+    if (!roadmapActiveId) return;
+    const nodeId = roadmapActiveId;
+    setRoadmapDoneIds((current) =>
+      current.includes(nodeId) ? current : [...current, nodeId],
+    );
+    setRoadmapActiveId(null);
   }
   const [dockState, setDockState] = useState<DesignDockState>(readStoredDockState);
   const [dockMenu, setDockMenu] = useState<DockMenuState | null>(null);
@@ -796,9 +509,11 @@ export function PanelStudyDesign() {
       return metadata
         ? [
             {
+              flush: metadata.flush,
               glyph: metadata.glyph,
               iconPath: dockState.iconPaths[panelId] ?? "",
               id: panelId,
+              sizing: metadata.sizing,
               title: metadata.label,
             },
           ]
@@ -959,10 +674,11 @@ export function PanelStudyDesign() {
                 panels={dockPanels}
                 renderPanelContent={(panelId) =>
                   panelId === "roadmap" ? (
-                    <RoadmapUpgradePreview
-                      activeId={roadmapActiveId}
-                      doneIds={roadmapDoneSet}
-                      onChipClick={clickRoadmapChip}
+                    <RoadmapBoard
+                      activeId={roadmapActiveId ?? ""}
+                      completedIds={roadmapDoneSet}
+                      onReplayNode={() => {}}
+                      onSelectNode={(nodeId) => setRoadmapActiveId(nodeId)}
                     />
                   ) : (
                     designDockPanelContent(panelId)
@@ -1163,6 +879,14 @@ export function PanelStudyDesign() {
             <div className="design-lab-scene-list">
               <button
                 className="design-lab-scene"
+                disabled={!roadmapActiveId}
+                onClick={completeSelectedRoadmapChip}
+                type="button"
+              >
+                Complete selected
+              </button>
+              <button
+                className="design-lab-scene"
                 disabled={!roadmapDoneIds.length && !roadmapActiveId}
                 onClick={() => {
                   setRoadmapDoneIds([]);
@@ -1174,9 +898,10 @@ export function PanelStudyDesign() {
               </button>
             </div>
             <p className="design-lab-scene-description">
-              Abilities are chips on LU&apos;s circuit board. Click a lit chip
-              to select it, click it again to complete it; drag anywhere to
-              pan. Finish the board to wake the gray world at the end.
+              This is the REAL roadmap panel. Click a lit chip to select it
+              (in the player that triggers its linked event); &quot;Complete
+              selected&quot; stands in for the roadmap_complete() action.
+              Drag anywhere to pan.
             </p>
             <p
               className="design-lab-layout-readout"

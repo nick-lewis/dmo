@@ -12181,11 +12181,13 @@ button {
   z-index: 2;
 }
 
+/* The dock floats a small gap away from the main panel with full rounding,
+   so panels read as their own set of windows rather than attachments. */
 .side-dock {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 100%;
+  right: calc(100% + 8px);
   z-index: 7;
   display: flex;
   align-items: stretch;
@@ -12194,11 +12196,11 @@ button {
 .side-dock-rail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   align-self: flex-start;
-  padding: 8px 7px;
+  padding: 4px 3px;
   border: 1px solid var(--panel-soft-border);
-  border-radius: 12px 0 0 12px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--panel-bg-strong) 78%, transparent);
   backdrop-filter: blur(14px);
   box-shadow: 0 12px 28px rgba(22, 74, 92, 0.08);
@@ -12207,11 +12209,11 @@ button {
 .side-dock-rail button {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--muted-ink);
   background: transparent;
   font-size: 14px;
@@ -12219,11 +12221,18 @@ button {
 }
 
 .side-dock-rail button span {
-  font-size: 13px;
+  font-size: 24px;
   font-weight: 700;
 }
 
-.side-dock-rail button span img,
+.side-dock-rail button span img {
+  display: block;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  object-fit: contain;
+}
+
 .side-dock-glyph img {
   display: block;
   width: 18px;
@@ -12305,12 +12314,17 @@ button {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--panel-soft-border);
-  border-right: none;
-  border-radius: 12px 0 0 12px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--panel-bg-strong) 80%, transparent);
   backdrop-filter: blur(14px);
   box-shadow: 0 16px 36px rgba(22, 74, 92, 0.1);
   overflow: hidden;
+}
+
+/* When every open panel hugs its content, the whole column does too,
+   instead of running to the bottom of the screen. */
+.side-dock-column.is-hug {
+  align-self: flex-start;
 }
 
 .side-dock-split {
@@ -12355,6 +12369,12 @@ button {
   min-height: 84px;
 }
 
+/* Hug-sized panels take their content's height instead of sharing the
+   column (flex-grow is zeroed inline by the dock for these). */
+.side-dock-window.is-hug {
+  flex-basis: auto;
+}
+
 .side-dock-window:not(.is-open) {
   opacity: 0;
   pointer-events: none;
@@ -12364,7 +12384,9 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 12px 5px;
+  padding: 9px 12px 8px;
+  background: linear-gradient(to bottom, #f4f4f2, #ececea);
+  border-bottom: 1px solid rgba(70, 70, 64, 0.16);
 }
 
 .side-dock-window header strong {
@@ -12414,6 +12436,18 @@ button {
   overflow: auto;
   font-size: 0.78rem;
   color: color-mix(in srgb, var(--page-ink) 88%, var(--accent-2));
+}
+
+/* Flush panels own their full body: no padding, no visible scrollbar
+   (their content pans by dragging instead). */
+.side-dock-window-body.is-flush {
+  padding: 0;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.side-dock-window-body.is-flush::-webkit-scrollbar {
+  display: none;
 }
 
 /* --- Experience panels editor (next editor) ------------------------------ */
@@ -12633,4 +12667,458 @@ button {
 .slide-pager-dot.is-active {
   background: color-mix(in srgb, var(--accent-2) 82%, transparent);
   transform: scale(1.3);
+}
+
+/* --- LU's roadmap board ----------------------------------------------------
+   A horizontal matcha circuit board filling the panel edge to edge:
+   abilities are chips, orange traces energize as challenges complete.
+   Beside the main board, the GRAY world ("LU's traumatic past") swaps the
+   whole scheme via per-world CSS variables. Locked chips hide their titles;
+   chip states: locked -> available -> active (selected) -> done. */
+
+.roadmap-scroll {
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.roadmap-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.roadmap-board {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-width: max-content;
+  cursor: grab;
+  user-select: none;
+}
+
+/* The main board: matcha PCB (surface lifted +55%; the grid, chip edges,
+   and accents keep full strength so it reads as a lighter material, not a
+   washed-out one). Traces are complementary orange. */
+.roadmap-world {
+  --rm-bg: repeating-linear-gradient(
+      0deg,
+      rgba(130, 140, 70, 0.09) 0,
+      rgba(130, 140, 70, 0.09) 1px,
+      transparent 1px,
+      transparent 14px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(130, 140, 70, 0.09) 0,
+      rgba(130, 140, 70, 0.09) 1px,
+      transparent 1px,
+      transparent 14px
+    ),
+    linear-gradient(to bottom, #fbfbf5, #f6f6ed);
+  --rm-edge: rgba(135, 145, 75, 0.42);
+  --rm-trace: rgba(217, 122, 31, 0.3);
+  --rm-trace-lit: #d9731f;
+  --rm-accent: #8a9a2e;
+  --rm-accent-soft: rgba(138, 154, 46, 0.32);
+  --rm-ink: var(--page-ink);
+  --rm-muted: var(--muted-ink);
+  --rm-face-bg: white;
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--rm-bg);
+}
+
+/* The gray world: the whole scheme swaps when you cross the seam. */
+.roadmap-world.is-dark {
+  --rm-bg: repeating-linear-gradient(
+      0deg,
+      rgba(226, 230, 238, 0.05) 0,
+      rgba(226, 230, 238, 0.05) 1px,
+      transparent 1px,
+      transparent 14px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(226, 230, 238, 0.05) 0,
+      rgba(226, 230, 238, 0.05) 1px,
+      transparent 1px,
+      transparent 14px
+    ),
+    linear-gradient(to bottom, #54575f, #3d4047);
+  --rm-edge: rgba(226, 230, 238, 0.3);
+  --rm-trace: rgba(226, 230, 238, 0.28);
+  --rm-trace-lit: #8fe0cd;
+  --rm-accent: #8fe0cd;
+  --rm-accent-soft: rgba(143, 224, 205, 0.35);
+  --rm-ink: #eef0f5;
+  --rm-muted: rgba(213, 217, 226, 0.65);
+  --rm-face-bg: #5f6471;
+  border-left: 2px solid rgba(28, 30, 36, 0.5);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.28);
+}
+
+/* Not a header: a faint centered whisper floating along the top of the
+   gray zone. */
+.roadmap-dark-caption {
+  position: absolute;
+  top: 9px;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  color: var(--rm-muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* The graph canvas centers in whatever height the panel has. */
+.roadmap-canvas {
+  position: relative;
+  margin: auto 0;
+}
+
+.roadmap-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.roadmap-edge {
+  fill: none;
+  stroke: var(--rm-trace);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+  transition: stroke 400ms ease;
+}
+
+.roadmap-edge.is-lit {
+  stroke: var(--rm-trace-lit);
+}
+
+.roadmap-node {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  transform: translate(-50%, -27px);
+  cursor: default;
+}
+
+.roadmap-node[data-state="available"],
+.roadmap-node[data-state="done"] {
+  cursor: pointer;
+}
+
+/* Chip faces stay fully opaque in every state so board lines never show
+   through; locked reads as muted color, not transparency. */
+.roadmap-node-face {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 3px solid var(--rm-edge);
+  border-radius: 8px;
+  background: var(--rm-face-bg);
+  color: var(--rm-muted);
+  font-size: 19px;
+  font-weight: 800;
+  /* Chip pins peeking out of the package edges. */
+  box-shadow:
+    -7px 0 0 -3px var(--rm-edge),
+    7px 0 0 -3px var(--rm-edge);
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    transform 260ms ease;
+}
+
+.roadmap-node-title {
+  max-width: 116px;
+  min-height: 1em;
+  color: var(--rm-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.roadmap-node-lock {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.roadmap-node[data-state="done"] .roadmap-node-face {
+  border-color: var(--rm-accent);
+  background: var(--rm-accent);
+  color: var(--rm-face-bg);
+  animation: roadmap-pop 460ms cubic-bezier(0.3, 1.5, 0.4, 1);
+}
+
+.roadmap-node[data-state="available"] .roadmap-node-face {
+  border-color: var(--rm-accent);
+  color: var(--rm-accent);
+  animation: roadmap-pulse 1.9s ease-in-out infinite;
+}
+
+/* Active: the selected, in-progress challenge — filled with a wash of the
+   accent, slightly raised, pulsing faster than merely-available. */
+.roadmap-node[data-state="active"] .roadmap-node-face {
+  border-color: var(--rm-accent);
+  background: color-mix(in srgb, var(--rm-accent) 20%, var(--rm-face-bg));
+  color: var(--rm-accent);
+  transform: scale(1.08);
+  animation: roadmap-pulse 1.1s ease-in-out infinite;
+}
+
+.roadmap-node[data-state="active"] .roadmap-node-title {
+  font-weight: 800;
+}
+
+.roadmap-node[data-state="locked"] .roadmap-node-face {
+  border-color: color-mix(in srgb, var(--rm-edge) 65%, var(--rm-face-bg));
+  color: color-mix(in srgb, var(--rm-muted) 65%, var(--rm-face-bg));
+  font-size: 16px;
+}
+
+.roadmap-node[data-state="locked"] .roadmap-node-title {
+  color: var(--rm-muted);
+}
+
+/* Editor-mode badge: which event a chip triggers in this experience. */
+.roadmap-node-badge {
+  max-width: 116px;
+  overflow: hidden;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rm-accent) 16%, var(--rm-face-bg));
+  color: var(--rm-accent);
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes roadmap-pulse {
+  0%,
+  100% {
+    box-shadow:
+      -7px 0 0 -3px var(--rm-edge),
+      7px 0 0 -3px var(--rm-edge),
+      0 0 0 0 var(--rm-accent-soft);
+  }
+  50% {
+    box-shadow:
+      -7px 0 0 -3px var(--rm-edge),
+      7px 0 0 -3px var(--rm-edge),
+      0 0 0 8px transparent;
+  }
+}
+
+/* The completion pop: a springy scale when a chip lands on done. */
+@keyframes roadmap-pop {
+  0% {
+    transform: scale(0.82);
+  }
+  62% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Replaying a completed challenge asks first; clicking outside cancels. */
+.roadmap-replay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 26, 22, 0.35);
+}
+
+.roadmap-replay-modal {
+  display: grid;
+  gap: 12px;
+  max-width: 300px;
+  padding: 16px 18px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 14px;
+  background: var(--panel-bg-strong);
+  box-shadow: 0 18px 44px rgba(20, 40, 36, 0.25);
+}
+
+.roadmap-replay-modal p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.roadmap-replay-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.roadmap-replay-actions button {
+  padding: 6px 14px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--page-ink);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.roadmap-replay-actions button:first-child {
+  border-color: color-mix(in srgb, #8a9a2e 60%, transparent);
+  background: color-mix(in srgb, #8a9a2e 16%, white);
+  color: #5c671c;
+}
+
+/* Editor mode: calm board (no pulsing), every chip clickable for linking. */
+.roadmap-board.is-editor .roadmap-node {
+  cursor: context-menu;
+}
+
+.roadmap-board.is-editor .roadmap-node-face {
+  animation: none;
+}
+
+/* --- Panel editor page ---------------------------------------------------- */
+
+.panel-editor {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 18px 26px 40px;
+}
+
+.panel-editor-title h1 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.panel-editor-title p {
+  margin: 2px 0 0;
+  color: var(--muted-ink);
+  font-size: 0.82rem;
+}
+
+.panel-editor-hint {
+  margin: 0;
+  color: var(--muted-ink);
+  font-size: 0.8rem;
+}
+
+/* The panel shown alone, framed like its dock window in the player. */
+.panel-editor-window {
+  max-width: 100%;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 80%, transparent);
+  box-shadow: 0 16px 36px rgba(22, 74, 92, 0.1);
+  overflow: hidden;
+}
+
+.panel-editor-window header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px 8px;
+  background: linear-gradient(to bottom, #f4f4f2, #ececea);
+  border-bottom: 1px solid rgba(70, 70, 64, 0.16);
+  font-size: 0.8rem;
+}
+
+.panel-editor-window-body {
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.panel-editor-window-body::-webkit-scrollbar {
+  display: none;
+}
+
+.panel-editor-menu {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 280px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 12px;
+  background: var(--panel-bg-strong);
+  box-shadow: 0 18px 44px rgba(20, 40, 36, 0.22);
+}
+
+.panel-editor-menu-title {
+  margin: 0 0 2px;
+  color: var(--muted-ink);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.panel-editor-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--page-ink);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-editor-menu-item:hover {
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+
+.panel-editor-menu-item small {
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-editor-menu-item i {
+  margin-left: auto;
+  color: #5c671c;
+  font-style: normal;
+}
+
+.panel-editor-menu-empty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--muted-ink);
+  font-size: 0.74rem;
 }

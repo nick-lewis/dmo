@@ -1289,6 +1289,11 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       (step) =>
         step.actionType === "side_panel" && step.config.source === sourceLabel,
     );
+    const existingRoadmapSteps = sortedEventSteps(latestEvent.steps).filter(
+      (step) =>
+        step.actionType === "roadmap_complete" &&
+        step.config.source === sourceLabel,
+    );
     const existingGlowOnSteps = sortedEventSteps(latestEvent.steps).filter(
       (step) =>
         step.actionType === "highlight_on" &&
@@ -1304,6 +1309,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     let chatIndex = 0;
     let scriptIndex = 0;
     let panelIndex = 0;
+    let roadmapIndex = 0;
     let glowOnIndex = 0;
     let glowOffIndex = 0;
     let nextEvent = latestEvent;
@@ -1439,6 +1445,22 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
         continue;
       }
 
+      if (action.actionType === "roadmap_complete") {
+        const step = await upsertDslStep(existingRoadmapSteps[roadmapIndex], {
+          actionType: "roadmap_complete",
+          condition: {},
+          config: {
+            nodeId: action.nodeId,
+            source: sourceLabel,
+          },
+          enabled: true,
+          label: `Complete ${action.nodeId}`,
+        });
+        roadmapIndex += 1;
+        desiredStepIds.push(step.id);
+        continue;
+      }
+
       if (action.actionType === "highlight_on") {
         const step = await upsertDslStep(existingGlowOnSteps[glowOnIndex], {
           actionType: "highlight_on",
@@ -1486,6 +1508,7 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
       ...existingContextSteps.slice(contextIndex),
       ...existingGotoSteps.slice(gotoIndex),
       ...existingPanelSteps.slice(panelIndex),
+      ...existingRoadmapSteps.slice(roadmapIndex),
       ...existingGlowOnSteps.slice(glowOnIndex),
       ...existingGlowOffSteps.slice(glowOffIndex),
       ...surplusScriptSteps,
@@ -2460,6 +2483,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
     navigate("/run-design");
   }
 
+  async function openPanelEditor() {
+    const didSave = await flushNextEditorAutosave();
+    if (!didSave) return;
+
+    navigate(`/experiences/${encodeURIComponent(experienceId)}/panels`);
+  }
+
   async function runEvent(eventId: string) {
     if (!experience || runningEventId) return;
 
@@ -3150,6 +3180,13 @@ export function ExperienceEditorNext({ experienceId }: { experienceId: string })
             type="button"
           >
             Experiences
+          </button>
+          <button
+            className="header-action secondary"
+            onClick={() => void openPanelEditor()}
+            type="button"
+          >
+            Panels
           </button>
           <button
             className="header-action secondary"

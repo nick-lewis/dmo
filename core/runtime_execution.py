@@ -434,6 +434,21 @@ def run_action_sequence(
             )
             continue
 
+        if action_type == EventActionStep.ActionType.ROADMAP_COMPLETE:
+            node_id = str(config.get("nodeId", "") or "").strip()
+            if not node_id:
+                continue
+            actions.append(
+                {
+                    "eventId": str(event.id),
+                    "nodeId": node_id,
+                    "stepId": step_id,
+                    "type": "roadmap_complete",
+                    **metadata,
+                }
+            )
+            continue
+
         if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
             selector = str(config.get("selector", "")).strip()
             triggers_event = str(config.get("triggersEvent", "")).strip()

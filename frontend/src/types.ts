@@ -99,6 +99,7 @@ export type EventActionStep = {
     | "chat_availability"
     | "set_ui_trigger"
     | "side_panel"
+    | "roadmap_complete"
     | "goto_event"
     | "button_choice";
   label: string;
@@ -409,7 +410,13 @@ export type RuntimeUiState = {
   notes?: RuntimeNote[];
   notesVisible: boolean;
   overlays?: Record<string, RuntimeOverlay>;
+  roadmap?: { activeId: string };
   sidePanels?: Record<string, RuntimeSidePanelState>;
+};
+
+export type RuntimeRoadmapState = {
+  activeId: string;
+  completedIds: string[];
 };
 
 export type RuntimeHighlight = {

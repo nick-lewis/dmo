@@ -26,6 +26,7 @@ export const eventActionOptions = [
   { id: "chat_availability", label: "Chat" },
   { id: "set_ui_trigger", label: "UI trigger" },
   { id: "side_panel", label: "Side panel" },
+  { id: "roadmap_complete", label: "Roadmap complete" },
   { id: "goto_event", label: "Go to event" },
   { id: "button_choice", label: "Button choice" },
 ] as const;
@@ -86,6 +87,9 @@ export function defaultStepConfig(actionType: EventActionStep["actionType"]) {
       panelId: sidePanelMetadataDefinitions[0]?.id ?? "roadmap",
     };
   }
+  if (actionType === "roadmap_complete") {
+    return { nodeId: "predict" };
+  }
   if (actionType === "set_ui_trigger") {
     return {
       selector: glowTargets()[0]?.selector ?? ".glow-chat-input",
@@ -135,6 +139,7 @@ export function defaultStepLabel(actionType: EventActionStep["actionType"]) {
   if (actionType === "python_notebook") return "Load Python notebook";
   if (actionType === "chat_availability") return "Set chat availability";
   if (actionType === "side_panel") return "Show side panel";
+  if (actionType === "roadmap_complete") return "Complete roadmap step";
   if (actionType === "set_ui_trigger") return "Wait for UI";
   if (actionType === "goto_event") return "Go to event";
   if (actionType === "button_choice") return "Show choice";
@@ -243,6 +248,9 @@ export function eventActionDescription(actionType: EventActionStep["actionType"]
   if (actionType === "side_panel") {
     return "Show, make available, or hide a side panel option";
   }
+  if (actionType === "roadmap_complete") {
+    return "Mark a roadmap challenge complete and unlock what follows";
+  }
   if (actionType === "set_ui_trigger") {
     return "Run another event after a UI click";
   }
@@ -279,7 +287,8 @@ export function eventActionToneClass(actionType: EventActionStep["actionType"]) 
     actionType === "interactive_clear" ||
     actionType === "python_notebook" ||
     actionType === "chat_availability" ||
-    actionType === "side_panel"
+    actionType === "side_panel" ||
+    actionType === "roadmap_complete"
   ) {
     return "ui";
   }

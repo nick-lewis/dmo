@@ -18,9 +18,13 @@ import { publicAsset } from "../assets";
 // clicks flow through the same source of truth.
 
 export type SidePanelDockPanel = {
+  // Flush panels own their full window body (no padding, hidden scrollbar).
+  flush?: boolean;
   glyph: string;
   iconPath: string;
   id: string;
+  // "hug" panels take their content's height instead of filling the column.
+  sizing?: "fill" | "hug";
   title: string;
 };
 
@@ -138,6 +142,12 @@ export function SidePanelDock({
     .map((panel) => panel.id)
     .filter((panelId) => openPanelIds.includes(panelId));
   const hasOpenWindows = openIds.length > 0;
+  const allOpenPanelsHug =
+    hasOpenWindows &&
+    openIds.every(
+      (panelId) =>
+        panels.find((panel) => panel.id === panelId)?.sizing === "hug",
+    );
   const effectiveDockWidth = clampNumber(
     dockWidth,
     170,
@@ -145,6 +155,7 @@ export function SidePanelDock({
   );
 
   function renderDockWindow(panel: SidePanelDockPanel, isOpen: boolean) {
+    const hugsContent = panel.sizing === "hug";
     return (
       <section
         aria-hidden={!isOpen}
@@ -152,10 +163,13 @@ export function SidePanelDock({
           "side-dock-window",
           `glow-panel-${panel.id}`,
           isOpen ? "is-open" : "",
+          hugsContent ? "is-hug" : "",
         ]
           .filter(Boolean)
           .join(" ")}
-        style={{ flexGrow: isOpen ? dockWeights[panel.id] ?? 1 : 0 }}
+        style={{
+          flexGrow: isOpen && !hugsContent ? dockWeights[panel.id] ?? 1 : 0,
+        }}
       >
         <header>
           <span className="side-dock-glyph" aria-hidden="true">
@@ -175,7 +189,14 @@ export function SidePanelDock({
             ×
           </button>
         </header>
-        <div className="side-dock-window-body">
+        <div
+          className={[
+            "side-dock-window-body",
+            panel.flush ? "is-flush" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {renderPanelContent(panel.id)}
         </div>
       </section>
@@ -230,7 +251,12 @@ export function SidePanelDock({
             onPointerDown={startDockWidthDrag}
             role="separator"
           />
-          <div className="side-dock-column" ref={dockColumnRef}>
+          <div
+            className={["side-dock-column", allOpenPanelsHug ? "is-hug" : ""]
+              .filter(Boolean)
+              .join(" ")}
+            ref={dockColumnRef}
+          >
             {panels.map((panel, panelIndex) => {
               const isOpen = openIds.includes(panel.id);
               const previousOpenId = panels

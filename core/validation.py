@@ -165,8 +165,26 @@ def validate_side_panels(value):
         if len(icon_path) > 220:
             return None, "Side panel icon path is too long."
 
+        # Per-experience node->event links (e.g. which event a roadmap
+        # button triggers). Empty slugs drop the link.
+        node_events_value = raw_panel.get("nodeEvents")
+        node_events = {}
+        if isinstance(node_events_value, dict):
+            for raw_node_id, raw_slug in node_events_value.items():
+                node_id = str(raw_node_id or "").strip()
+                event_slug = str(raw_slug or "").strip()
+                if not node_id or len(node_id) > 60 or len(event_slug) > 120:
+                    continue
+                if event_slug:
+                    node_events[node_id] = event_slug
+
         normalized.append(
-            {"iconPath": icon_path, "panelId": panel_id, "title": title}
+            {
+                "iconPath": icon_path,
+                "nodeEvents": node_events,
+                "panelId": panel_id,
+                "title": title,
+            }
         )
 
     return normalized, ""
@@ -647,6 +665,18 @@ def normalize_emitted_runtime_action(action):
             "panelId": panel_id,
             "source": "interactive",
             "type": "side_panel",
+        }, None
+
+    if action_type == "roadmap_complete":
+        node_id = runtime_action_string(action.get("nodeId"), max_length=60)
+        if not node_id:
+            return None, rejected_emitted_runtime_action(
+                action, "invalid_roadmap_node"
+            )
+        return {
+            "nodeId": node_id,
+            "source": "interactive",
+            "type": "roadmap_complete",
         }, None
 
     if action_type in {"interactive", "interactive_update"}:
@@ -1373,6 +1403,14 @@ def validate_action_config(action_type, value):
 
     if action_type == EventActionStep.ActionType.CHAT_AVAILABILITY:
         return {"enabled": value.get("enabled") is not False}, ""
+
+    if action_type == EventActionStep.ActionType.ROADMAP_COMPLETE:
+        node_id = str(value.get("nodeId", "") or "").strip()
+        if not node_id:
+            return None, "Roadmap node id is required."
+        if len(node_id) > 60:
+            return None, "Roadmap node id is too long."
+        return {"nodeId": node_id}, ""
 
     if action_type == EventActionStep.ActionType.SET_UI_TRIGGER:
         selector, selector_error = validate_selector(value.get("selector"))

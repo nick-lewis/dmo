@@ -147,6 +147,7 @@ class EventActionStep(models.Model):
         CHAT_AVAILABILITY = "chat_availability", "Chat availability"
         SET_UI_TRIGGER = "set_ui_trigger", "Set UI trigger"
         SIDE_PANEL = "side_panel", "Side panel"
+        ROADMAP_COMPLETE = "roadmap_complete", "Roadmap complete"
         GOTO_EVENT = "goto_event", "Go to event"
         BUTTON_CHOICE = "button_choice", "Button choice"
 
