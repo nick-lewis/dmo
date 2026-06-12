@@ -13005,11 +13005,16 @@ button {
 
 .panel-editor {
   display: grid;
+  /* The page grid stretches this section to fill the viewport; pack the
+     rows at the top and keep every item content-sized. */
+  align-content: start;
+  align-items: start;
   gap: 14px;
   justify-items: start;
-  max-width: 1100px;
+  width: min(1100px, 100%);
   margin: 0 auto;
   padding: 18px 26px 40px;
+  overflow-y: auto;
 }
 
 .panel-editor-title h1 {
@@ -13027,6 +13032,66 @@ button {
   margin: 0;
   color: var(--muted-ink);
   font-size: 0.8rem;
+}
+
+/* The panel roster: which registered panels are part of this experience. */
+.panel-editor-list {
+  display: grid;
+  gap: 6px;
+  width: min(460px, 100%);
+}
+
+.panel-editor-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 70%, transparent);
+}
+
+.panel-editor-list-row.is-on {
+  border-color: color-mix(in srgb, #8a9a2e 45%, var(--panel-soft-border));
+  background: color-mix(in srgb, #8a9a2e 7%, var(--panel-bg-strong));
+}
+
+.panel-editor-list-row > span {
+  font-size: 20px;
+}
+
+.panel-editor-list-name {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-editor-list-name strong {
+  font-size: 0.82rem;
+}
+
+.panel-editor-list-name small {
+  color: var(--muted-ink);
+  font-size: 0.68rem;
+}
+
+.panel-editor-list-row button {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--panel-soft-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-ink);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.panel-editor-list-row.is-on button {
+  border-color: color-mix(in srgb, #8a9a2e 55%, transparent);
+  background: color-mix(in srgb, #8a9a2e 14%, white);
+  color: #5c671c;
 }
 
 /* The panel shown alone, framed like its dock window in the player. */

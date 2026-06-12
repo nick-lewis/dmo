@@ -93,6 +93,7 @@ class SidePanelValidationTests(SimpleTestCase):
             overrides,
             [
                 {
+                    "enabled": False,
                     "iconPath": "icons/map.png",
                     "nodeEvents": {},
                     "panelId": "roadmap",
@@ -100,6 +101,13 @@ class SidePanelValidationTests(SimpleTestCase):
                 }
             ],
         )
+
+    def test_validate_side_panels_keeps_enabled_flag(self):
+        overrides, error = validate_side_panels(
+            [{"panelId": "roadmap", "enabled": True}]
+        )
+        self.assertEqual(error, "")
+        self.assertTrue(overrides[0]["enabled"])
 
     def test_validate_side_panels_keeps_node_event_links(self):
         overrides, error = validate_side_panels(
@@ -315,6 +323,7 @@ class SidePanelRuntimeTests(TestCase):
             payload["sidePanels"],
             [
                 {
+                    "enabled": False,
                     "iconPath": "",
                     "nodeEvents": {},
                     "panelId": "roadmap",

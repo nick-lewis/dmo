@@ -180,6 +180,9 @@ def validate_side_panels(value):
 
         normalized.append(
             {
+                # Whether the panel is part of this experience at all; only
+                # enabled panels can appear in the player's dock.
+                "enabled": raw_panel.get("enabled") is True,
                 "iconPath": icon_path,
                 "nodeEvents": node_events,
                 "panelId": panel_id,

@@ -40,21 +40,35 @@ function stepFixture(
   };
 }
 
-test("resolveSidePanels merges per-experience overrides onto the registry", () => {
+test("resolveSidePanels resolves only panels enabled for the experience", () => {
   const resolved = resolveSidePanels([
-    { iconPath: "icons/map.png", panelId: "roadmap", title: "Lou's Map" },
+    {
+      enabled: true,
+      iconPath: "icons/map.png",
+      panelId: "roadmap",
+      title: "Lou's Map",
+    },
   ]);
   const roadmap = resolved.find((panel) => panel.id === "roadmap");
   assert.ok(roadmap);
   assert.equal(roadmap.title, "Lou's Map");
   assert.equal(roadmap.iconPath, "icons/map.png");
 
-  const defaults = resolveSidePanels(undefined).find(
-    (panel) => panel.id === "roadmap",
+  // Defaults apply when the enabled override leaves title/icon empty.
+  const bare = resolveSidePanels([
+    { enabled: true, iconPath: "", panelId: "roadmap", title: "" },
+  ]).find((panel) => panel.id === "roadmap");
+  assert.ok(bare);
+  assert.equal(bare.title, "LU's Roadmap");
+
+  // Panels not added to the experience do not resolve at all.
+  assert.deepEqual(resolveSidePanels(undefined), []);
+  assert.deepEqual(
+    resolveSidePanels([
+      { iconPath: "", panelId: "roadmap", title: "Custom" },
+    ]),
+    [],
   );
-  assert.ok(defaults);
-  assert.equal(defaults.title, "LU's Roadmap");
-  assert.equal(defaults.iconPath, "");
 });
 
 test("runtimeSidePanelsFromRecord keeps only available panels", () => {

@@ -9,7 +9,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch, experienceNextEditPath } from "../api";
 import { ArrowLeftIcon } from "../components/Icons";
 import type { SidePanelOverride } from "../sidePanelMetadata";
-import { getSidePanelMetadata } from "../sidePanelMetadata";
+import {
+  getSidePanelMetadata,
+  sidePanelMetadataDefinitions,
+} from "../sidePanelMetadata";
 import type { Experience } from "../types";
 import { RoadmapBoard } from "./RoadmapBoard";
 
@@ -103,28 +106,31 @@ export function PanelEditorPage() {
     nodeBadges[nodeId] = linkedEvent?.title || eventSlug;
   }
 
-  async function saveNodeEvent(nodeId: string, eventSlug: string) {
+  async function savePanelOverride(
+    panelId: string,
+    patch: Partial<SidePanelOverride>,
+  ) {
     if (!experience) return;
 
-    const nextEvents = { ...nodeEvents };
-    if (eventSlug) nextEvents[nodeId] = eventSlug;
-    else delete nextEvents[nodeId];
-
+    const existing = experience.sidePanels?.find(
+      (override) => override.panelId === panelId,
+    );
     const nextOverride: SidePanelOverride = {
-      iconPath: roadmapOverride?.iconPath ?? "",
-      nodeEvents: nextEvents,
-      panelId: "roadmap",
-      title: roadmapOverride?.title ?? "",
+      enabled: existing?.enabled ?? false,
+      iconPath: existing?.iconPath ?? "",
+      nodeEvents: existing?.nodeEvents ?? {},
+      panelId,
+      title: existing?.title ?? "",
+      ...patch,
     };
     const sidePanels = [
       ...(experience.sidePanels ?? []).filter(
-        (override) => override.panelId !== "roadmap",
+        (override) => override.panelId !== panelId,
       ),
       nextOverride,
     ];
 
     setExperience({ ...experience, sidePanels });
-    setNodeMenu(null);
     try {
       await apiFetch(
         `/api/experiences/${encodeURIComponent(experience.id)}/`,
@@ -137,9 +143,18 @@ export function PanelEditorPage() {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Could not save the panel links.",
+          : "Could not save the panel settings.",
       );
     }
+  }
+
+  async function saveNodeEvent(nodeId: string, eventSlug: string) {
+    const nextEvents = { ...nodeEvents };
+    if (eventSlug) nextEvents[nodeId] = eventSlug;
+    else delete nextEvents[nodeId];
+
+    setNodeMenu(null);
+    await savePanelOverride("roadmap", { nodeEvents: nextEvents });
   }
 
   function openNodeMenu(nodeId: string, event: ReactMouseEvent<HTMLElement>) {
@@ -192,29 +207,78 @@ export function PanelEditorPage() {
 
         {status === "ready" && experience ? (
           <>
-            <p className="panel-editor-hint">
-              Right-click a challenge to choose which event it triggers in
-              this experience. Linked challenges show their event below the
-              title.
-            </p>
-            <div className="panel-editor-window">
-              <header>
-                <span aria-hidden="true">{roadmapMetadata?.glyph ?? "🧭"}</span>
-                <strong>
-                  {roadmapOverride?.title || roadmapMetadata?.label || "Roadmap"}
-                </strong>
-              </header>
-              <div className="panel-editor-window-body">
-                <RoadmapBoard
-                  activeId=""
-                  completedIds={new Set()}
-                  editor={{
-                    nodeBadges,
-                    onNodeContextMenu: openNodeMenu,
-                  }}
-                />
-              </div>
+            <div className="panel-editor-list">
+              {sidePanelMetadataDefinitions.map((panel) => {
+                const override = experience.sidePanels?.find(
+                  (candidate) => candidate.panelId === panel.id,
+                );
+                const isInExperience = override?.enabled === true;
+                return (
+                  <div
+                    className={`panel-editor-list-row${
+                      isInExperience ? " is-on" : ""
+                    }`}
+                    key={panel.id}
+                  >
+                    <span aria-hidden="true">{panel.glyph}</span>
+                    <div className="panel-editor-list-name">
+                      <strong>{override?.title || panel.label}</strong>
+                      {panel.description ? (
+                        <small>{panel.description}</small>
+                      ) : null}
+                    </div>
+                    <button
+                      onClick={() =>
+                        void savePanelOverride(panel.id, {
+                          enabled: !isInExperience,
+                        })
+                      }
+                      type="button"
+                    >
+                      {isInExperience ? "✓ In experience" : "Add to experience"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
+
+            {roadmapOverride?.enabled === true ? (
+              <>
+                <p className="panel-editor-hint">
+                  Right-click a challenge to choose which event it triggers in
+                  this experience. Linked challenges show their event below
+                  the title. Turn the panel on for students with{" "}
+                  <code>panel(&quot;roadmap&quot;)</code> or{" "}
+                  <code>[panel_on: roadmap]</code>.
+                </p>
+                <div className="panel-editor-window">
+                  <header>
+                    <span aria-hidden="true">
+                      {roadmapMetadata?.glyph ?? "🧭"}
+                    </span>
+                    <strong>
+                      {roadmapOverride?.title ||
+                        roadmapMetadata?.label ||
+                        "Roadmap"}
+                    </strong>
+                  </header>
+                  <div className="panel-editor-window-body">
+                    <RoadmapBoard
+                      activeId=""
+                      completedIds={new Set()}
+                      editor={{
+                        nodeBadges,
+                        onNodeContextMenu: openNodeMenu,
+                      }}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="panel-editor-hint">
+                Add a panel to this experience to configure it here.
+              </p>
+            )}
           </>
         ) : null}
       </section>

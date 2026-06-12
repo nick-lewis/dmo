@@ -16,6 +16,9 @@ export type SidePanelMetadata = {
 };
 
 export type SidePanelOverride = {
+  // Whether the panel is part of this experience at all; chosen in the
+  // panel editor. Only enabled panels can appear in the player's dock.
+  enabled?: boolean;
   iconPath: string;
   nodeEvents?: Record<string, string>;
   panelId: string;
@@ -50,16 +53,21 @@ export function resolveSidePanels(
       .map((override) => [override.panelId, override]),
   );
 
-  return sidePanelMetadataDefinitions.map((panel) => {
+  // Only panels added to the experience (in the panel editor) resolve;
+  // runtime actions then control when they become available/open.
+  return sidePanelMetadataDefinitions.flatMap((panel) => {
     const override = overrideByPanelId.get(panel.id);
-    return {
-      flush: panel.flush === true,
-      glyph: panel.glyph,
-      iconPath: (override?.iconPath ?? "").trim(),
-      id: panel.id,
-      nodeEvents: override?.nodeEvents ?? {},
-      sizing: panel.sizing === "hug" ? ("hug" as const) : ("fill" as const),
-      title: (override?.title ?? "").trim() || panel.label,
-    };
+    if (override?.enabled !== true) return [];
+    return [
+      {
+        flush: panel.flush === true,
+        glyph: panel.glyph,
+        iconPath: (override.iconPath ?? "").trim(),
+        id: panel.id,
+        nodeEvents: override.nodeEvents ?? {},
+        sizing: panel.sizing === "hug" ? ("hug" as const) : ("fill" as const),
+        title: (override.title ?? "").trim() || panel.label,
+      },
+    ];
   });
 }
