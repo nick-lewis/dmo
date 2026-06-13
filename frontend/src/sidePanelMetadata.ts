@@ -1,8 +1,8 @@
 import sidePanelRegistryData from "./sidePanelRegistry.json";
 
 // Global registry of side-panel ("option") types. What a panel does is
-// hardcoded in sidePanels.tsx; experiences may override its icon and title
-// via Experience.sidePanels without touching code.
+// hardcoded in sidePanels.tsx; experiences may override icon/title and
+// panel-specific settings via Experience.sidePanels without touching code.
 
 export type SidePanelMetadata = {
   description?: string;
@@ -16,8 +16,8 @@ export type SidePanelMetadata = {
 };
 
 export type SidePanelOverride = {
-  // Whether the panel is part of this experience at all; chosen in the
-  // panel editor. Only enabled panels can appear in the player's dock.
+  // Legacy field from when the panel editor chose whether a panel belonged
+  // to an experience. Panel usage now comes from authored panel actions.
   enabled?: boolean;
   iconPath: string;
   nodeEvents?: Record<string, string>;
@@ -65,28 +65,25 @@ export function resolveSidePanels(
       .map((setting) => [setting.panelId, setting]),
   );
 
-  // Only panels added to the experience (in the panel editor) resolve;
-  // runtime actions then control when they become available/open. Icon and
-  // title fall back: experience override -> user global setting -> registry.
-  return sidePanelMetadataDefinitions.flatMap((panel) => {
+  // Authored runtime actions control when panels become available/open. The
+  // resolver returns every registered panel so an action can reveal it even
+  // when the experience has no per-panel override saved.
+  return sidePanelMetadataDefinitions.map((panel) => {
     const override = overrideByPanelId.get(panel.id);
-    if (override?.enabled !== true) return [];
     const setting = settingByPanelId.get(panel.id);
-    return [
-      {
-        flush: panel.flush === true,
-        glyph: panel.glyph,
-        iconPath:
-          (override.iconPath ?? "").trim() ||
-          (setting?.iconPath ?? "").trim(),
-        id: panel.id,
-        nodeEvents: override.nodeEvents ?? {},
-        sizing: panel.sizing === "hug" ? ("hug" as const) : ("fill" as const),
-        title:
-          (override.title ?? "").trim() ||
-          (setting?.title ?? "").trim() ||
-          panel.label,
-      },
-    ];
+    return {
+      flush: panel.flush === true,
+      glyph: panel.glyph,
+      iconPath:
+        (override?.iconPath ?? "").trim() ||
+        (setting?.iconPath ?? "").trim(),
+      id: panel.id,
+      nodeEvents: override?.nodeEvents ?? {},
+      sizing: panel.sizing === "hug" ? ("hug" as const) : ("fill" as const),
+      title:
+        (override?.title ?? "").trim() ||
+        (setting?.title ?? "").trim() ||
+        panel.label,
+    };
   });
 }

@@ -15,6 +15,10 @@ import {
   getSidePanelMetadata,
   sidePanelMetadataDefinitions,
 } from "../sidePanelMetadata";
+import {
+  sidePanelUsagesFromExperience,
+  type SidePanelUsage,
+} from "../sidePanelUsage";
 import type {
   Experience,
   ExperiencesPayload,
@@ -25,18 +29,40 @@ import { ImageLibraryPicker } from "./ImageLibraryPicker";
 import { RoadmapBoard } from "./RoadmapBoard";
 import { useScriptImageLibrary } from "./useScriptImageLibrary";
 
-// The panel editor has two modes. Opened from an experience
-// (/experiences/:id/panels) it configures panels FOR that experience:
-// which panels are in it, their icon override, and which event each roadmap
-// challenge triggers (right-click a challenge). Opened globally (/panels)
-// it edits panel-wide defaults (icon) that apply wherever an experience
-// does not override them.
+// The panel page has two modes. Opened from an experience
+// (/experiences/:id/panels) it lists panels that are referenced by authored
+// panel actions and edits experience-specific settings. Opened globally
+// (/panels) it acts as Panel lab: defaults plus a playground for every
+// registered panel.
 
 type NodeMenuState = {
   nodeId: string;
   x: number;
   y: number;
 };
+
+type PanelEditorRow = {
+  panelId: string;
+  usage?: SidePanelUsage;
+};
+
+function panelUsageLabel(usage: SidePanelUsage | undefined) {
+  if (!usage) return "";
+
+  const count = usage.actionCount + usage.scriptMarkerCount;
+  if (count > 0) {
+    return `${count} action${count === 1 ? "" : "s"}`;
+  }
+  return usage.configured ? "Settings only" : "";
+}
+
+function hasPanelOverrideContent(override: SidePanelOverride) {
+  return Boolean(
+    (override.iconPath ?? "").trim() ||
+      (override.title ?? "").trim() ||
+      Object.keys(override.nodeEvents ?? {}).length,
+  );
+}
 
 export function PanelEditorPage() {
   const { experienceId = "" } = useParams();
@@ -126,16 +152,29 @@ export function PanelEditorPage() {
     };
   }, [nodeMenu]);
 
-  const selectedMetadata = getSidePanelMetadata(selectedPanelId);
+  const panelUsages = sidePanelUsagesFromExperience(experience);
+  const panelRows: PanelEditorRow[] = isGlobal
+    ? sidePanelMetadataDefinitions.map((panel) => ({ panelId: panel.id }))
+    : panelUsages.map((usage) => ({ panelId: usage.panelId, usage }));
+  const activePanelId = panelRows.some((row) => row.panelId === selectedPanelId)
+    ? selectedPanelId
+    : panelRows[0]?.panelId ?? selectedPanelId;
+  const selectedUsage = panelRows.find(
+    (row) => row.panelId === activePanelId,
+  )?.usage;
+  const selectedMetadata = getSidePanelMetadata(activePanelId);
   const selectedOverride = experience?.sidePanels?.find(
-    (override) => override.panelId === selectedPanelId,
+    (override) => override.panelId === activePanelId,
   );
   const selectedGlobalSetting = globalSettings.find(
-    (setting) => setting.panelId === selectedPanelId,
+    (setting) => setting.panelId === activePanelId,
   );
   const selectedIconPath = isGlobal
     ? selectedGlobalSetting?.iconPath ?? ""
     : selectedOverride?.iconPath ?? "";
+  const selectedTitle = isGlobal
+    ? selectedGlobalSetting?.title ?? ""
+    : selectedOverride?.title ?? "";
   const roadmapOverride = experience?.sidePanels?.find(
     (override) => override.panelId === "roadmap",
   );
@@ -162,19 +201,18 @@ export function PanelEditorPage() {
       (override) => override.panelId === panelId,
     );
     const nextOverride: SidePanelOverride = {
-      enabled: existing?.enabled ?? false,
       iconPath: existing?.iconPath ?? "",
       nodeEvents: existing?.nodeEvents ?? {},
       panelId,
       title: existing?.title ?? "",
       ...patch,
     };
-    const sidePanels = [
-      ...(experience.sidePanels ?? []).filter(
-        (override) => override.panelId !== panelId,
-      ),
-      nextOverride,
-    ];
+    const sidePanels = (experience.sidePanels ?? []).filter(
+      (override) => override.panelId !== panelId,
+    );
+    if (hasPanelOverrideContent(nextOverride)) {
+      sidePanels.push(nextOverride);
+    }
 
     setExperience({ ...experience, sidePanels });
     try {
@@ -235,9 +273,17 @@ export function PanelEditorPage() {
 
   async function savePanelIcon(iconPath: string) {
     if (isGlobal) {
-      await saveGlobalSetting(selectedPanelId, { iconPath });
+      await saveGlobalSetting(activePanelId, { iconPath });
     } else {
-      await savePanelOverride(selectedPanelId, { iconPath });
+      await savePanelOverride(activePanelId, { iconPath });
+    }
+  }
+
+  async function savePanelTitle(title: string) {
+    if (isGlobal) {
+      await saveGlobalSetting(activePanelId, { title });
+    } else {
+      await savePanelOverride(activePanelId, { title });
     }
   }
 
@@ -285,15 +331,18 @@ export function PanelEditorPage() {
           <ArrowLeftIcon />
         </button>
         <div className="study-actions">
-          <HeaderNavActions currentPage="panels" experienceId={experienceId} />
+          <HeaderNavActions
+            currentPage={isGlobal ? "panel-lab" : "panels"}
+            experienceId={experienceId}
+          />
         </div>
       </header>
 
       <section className="panel-editor">
         <div className="panel-editor-title">
-          <h1>Panel editor</h1>
+          <h1>{isGlobal ? "Panel lab" : "Panels"}</h1>
           {isGlobal ? (
-            <p>Global defaults — apply wherever an experience does not override them</p>
+            <p>Global defaults and panel previews</p>
           ) : experience ? (
             <p>{experience.title}</p>
           ) : null}
@@ -307,7 +356,14 @@ export function PanelEditorPage() {
         {status === "ready" && (experience || isGlobal) ? (
           <div className="panel-editor-columns">
             <div className="panel-editor-list">
-              {sidePanelMetadataDefinitions.map((panel) => {
+              {!panelRows.length ? (
+                <div className="panel-editor-empty">
+                  No panel actions in this experience.
+                </div>
+              ) : null}
+              {panelRows.map((row) => {
+                const panel = getSidePanelMetadata(row.panelId);
+                if (!panel) return null;
                 const override = experience?.sidePanels?.find(
                   (candidate) => candidate.panelId === panel.id,
                 );
@@ -317,13 +373,13 @@ export function PanelEditorPage() {
                 const rowIconPath = isGlobal
                   ? globalSetting?.iconPath ?? ""
                   : override?.iconPath ?? "";
-                const isInExperience = override?.enabled === true;
-                const isSelected = panel.id === selectedPanelId;
+                const isSelected = panel.id === activePanelId;
+                const usageLabel = panelUsageLabel(row.usage);
                 return (
                   <div
                     className={[
                       "panel-editor-list-row",
-                      !isGlobal && isInExperience ? "is-on" : "",
+                      !isGlobal && row.usage ? "is-on" : "",
                       isSelected ? "is-selected" : "",
                     ]
                       .filter(Boolean)
@@ -346,33 +402,40 @@ export function PanelEditorPage() {
                           ? globalSetting?.title
                           : override?.title) || panel.label}
                       </strong>
-                      {panel.description ? (
-                        <small>{panel.description}</small>
+                      {isGlobal ? (
+                        panel.description ? (
+                          <small>{panel.description}</small>
+                        ) : null
+                      ) : usageLabel ? (
+                        <small>{usageLabel}</small>
                       ) : null}
                     </div>
-                    {isGlobal ? null : (
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void savePanelOverride(panel.id, {
-                            enabled: !isInExperience,
-                          });
-                        }}
-                        type="button"
-                      >
-                        {isInExperience
-                          ? "✓ In experience"
-                          : "Add to experience"}
-                      </button>
-                    )}
                   </div>
                 );
               })}
             </div>
 
             <div className="panel-editor-detail">
-              {isGlobal || selectedOverride?.enabled === true ? (
+              {selectedMetadata && (isGlobal || selectedUsage) ? (
                 <>
+                  <label className="panel-editor-title-row">
+                    <span>Title</span>
+                    <input
+                      aria-label="Panel title"
+                      defaultValue={selectedTitle}
+                      key={`${activePanelId}:${selectedTitle}`}
+                      onBlur={(event) =>
+                        void savePanelTitle(event.target.value.trim())
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      placeholder={selectedMetadata.label}
+                      type="text"
+                    />
+                  </label>
                   <div className="panel-editor-icon-row">
                     <span>Icon</span>
                     <button
@@ -411,7 +474,7 @@ export function PanelEditorPage() {
                   </div>
                   {isIconPickerOpen ? (
                     <ImageLibraryPicker
-                      ariaLabel={`Icon options for ${selectedPanelId}`}
+                      ariaLabel={`Icon options for ${activePanelId}`}
                       classNames={{
                         deleteButton: "next-script-image-delete-button",
                         empty: "next-script-image-picker-empty",
@@ -443,20 +506,22 @@ export function PanelEditorPage() {
 
                   {isGlobal ? (
                     <p className="panel-editor-hint">
-                      This icon is the panel&apos;s default everywhere; an
-                      experience can still override it. To add the panel to
-                      an experience or wire its challenges to events, open
-                      Panels from inside that experience.
+                      These defaults apply wherever an experience does not
+                      override them.
                     </p>
-                  ) : selectedPanelId === "roadmap" ? (
+                  ) : null}
+
+                  {activePanelId === "roadmap" ? (
                     <>
-                      <p className="panel-editor-hint">
-                        Right-click a challenge to choose which event it
-                        triggers in this experience. Linked challenges show
-                        their event below the title. Turn the panel on for
-                        students with <code>panel(&quot;roadmap&quot;)</code>{" "}
-                        or <code>[panel_on: roadmap]</code>.
-                      </p>
+                      {!isGlobal ? (
+                        <p className="panel-editor-hint">
+                          Right-click a challenge to choose which event it
+                          triggers in this experience. Linked challenges show
+                          their event below the title. Turn the panel on for
+                          students with <code>panel(&quot;roadmap&quot;)</code>{" "}
+                          or <code>[panel_on: roadmap]</code>.
+                        </p>
+                      ) : null}
                       <div className="panel-editor-window">
                         <header>
                           <span aria-hidden="true">
@@ -470,7 +535,7 @@ export function PanelEditorPage() {
                             )}
                           </span>
                           <strong>
-                            {selectedOverride?.title ||
+                            {selectedTitle ||
                               selectedMetadata?.label ||
                               "Roadmap"}
                           </strong>
@@ -479,10 +544,14 @@ export function PanelEditorPage() {
                           <RoadmapBoard
                             activeId=""
                             completedIds={new Set()}
-                            editor={{
-                              nodeBadges,
-                              onNodeContextMenu: openNodeMenu,
-                            }}
+                            editor={
+                              isGlobal
+                                ? undefined
+                                : {
+                                    nodeBadges,
+                                    onNodeContextMenu: openNodeMenu,
+                                  }
+                            }
                           />
                         </div>
                       </div>
@@ -495,7 +564,8 @@ export function PanelEditorPage() {
                 </>
               ) : (
                 <p className="panel-editor-hint">
-                  Add this panel to the experience to configure it here.
+                  Panel settings appear after a panel action references a
+                  registered panel.
                 </p>
               )}
             </div>

@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { getMainPanelAppDefinition } from "../mainPanelApps";
 import { normalizePythonNotebookState } from "../PythonNotebookPanel";
 import { spokenScriptText } from "../scriptMarkers";
+import { getSidePanelMetadata } from "../sidePanelMetadata";
 import {
   compactPreview,
   conditionRecordSummary,
@@ -436,6 +437,18 @@ export function eventStepSummary(step: EventStepDraft, events: ExperienceEvent[]
   }
   if (step.actionType === "chat_availability") {
     return step.config.enabled === false ? "Chat off" : "Chat on";
+  }
+  if (step.actionType === "side_panel") {
+    const panelId = stringConfigValue(step.config, "panelId", "panel");
+    const panel = getSidePanelMetadata(panelId);
+    const mode = stringConfigValue(step.config, "mode", "open");
+    const modeLabel =
+      mode === "off"
+        ? "off"
+        : mode === "available"
+          ? "on in rail"
+          : "on and open";
+    return `${panel?.label || panelId || "Panel"} ${modeLabel}`;
   }
   if (step.actionType === "set_ui_trigger") {
     const selector = stringConfigValue(step.config, "selector", "target");

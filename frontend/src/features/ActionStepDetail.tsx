@@ -6,6 +6,9 @@ import {
   recordFromUnknown,
   stringConfigValue,
 } from "../runtimeUtils";
+import {
+  sidePanelMetadataDefinitions,
+} from "../sidePanelMetadata";
 import { eventListLabel } from "../eventGraph";
 import type {
   EventStepDraft,
@@ -38,6 +41,11 @@ export function ActionStepDetail({
   const triggerEventSlug = stringConfigValue(step.config, "triggersEvent");
   const hasTriggerEventOption = editorEvents.some(
     (event) => event.slug === triggerEventSlug,
+  );
+  const sidePanelId = stringConfigValue(
+    step.config,
+    "panelId",
+    sidePanelMetadataDefinitions[0]?.id ?? "",
   );
   const eventOptionLabel = (event: ExperienceEvent) =>
     `${eventListLabel(editorEvents, event)}${event.isStart ? " (start)" : ""}`;
@@ -292,6 +300,39 @@ export function ActionStepDetail({
           >
             <option value="off">Off</option>
             <option value="on">On</option>
+          </select>
+        </div>
+      ) : null}
+
+      {step.actionType === "side_panel" ? (
+        <div className="event-context-line">
+          <span className="event-detail-label">PANEL</span>
+          <select
+            aria-label="Side panel"
+            onChange={(event) => updateConfig("panelId", event.target.value)}
+            value={sidePanelId}
+          >
+            {sidePanelId &&
+            !sidePanelMetadataDefinitions.some(
+              (panel) => panel.id === sidePanelId,
+            ) ? (
+              <option value={sidePanelId}>{sidePanelId}</option>
+            ) : null}
+            {sidePanelMetadataDefinitions.map((panel) => (
+              <option key={panel.id} value={panel.id}>
+                {panel.label}
+              </option>
+            ))}
+          </select>
+          <span className="event-detail-label">STATE</span>
+          <select
+            aria-label="Side panel state"
+            onChange={(event) => updateConfig("mode", event.target.value)}
+            value={stringConfigValue(step.config, "mode", "open")}
+          >
+            <option value="open">On and open</option>
+            <option value="available">On in rail</option>
+            <option value="off">Off</option>
           </select>
         </div>
       ) : null}

@@ -18,7 +18,8 @@ import {
 } from "../src/roadmapDefinition";
 import { runtimeSidePanelsFromRecord } from "../src/runtimeUtils";
 import { resolveSidePanels } from "../src/sidePanelMetadata";
-import type { EventActionStep } from "../src/types";
+import { sidePanelUsagesFromExperience } from "../src/sidePanelUsage";
+import type { EventActionStep, Experience } from "../src/types";
 
 function stepFixture(
   actionType: EventActionStep["actionType"],
@@ -40,10 +41,9 @@ function stepFixture(
   };
 }
 
-test("resolveSidePanels resolves only panels enabled for the experience", () => {
+test("resolveSidePanels resolves registered panels independent of usage", () => {
   const resolved = resolveSidePanels([
     {
-      enabled: true,
       iconPath: "icons/map.png",
       panelId: "roadmap",
       title: "Lou's Map",
@@ -61,14 +61,92 @@ test("resolveSidePanels resolves only panels enabled for the experience", () => 
   assert.ok(bare);
   assert.equal(bare.title, "LU's Roadmap");
 
-  // Panels not added to the experience do not resolve at all.
-  assert.deepEqual(resolveSidePanels(undefined), []);
-  assert.deepEqual(
-    resolveSidePanels([
-      { iconPath: "", panelId: "roadmap", title: "Custom" },
-    ]),
-    [],
-  );
+  // Runtime actions decide availability; registered panels still resolve so
+  // an action can reveal them without a saved per-experience override.
+  assert.equal(resolveSidePanels(undefined)[0]?.id, "roadmap");
+});
+
+test("sidePanelUsagesFromExperience derives panels from actions and scripts", () => {
+  const baseStep = stepFixture("script", { text: "hello" }, 0);
+  const experience = {
+    createdAt: "2026-01-01T00:00:00Z",
+    description: "",
+    events: [
+      {
+        chatInstructions: "",
+        chatTools: [
+          {
+            createdAt: "2026-01-01T00:00:00Z",
+            description: "",
+            enabled: true,
+            eventId: "event-1",
+            handlerActions: [
+              {
+                actionType: "side_panel",
+                condition: {},
+                config: { mode: "off", panelId: "roadmap" },
+                enabled: true,
+                id: "handler-panel",
+                label: "",
+                sortOrder: 0,
+              },
+            ],
+            id: "tool-1",
+            name: "done",
+            parameters: {},
+            saveArgument: "",
+            saveContextKey: "",
+            sortOrder: 0,
+            triggersEvent: "",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        classifierGroups: [],
+        conversationChecks: [],
+        conversationChoices: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        description: "",
+        experienceId: "experience-1",
+        id: "event-1",
+        isStart: true,
+        onEntryDslSource: "",
+        conversationDslSource: "",
+        slug: "start",
+        sortOrder: 0,
+        steps: [
+          stepFixture("side_panel", { mode: "open", panelId: "roadmap" }, 1),
+          stepFixture("script", { text: "Look [panel_on: roadmap]" }, 2),
+          baseStep,
+        ],
+        title: "Start",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+    id: "experience-1",
+    sidePanels: [],
+    slug: "experience",
+    title: "Experience",
+    tutor: {
+      assistantName: "dee-lou",
+      avatarPath: "",
+      choiceIconBackground: "#fff",
+      classificationModel: "gpt-5.4-mini",
+      realtimeModel: "gpt-realtime-mini",
+      systemPrompt: "",
+      voice: "ash",
+      voiceInstructions: "",
+    },
+    updatedAt: "2026-01-01T00:00:00Z",
+  } satisfies Experience;
+
+  assert.deepEqual(sidePanelUsagesFromExperience(experience), [
+    {
+      actionCount: 2,
+      configured: false,
+      panelId: "roadmap",
+      scriptMarkerCount: 1,
+    },
+  ]);
 });
 
 test("runtimeSidePanelsFromRecord keeps only available panels", () => {
