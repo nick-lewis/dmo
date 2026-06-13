@@ -73,6 +73,21 @@ function Get-NodeReplEnv {
     return $env
 }
 
+function Set-OrderedEnvValue {
+    param(
+        [System.Collections.Specialized.OrderedDictionary]$Env,
+        [string]$Key,
+        [string]$Value
+    )
+
+    if ($Env.Contains($Key)) {
+        $Env[$Key] = $Value
+        return
+    }
+
+    $Env.Add($Key, $Value)
+}
+
 function Invoke-NativeCommand {
     param(
         [string]$FilePath,
@@ -141,9 +156,12 @@ if (-not $envSectionMatch.Success) {
     throw "Could not find [mcp_servers.node_repl.env] in $ConfigPath."
 }
 
-$fixedPattern = '(?m)^args\s*=\s*\["--disable-sandbox"\]\s*$'
+$fixedArgsPattern = '(?m)^args\s*=\s*\["--disable-sandbox"\]\s*$'
+$nodeReplEnv = Get-NodeReplEnv -Section $envSectionMatch.Value
+$hasDisableSandboxArg = $section -match $fixedArgsPattern
+$hasDisableSandboxEnv = $nodeReplEnv.Contains("DISABLE_SANDBOX") -and $nodeReplEnv["DISABLE_SANDBOX"] -eq "1"
 
-if ($section -match $fixedPattern) {
+if ($hasDisableSandboxArg -and $hasDisableSandboxEnv) {
     Write-Host "Codex node_repl sandbox workaround is already configured."
     if ($RestartBridge) {
         Stop-NodeReplBridge
@@ -152,8 +170,9 @@ if ($section -match $fixedPattern) {
     exit 0
 }
 
-Write-Host "Codex node_repl sandbox workaround is not configured."
+Write-Host "Codex node_repl sandbox workaround is not fully configured."
 Write-Host "Symptom: browser setup fails with 'CreateProcessAsUserW failed: 5'."
+Write-Host "Expected: args = [`"--disable-sandbox`"] and DISABLE_SANDBOX = `"1`"."
 
 if (-not $Apply) {
     Write-Host ""
@@ -167,7 +186,8 @@ if (-not $nodeReplPath) {
     throw "Could not read node_repl command from $ConfigPath."
 }
 
-$nodeReplEnv = Get-NodeReplEnv -Section $envSectionMatch.Value
+Set-OrderedEnvValue -Env $nodeReplEnv -Key "DISABLE_SANDBOX" -Value "1"
+
 $codexPath = $nodeReplEnv["CODEX_CLI_PATH"]
 if (-not $codexPath) {
     $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
@@ -189,7 +209,7 @@ $backupPath = "$ConfigPath.bak-node-repl-disable-sandbox-$(Get-Date -Format 'yyy
 Copy-Item -LiteralPath $ConfigPath -Destination $backupPath
 
 Register-NodeReplDisableSandbox -CodexPath $codexPath -NodeReplPath $nodeReplPath -Env $nodeReplEnv
-Write-Host "Registered node_repl with --disable-sandbox through Codex CLI."
+Write-Host "Registered node_repl with --disable-sandbox and DISABLE_SANDBOX=1 through Codex CLI."
 Write-Host "Backed up original config to $backupPath"
 
 if ($RestartBridge) {

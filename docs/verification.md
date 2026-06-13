@@ -41,7 +41,8 @@ node .\scripts\validate-next-editor-browser-smoke.mjs --file C:\tmp\next-editor-
 
 If the Codex in-app browser bridge fails on Windows with
 `CreateProcessAsUserW failed: 5`, the local `node_repl` MCP config has usually
-lost the `--disable-sandbox` argument.
+lost either the `--disable-sandbox` argument or the matching
+`DISABLE_SANDBOX=1` environment fallback.
 
 Check it with:
 
@@ -57,16 +58,17 @@ Apply the persistent fix and restart the browser bridge with:
 
 This reads the current `node_repl` MCP command and environment from
 `%USERPROFILE%\.codex\config.toml`, re-registers the MCP server through the
-Codex CLI with `--disable-sandbox`, creates a timestamped config backup, and
-stops any running `node_repl` process so Codex can start the bridge with the
-updated setting. After code changes, refresh the local app page before verifying
-UI behavior.
+Codex CLI with `--disable-sandbox` and `DISABLE_SANDBOX=1`, creates a
+timestamped config backup, and stops any running `node_repl` process so Codex can
+start the bridge with the updated setting. After code changes, refresh the local
+app page before verifying UI behavior.
 
 If the current Codex thread still reports `Transport closed` after the bridge
 restart, the config is fixed but the thread is holding the old dead bridge
 handle. Reopen the thread, or create/open another thread, while Codex Desktop
 stays open. Do not restart Codex Desktop after applying the fix; Desktop startup
-can regenerate the MCP entry with `args = []`.
+can regenerate the MCP entry. If it does, run the recovery script again before
+opening the browser bridge.
 
 ## Postgres Notes
 
