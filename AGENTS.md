@@ -1,5 +1,31 @@
 # DMO Codex Notes
 
+## Browser Bridge First Aid
+
+If the user says the in-app browser, Browser plugin, or `node_repl` is broken,
+do this first before debugging anything else:
+
+```powershell
+.\scripts\codex-browser-sandbox.ps1 -Apply -RestartBridge
+```
+
+Then smoke test the bridge:
+
+```javascript
+nodeRepl.write(JSON.stringify({ ok: true, cwd: nodeRepl.cwd }))
+```
+
+Known failure text includes `CreateProcessAsUserW failed: 5` and
+`Transport closed`. The durable fix is the ACL repair in
+`scripts/codex-browser-sandbox.ps1`: it grants the local `CodexSandboxUsers`
+group read/execute access on the active Codex Desktop `cua_node` runtime.
+
+Do not start by replacing `node_repl.exe`, relying on `DISABLE_SANDBOX=1`, or
+re-registering `node_repl` through Codex CLI. Those paths were tested and were
+not durable. If the current thread still says `Transport closed` after the
+script runs, open or fork a fresh same-directory thread because the old thread
+may still hold the dead bridge handle.
+
 ## Local Browser Verification
 
 When using the Codex in-app browser for DMO, refresh the current localhost page
