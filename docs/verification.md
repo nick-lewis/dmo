@@ -37,6 +37,29 @@ cd frontend
 node .\scripts\validate-next-editor-browser-smoke.mjs --file C:\tmp\next-editor-smoke.json
 ```
 
+## Codex Browser Sandbox Recovery
+
+If the Codex in-app browser bridge fails on Windows with
+`CreateProcessAsUserW failed: 5`, the local `node_repl` MCP config has usually
+lost the `--disable-sandbox` argument.
+
+Check it with:
+
+```powershell
+.\scripts\codex-browser-sandbox.ps1
+```
+
+Apply the persistent fix and restart the browser bridge with:
+
+```powershell
+.\scripts\codex-browser-sandbox.ps1 -Apply -RestartBridge
+```
+
+This edits `%USERPROFILE%\.codex\config.toml`, creates a timestamped backup
+next to it, and stops any running `node_repl` process so Codex can start the
+bridge with the updated setting. After code changes, refresh the local app page
+before verifying UI behavior.
+
 ## Postgres Notes
 
 Docker Postgres is the source of truth for local verification. Check it with:
