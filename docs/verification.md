@@ -60,6 +60,11 @@ next to it, and stops any running `node_repl` process so Codex can start the
 bridge with the updated setting. After code changes, refresh the local app page
 before verifying UI behavior.
 
+If the current Codex thread still reports `Transport closed` after the restart,
+the config is fixed but the thread is holding the old dead bridge handle. Reopen
+the thread or restart Codex Desktop so the MCP server starts from the updated
+config.
+
 ## Postgres Notes
 
 Docker Postgres is the source of truth for local verification. Check it with:

@@ -16,3 +16,8 @@ This updates `%USERPROFILE%\.codex\config.toml` so `node_repl` starts with
 `--disable-sandbox`, creates a timestamped config backup, and stops the running
 bridge so Codex can reconnect. The same recovery path is documented in
 `docs/verification.md`.
+
+If the current thread keeps returning `Transport closed` immediately after the
+restart, the config is already fixed but the thread still has the dead bridge
+handle. Reopen the thread or restart Codex Desktop so the MCP server starts from
+the updated config.
