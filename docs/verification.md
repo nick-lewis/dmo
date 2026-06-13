@@ -55,10 +55,12 @@ Apply the persistent fix and restart the browser bridge with:
 .\scripts\codex-browser-sandbox.ps1 -Apply -RestartBridge
 ```
 
-This edits `%USERPROFILE%\.codex\config.toml`, creates a timestamped backup
-next to it, and stops any running `node_repl` process so Codex can start the
-bridge with the updated setting. After code changes, refresh the local app page
-before verifying UI behavior.
+This reads the current `node_repl` MCP command and environment from
+`%USERPROFILE%\.codex\config.toml`, re-registers the MCP server through the
+Codex CLI with `--disable-sandbox`, creates a timestamped config backup, and
+stops any running `node_repl` process so Codex can start the bridge with the
+updated setting. After code changes, refresh the local app page before verifying
+UI behavior.
 
 If the current Codex thread still reports `Transport closed` after the restart,
 the config is fixed but the thread is holding the old dead bridge handle. Reopen
