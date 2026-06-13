@@ -117,6 +117,12 @@ function Stop-NodeReplBridge {
     Start-Sleep -Seconds 1
 }
 
+function Write-ReconnectNote {
+    Write-Host ""
+    Write-Host "Next step: reopen this thread, or create/open another thread, without restarting Codex Desktop."
+    Write-Host "Do not restart Codex Desktop after applying this, because Desktop startup may regenerate args = []."
+}
+
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
     throw "Codex config not found: $ConfigPath"
 }
@@ -141,6 +147,7 @@ if ($section -match $fixedPattern) {
     Write-Host "Codex node_repl sandbox workaround is already configured."
     if ($RestartBridge) {
         Stop-NodeReplBridge
+        Write-ReconnectNote
     }
     exit 0
 }
@@ -187,4 +194,5 @@ Write-Host "Backed up original config to $backupPath"
 
 if ($RestartBridge) {
     Stop-NodeReplBridge
+    Write-ReconnectNote
 }

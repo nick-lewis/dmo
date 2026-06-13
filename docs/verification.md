@@ -62,10 +62,11 @@ stops any running `node_repl` process so Codex can start the bridge with the
 updated setting. After code changes, refresh the local app page before verifying
 UI behavior.
 
-If the current Codex thread still reports `Transport closed` after the restart,
-the config is fixed but the thread is holding the old dead bridge handle. Reopen
-the thread or restart Codex Desktop so the MCP server starts from the updated
-config.
+If the current Codex thread still reports `Transport closed` after the bridge
+restart, the config is fixed but the thread is holding the old dead bridge
+handle. Reopen the thread, or create/open another thread, while Codex Desktop
+stays open. Do not restart Codex Desktop after applying the fix; Desktop startup
+can regenerate the MCP entry with `args = []`.
 
 ## Postgres Notes
 

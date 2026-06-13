@@ -19,6 +19,7 @@ stops the running bridge so Codex can reconnect. The same recovery path is
 documented in `docs/verification.md`.
 
 If the current thread keeps returning `Transport closed` immediately after the
-restart, the config is already fixed but the thread still has the dead bridge
-handle. Reopen the thread or restart Codex Desktop so the MCP server starts from
-the updated config.
+bridge restart, the config is already fixed but the thread still has the dead
+bridge handle. Reopen this thread, or create/open another thread, while Codex
+Desktop stays open. Do not restart Codex Desktop after applying the fix; Desktop
+startup can regenerate the MCP entry with `args = []`.
