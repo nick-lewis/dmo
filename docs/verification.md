@@ -40,9 +40,11 @@ node .\scripts\validate-next-editor-browser-smoke.mjs --file C:\tmp\next-editor-
 ## Codex Browser Sandbox Recovery
 
 If the Codex in-app browser bridge fails on Windows with
-`CreateProcessAsUserW failed: 5`, the local `node_repl` MCP config has usually
-lost either the `--disable-sandbox` argument or the matching
-`DISABLE_SANDBOX=1` environment fallback.
+`CreateProcessAsUserW failed: 5`, the usual cause is that the Codex Desktop
+`cua_node` runtime under `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node` is
+missing read/execute access for the local `CodexSandboxUsers` group. The bridge
+can initialize MCP but then fails when its sandboxed JS kernel tries to launch
+the bundled `node.exe`.
 
 Check it with:
 
@@ -56,19 +58,16 @@ Apply the persistent fix and restart the browser bridge with:
 .\scripts\codex-browser-sandbox.ps1 -Apply -RestartBridge
 ```
 
-This reads the current `node_repl` MCP command and environment from
-`%USERPROFILE%\.codex\config.toml`, re-registers the MCP server through the
-Codex CLI with `--disable-sandbox` and `DISABLE_SANDBOX=1`, creates a
-timestamped config backup, and stops any running `node_repl` process so Codex can
-start the bridge with the updated setting. After code changes, refresh the local
-app page before verifying UI behavior.
+This finds the current Codex `cua_node` runtime, backs up its ACLs to `%TEMP%`,
+grants `CodexSandboxUsers` read/execute on that runtime tree, and stops any
+running `node_repl` process so Codex can start a fresh bridge. After code
+changes, refresh the local app page before verifying UI behavior.
 
 If the current Codex thread still reports `Transport closed` after the bridge
-restart, the config is fixed but the thread is holding the old dead bridge
-handle. Reopen the thread, or create/open another thread, while Codex Desktop
-stays open. Do not restart Codex Desktop after applying the fix; Desktop startup
-can regenerate the MCP entry. If it does, run the recovery script again before
-opening the browser bridge.
+restart, the ACL is fixed but the thread is holding the old dead bridge handle.
+Reopen the thread, or create/open another thread, while Codex Desktop stays
+open. If Codex Desktop installs a new `cua_node` runtime hash later and the error
+returns, run the recovery script again for the new runtime.
 
 ## Postgres Notes
 

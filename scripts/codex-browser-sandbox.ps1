@@ -1,28 +1,12 @@
 param(
     [switch]$Apply,
     [switch]$RestartBridge,
-    [string]$ConfigPath = (Join-Path $env:USERPROFILE ".codex\config.toml")
+    [string]$ConfigPath = (Join-Path $env:USERPROFILE ".codex\config.toml"),
+    [string]$RuntimeRoot,
+    [string]$SandboxGroup = "$env:COMPUTERNAME\CodexSandboxUsers"
 )
 
 $ErrorActionPreference = "Stop"
-
-function Get-NodeReplSectionMatch {
-    param([string]$Text)
-
-    return [regex]::Match(
-        $Text,
-        "(?ms)^\[mcp_servers\.node_repl\]\r?\n.*?(?=^\[|\z)"
-    )
-}
-
-function Get-NodeReplEnvSectionMatch {
-    param([string]$Text)
-
-    return [regex]::Match(
-        $Text,
-        "(?ms)^\[mcp_servers\.node_repl\.env\]\r?\n.*?(?=^\[|\z)"
-    )
-}
 
 function ConvertFrom-TomlScalar {
     param([string]$Value)
@@ -38,22 +22,13 @@ function ConvertFrom-TomlScalar {
     return $trimmed
 }
 
-function Get-ConfigScalar {
-    param(
-        [string]$Section,
-        [string]$Key
+function Get-NodeReplEnvSectionMatch {
+    param([string]$Text)
+
+    return [regex]::Match(
+        $Text,
+        "(?ms)^\[mcp_servers\.node_repl\.env\]\r?\n.*?(?=^\[|\z)"
     )
-
-    $match = [regex]::Match(
-        $Section,
-        "(?m)^$([regex]::Escape($Key))\s*=\s*(?<value>.+)$"
-    )
-
-    if (-not $match.Success) {
-        return $null
-    }
-
-    return ConvertFrom-TomlScalar -Value $match.Groups["value"].Value
 }
 
 function Get-NodeReplEnv {
@@ -73,51 +48,125 @@ function Get-NodeReplEnv {
     return $env
 }
 
-function Set-OrderedEnvValue {
-    param(
-        [System.Collections.Specialized.OrderedDictionary]$Env,
-        [string]$Key,
-        [string]$Value
-    )
+function Get-RuntimeRootFromNodePath {
+    param([string]$NodePath)
 
-    if ($Env.Contains($Key)) {
-        $Env[$Key] = $Value
-        return
+    if (-not $NodePath -or -not (Test-Path -LiteralPath $NodePath)) {
+        return $null
     }
 
-    $Env.Add($Key, $Value)
+    $nodeFile = Get-Item -LiteralPath $NodePath
+    if ($nodeFile.Directory -and $nodeFile.Directory.Parent) {
+        return $nodeFile.Directory.Parent.FullName
+    }
+
+    return $null
 }
 
-function Invoke-NativeCommand {
-    param(
-        [string]$FilePath,
-        [string[]]$Arguments
-    )
+function Get-ConfiguredRuntimeRoot {
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        return $null
+    }
 
-    & $FilePath @Arguments
+    $text = Get-Content -LiteralPath $ConfigPath -Raw
+    $envSectionMatch = Get-NodeReplEnvSectionMatch -Text $text
+    if (-not $envSectionMatch.Success) {
+        return $null
+    }
+
+    $nodeReplEnv = Get-NodeReplEnv -Section $envSectionMatch.Value
+    if (-not $nodeReplEnv.Contains("NODE_REPL_NODE_PATH")) {
+        return $null
+    }
+
+    return Get-RuntimeRootFromNodePath -NodePath $nodeReplEnv["NODE_REPL_NODE_PATH"]
+}
+
+function Get-DiscoveredRuntimeRoot {
+    $runtimeParent = Join-Path $env:LOCALAPPDATA "OpenAI\Codex\runtimes\cua_node"
+    if (-not (Test-Path -LiteralPath $runtimeParent)) {
+        return $null
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $runtimeParent -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin\node.exe") } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($candidate) {
+        return $candidate.FullName
+    }
+
+    return $null
+}
+
+function Resolve-RuntimeRoot {
+    if ($RuntimeRoot) {
+        if (-not (Test-Path -LiteralPath (Join-Path $RuntimeRoot "bin\node.exe"))) {
+            throw "RuntimeRoot does not contain bin\node.exe: $RuntimeRoot"
+        }
+        return (Resolve-Path -LiteralPath $RuntimeRoot).Path
+    }
+
+    $configured = Get-ConfiguredRuntimeRoot
+    if ($configured) {
+        return $configured
+    }
+
+    $discovered = Get-DiscoveredRuntimeRoot
+    if ($discovered) {
+        return $discovered
+    }
+
+    throw "Could not find the Codex cua_node runtime. Pass -RuntimeRoot explicitly."
+}
+
+function Test-SandboxRuntimeAccess {
+    param([string]$Root)
+
+    $nodePath = Join-Path $Root "bin\node.exe"
+    if (-not (Test-Path -LiteralPath $nodePath)) {
+        throw "node.exe not found: $nodePath"
+    }
+
+    $readExecute = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $acl = Get-Acl -LiteralPath $nodePath
+    foreach ($ace in $acl.Access) {
+        $identity = $ace.IdentityReference.Value
+        $matchesSandboxGroup =
+            $identity -eq $SandboxGroup -or
+            $identity -like "*\CodexSandboxUsers"
+        $hasReadExecute = ($ace.FileSystemRights -band $readExecute) -eq $readExecute
+
+        if (
+            $matchesSandboxGroup -and
+            $ace.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+            $hasReadExecute
+        ) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Grant-SandboxRuntimeAccess {
+    param([string]$Root)
+
+    $runtimeName = Split-Path -Leaf $Root
+    $backupPath = Join-Path ([System.IO.Path]::GetTempPath()) "codex-cua-node-acl-$runtimeName-$(Get-Date -Format 'yyyyMMddHHmmss').txt"
+
+    Write-Host "Backing up ACLs to $backupPath"
+    & icacls.exe $Root /save $backupPath /T /Q
     if ($LASTEXITCODE -ne 0) {
-        throw "$FilePath $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
-    }
-}
-
-function Register-NodeReplDisableSandbox {
-    param(
-        [string]$CodexPath,
-        [string]$NodeReplPath,
-        [System.Collections.IDictionary]$Env
-    )
-
-    $arguments = @("mcp", "add", "node_repl")
-    foreach ($item in $Env.GetEnumerator()) {
-        $arguments += "--env"
-        $arguments += "$($item.Key)=$($item.Value)"
+        throw "icacls backup failed with exit code $LASTEXITCODE."
     }
 
-    $arguments += "--"
-    $arguments += $NodeReplPath
-    $arguments += "--disable-sandbox"
-
-    Invoke-NativeCommand -FilePath $CodexPath -Arguments $arguments
+    Write-Host "Granting $SandboxGroup read/execute on $Root"
+    & icacls.exe $Root /grant "${SandboxGroup}:(OI)(CI)RX" /T /C /Q
+    if ($LASTEXITCODE -ne 0) {
+        throw "icacls grant failed with exit code $LASTEXITCODE."
+    }
 }
 
 function Stop-NodeReplBridge {
@@ -135,34 +184,19 @@ function Stop-NodeReplBridge {
 function Write-ReconnectNote {
     Write-Host ""
     Write-Host "Next step: reopen this thread, or create/open another thread, without restarting Codex Desktop."
-    Write-Host "Do not restart Codex Desktop after applying this, because Desktop startup may regenerate args = []."
+    Write-Host "If the current thread still says 'Transport closed', it is holding the old dead bridge handle."
+    Write-Host "After frontend changes, refresh the local app page before judging the UI."
 }
 
-if (-not (Test-Path -LiteralPath $ConfigPath)) {
-    throw "Codex config not found: $ConfigPath"
-}
+$resolvedRuntimeRoot = Resolve-RuntimeRoot
+$nodePath = Join-Path $resolvedRuntimeRoot "bin\node.exe"
+$hasAccess = Test-SandboxRuntimeAccess -Root $resolvedRuntimeRoot
 
-$text = Get-Content -LiteralPath $ConfigPath -Raw
-$sectionMatch = Get-NodeReplSectionMatch -Text $text
+Write-Host "Codex cua_node runtime: $resolvedRuntimeRoot"
+Write-Host "Sandbox group: $SandboxGroup"
 
-if (-not $sectionMatch.Success) {
-    throw "Could not find [mcp_servers.node_repl] in $ConfigPath."
-}
-
-$section = $sectionMatch.Value
-$envSectionMatch = Get-NodeReplEnvSectionMatch -Text $text
-
-if (-not $envSectionMatch.Success) {
-    throw "Could not find [mcp_servers.node_repl.env] in $ConfigPath."
-}
-
-$fixedArgsPattern = '(?m)^args\s*=\s*\["--disable-sandbox"\]\s*$'
-$nodeReplEnv = Get-NodeReplEnv -Section $envSectionMatch.Value
-$hasDisableSandboxArg = $section -match $fixedArgsPattern
-$hasDisableSandboxEnv = $nodeReplEnv.Contains("DISABLE_SANDBOX") -and $nodeReplEnv["DISABLE_SANDBOX"] -eq "1"
-
-if ($hasDisableSandboxArg -and $hasDisableSandboxEnv) {
-    Write-Host "Codex node_repl sandbox workaround is already configured."
+if ($hasAccess) {
+    Write-Host "Codex node_repl sandbox ACL is already configured."
     if ($RestartBridge) {
         Stop-NodeReplBridge
         Write-ReconnectNote
@@ -170,9 +204,9 @@ if ($hasDisableSandboxArg -and $hasDisableSandboxEnv) {
     exit 0
 }
 
-Write-Host "Codex node_repl sandbox workaround is not fully configured."
+Write-Host "Codex node_repl sandbox ACL is not configured."
 Write-Host "Symptom: browser setup fails with 'CreateProcessAsUserW failed: 5'."
-Write-Host "Expected: args = [`"--disable-sandbox`"] and DISABLE_SANDBOX = `"1`"."
+Write-Host "Expected: $SandboxGroup has read/execute access on $nodePath."
 
 if (-not $Apply) {
     Write-Host ""
@@ -181,36 +215,8 @@ if (-not $Apply) {
     exit 2
 }
 
-$nodeReplPath = Get-ConfigScalar -Section $section -Key "command"
-if (-not $nodeReplPath) {
-    throw "Could not read node_repl command from $ConfigPath."
-}
-
-Set-OrderedEnvValue -Env $nodeReplEnv -Key "DISABLE_SANDBOX" -Value "1"
-
-$codexPath = $nodeReplEnv["CODEX_CLI_PATH"]
-if (-not $codexPath) {
-    $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
-    if (-not $codexCommand) {
-        throw "Could not find CODEX_CLI_PATH in config or codex on PATH."
-    }
-    $codexPath = $codexCommand.Source
-}
-
-if (-not (Test-Path -LiteralPath $codexPath)) {
-    throw "Codex CLI not found: $codexPath"
-}
-
-if (-not (Test-Path -LiteralPath $nodeReplPath)) {
-    throw "node_repl executable not found: $nodeReplPath"
-}
-
-$backupPath = "$ConfigPath.bak-node-repl-disable-sandbox-$(Get-Date -Format 'yyyyMMddHHmmss')"
-Copy-Item -LiteralPath $ConfigPath -Destination $backupPath
-
-Register-NodeReplDisableSandbox -CodexPath $codexPath -NodeReplPath $nodeReplPath -Env $nodeReplEnv
-Write-Host "Registered node_repl with --disable-sandbox and DISABLE_SANDBOX=1 through Codex CLI."
-Write-Host "Backed up original config to $backupPath"
+Grant-SandboxRuntimeAccess -Root $resolvedRuntimeRoot
+Write-Host "Codex node_repl sandbox ACL repair applied."
 
 if ($RestartBridge) {
     Stop-NodeReplBridge
